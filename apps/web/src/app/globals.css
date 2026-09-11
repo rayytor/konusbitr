@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/*
+ * Sepia light — the default theme. Warm archival paper, never pure white.
+ * Token values come from design.md §3 (colour), §13 (radius) and §19 (motion).
+ * A dark theme is an alternative, not a default; it arrives with the settings
+ * surface in a later phase.
+ */
+:root {
+  --background: #f5f0e6;
+  --surface: #fbf8f0;
+  --surface-muted: #eee7d9;
+
+  --foreground: #29251f;
+  --foreground-muted: #70695d;
+  --foreground-subtle: #958d80;
+
+  --border: #d8d0c2;
+  --border-subtle: #e5ded1;
+
+  --primary: #29251f;
+  --primary-foreground: #fbf8f0;
+
+  --accent: #8a6545;
+  --accent-muted: #e7d9c7;
+
+  --success: #5f7058;
+  --warning: #9a7443;
+  --danger: #9a5149;
+
+  --selection: #e5d5b9;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-slow: 280ms;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+
+  --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-subtle: var(--foreground-subtle);
+
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-muted: var(--accent-muted);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --font-sans: var(--font-line-seed-jp), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  ::selection {
+    background-color: var(--selection);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * Motion is reserved for purposeful transitions, and never runs at all for
+   * readers who have asked for less of it.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    /* biome-ignore-start lint/complexity/noImportantStyles: a reduced-motion
+       reset has to beat utility and inline styles; that is the whole point. */
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+    /* biome-ignore-end lint/complexity/noImportantStyles: end of the reset. */
+  }
+}
