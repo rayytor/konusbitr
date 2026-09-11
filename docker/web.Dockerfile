@@ -19,9 +19,8 @@ ENV PNPM_HOME=/pnpm \
     NEXT_TELEMETRY_DISABLED=1 \
     TURBO_TELEMETRY_DISABLED=1 \
     DO_NOT_TRACK=1
-# The pnpm version is pinned by `packageManager` in the root package.json;
-# corepack reads it from there, so the two can never drift.
-RUN corepack enable
+# Install pnpm directly to avoid Corepack key/signature mismatch
+RUN npm install -g pnpm@11.25.0
 WORKDIR /app
 
 # --------------------------------------------------------------------- deps --
