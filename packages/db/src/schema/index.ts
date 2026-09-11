@@ -1,0 +1,18 @@
+/**
+ * Schema barrel — re-exports every table and enum so that Drizzle Kit and the
+ * migration runner can discover the full schema from a single import.
+ */
+
+export { apiKeys } from './api-keys.js';
+export { chunks } from './chunks.js';
+export { conversations, messages } from './conversations.js';
+export { creditLedger } from './credit-ledger.js';
+export { documents } from './documents.js';
+export { extractions } from './extractions.js';
+export { folders } from './folders.js';
+export { jobs } from './jobs.js';
+export { membershipRoleEnum, memberships } from './memberships.js';
+export { organizations } from './organizations.js';
+export { pages } from './pages.js';
+export { parseResults } from './parse-results.js';
+export { users } from './users.js';
