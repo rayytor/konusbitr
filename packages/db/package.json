@@ -1,0 +1,20 @@
+{
+  "name": "@konusbitr/db",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@konusbitr/tsconfig": "workspace:*",
+    "typescript": "^5.9.3"
+  }
+}
