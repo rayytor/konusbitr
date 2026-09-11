@@ -48,8 +48,21 @@ uv run ruff check .
 
 Use `uv`, not pip or poetry. The lockfile is `uv.lock` and CI installs from it.
 
-**Both, with backing services** — `pnpm dev:infra` and `pnpm dev` arrive with
-Phase 02.
+**Both, with backing services** — Postgres, Redis and MinIO in containers,
+application code native:
+
+```bash
+cp .env.example .env
+pnpm dev:infra                             # backing services only
+pnpm dev                                   # plus native web and native worker
+```
+
+`pnpm infra:down` stops the containers and `pnpm infra:reset` also deletes the
+volumes. `make help` lists the same shortcuts for people who reach for `make`.
+
+`.env` deliberately points at `localhost`, because that is what a natively-run
+process needs; `docker-compose.yml` overrides those hostnames for its own
+containers. Do not change `.env.example` to use container hostnames.
 
 ## Working on a phase
 
