@@ -15,6 +15,8 @@
 ARG PYTHON_VERSION=3.12
 ARG UV_VERSION=0.12
 
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
+
 # --------------------------------------------------------------------- base --
 FROM python:${PYTHON_VERSION}-slim AS base
 ENV PYTHONUNBUFFERED=1 \
@@ -24,8 +26,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # --------------------------------------------------------------------- deps --
 FROM base AS deps
-ARG UV_VERSION
-COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /usr/local/bin/uv
+COPY --from=uv-bin /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
