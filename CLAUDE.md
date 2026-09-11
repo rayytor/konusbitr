@@ -4,18 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phase 01 is done; Phase 02 is next.** The repo is a monorepo skeleton that
-installs, builds, lints, typechecks and tests on both runtimes, with no product
-features yet. What exists:
+**Phases 01–02 are done; Phase 03 is next.** `cp .env.example .env &&
+docker compose up` brings up the whole backing stack, and the repo installs,
+builds, lints, typechecks and tests on both runtimes — but there are no product
+features and no database schema yet. What exists:
 
+- `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
+  (bucket and dev access key created automatically), the web image and the
+  worker image, plus the `local-llm` profile for Ollama. `advanced` is declared
+  and deliberately empty until Phase 12.
 - `apps/web` — Next.js 15 with the sepia theme tokens, a placeholder `/` and
-  `GET /api/health`. No auth, no database.
+  `GET /api/health`. Standalone output for the container; env validated at boot
+  from `src/instrumentation.ts`. No auth, no database.
 - `packages/shared` — the four seed Zod contracts (`Citation`,
-  `DocumentStatus`, `ParseSettings`, `JobProgress`).
+  `DocumentStatus`, `ParseSettings`, `JobProgress`) plus `env.ts`, the
+  TypeScript half of the environment contract.
 - `services/worker` — a Python 3.12 package under uv, pytest and ruff green.
-  No FastAPI or arq yet (Phase 06).
-- `packages/db`, `packages/sdk`, `apps/extension`, `docs/`, `docker/` —
-  placeholders whose READMEs name the phase that fills them in.
+  `settings.py` is the pydantic-settings half of the same contract; `__main__`
+  validates it, heartbeats for the container healthcheck and idles. No FastAPI
+  or arq yet (Phase 06).
+- `packages/db`, `packages/sdk`, `apps/extension`, `docs/` — placeholders whose
+  READMEs name the phase that fills them in.
 
 The specifications remain authoritative for everything not yet built:
 
@@ -133,9 +142,9 @@ These cut across many files; violating one breaks the product rather than one fe
 
 ## Commands
 
-The first block exists as of Phase 01; the rest are created by Phase 02 and
-later. Implement them with exactly these names, because every later phase
-assumes them.
+Everything above `pnpm codegen` exists as of Phase 02; the rest are created by
+Phase 03 and later. Implement them with exactly these names, because every later
+phase assumes them.
 
 Node 22.13+ and pnpm 11 are required; `uv` fetches its own Python 3.12.
 
@@ -143,9 +152,11 @@ Node 22.13+ and pnpm 11 are required; `uv` fetches its own Python 3.12.
 pnpm install
 pnpm turbo build lint typecheck test     # the standard gate
 pnpm --filter @konusbitr/web dev
-pnpm codegen                             # Zod → pydantic; must be a no-op on a clean tree
 pnpm dev:infra                           # compose up backing services only (native hot reload)
 pnpm dev                                 # infra + native web + native worker
+pnpm infra:down                          # stop containers; infra:reset also drops volumes
+pnpm infra:logs / infra:ps / infra:psql  # same set exists as `make` targets
+pnpm codegen                             # Zod → pydantic; must be a no-op on a clean tree
 pnpm db:migrate                          # idempotent; runs on container start
 pnpm db:seed
 pnpm eval:retrieval                      # recall@8, MRR, context precision

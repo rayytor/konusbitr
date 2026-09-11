@@ -6,8 +6,8 @@ citations** — then drive the whole thing through a PDF.ai-wire-compatible `/v2
 REST API.
 
 > **Status: early.** This repository is being built phase by phase (see
-> [`phases/`](./phases)). Phase 01 lays the monorepo foundation; the product
-> itself ships at Phase 11.
+> [`phases/`](./phases)). Phases 01–02 lay the monorepo foundation and the
+> one-command local stack; the product itself ships at Phase 11.
 
 ## Why two runtimes
 
@@ -32,36 +32,57 @@ generated from them.
 | `packages/db` | Drizzle schema, migrations, scoped client (Phase 03) |
 | `packages/sdk` | Generated TypeScript client (Phase 13) |
 | `packages/tsconfig` | Shared strict TypeScript configuration |
-| `docker/` | Dockerfiles and Compose fragments (Phase 02) |
+| `docker/` | Dockerfiles and the scripts that bootstrap the stack |
 | `docs/` | Docs site, ADRs, coordinate and licensing references |
 
 ## Quickstart
 
-Requires **Node 22.13+**, **pnpm 11**, and **[uv](https://docs.astral.sh/uv/)**.
-You do not need a system Python: `uv` fetches the 3.12 interpreter itself.
+### Self-hosting: one command
+
+Docker is the only prerequisite.
+
+```bash
+cp .env.example .env
+docker compose up
+```
+
+That brings up Postgres with pgvector, Redis, MinIO, the web app and the worker,
+creates the storage bucket and enables the database extensions, with no manual
+steps. `http://localhost:3000/api/health` then returns
+`{ "ok": true, "version": "…" }` and the MinIO console is on
+`http://localhost:9001`.
+
+Add `--profile local-llm` for Ollama on `:11434` with a chat and an embedding
+model pre-pulled — the fully-offline mode that a hosted service cannot offer.
+
+The credentials in `.env.example` are development defaults. Change every one of
+them before exposing Konusbitr to a network.
+
+### Developing: backing services in Docker, code on the host
+
+Requires **Node 22.13+**, **pnpm 11**, **[uv](https://docs.astral.sh/uv/)** and
+Docker. You do not need a system Python: `uv` fetches the 3.12 interpreter
+itself.
 
 ```bash
 pnpm install
+pnpm dev:infra          # postgres, redis and minio in containers
+pnpm dev                # the same, plus native web and native worker
+```
+
+Running the app natively is what makes hot reload instant and lets a debugger
+attach normally. This is why `.env` points at `localhost`: `docker-compose.yml`
+substitutes container hostnames for its own two services.
+
+The standard gate, which is also what CI runs:
+
+```bash
 pnpm turbo build lint typecheck test
-```
-
-Run the web app:
-
-```bash
-pnpm --filter @konusbitr/web dev
-```
-
-`http://localhost:3000` serves the placeholder page and
-`http://localhost:3000/api/health` returns `{ "ok": true, "version": "…" }`.
-
-Run the Python worker's tests:
-
-```bash
 cd services/worker && uv sync && uv run pytest
 ```
 
-A one-command `docker compose up` arrives with **Phase 02 — Local
-Infrastructure**.
+`make help` lists the container shortcuts (`up`, `down`, `reset`, `logs`,
+`psql`); each one also exists as a `pnpm infra:*` script.
 
 ## Contributing
 
