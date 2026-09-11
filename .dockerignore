@@ -1,0 +1,52 @@
+# The build context is the repo root, so keep it small and keep host state out
+# of the images. Anything a build needs must be produced inside the Dockerfile,
+# never copied in from a developer's machine.
+
+.git
+.github
+.turbo
+.changeset
+
+# Installed and built on the host — never reused in an image, and node_modules
+# in particular carries host-platform native binaries.
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/build
+**/out
+**/*.tsbuildinfo
+
+# Python virtualenvs and caches.
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/.ruff_cache
+**/.pytest_cache
+**/.mypy_cache
+
+# Secrets. `.env` reaches containers through Compose `env_file`, at run time,
+# and must never be baked into a layer.
+.env
+.env.*
+!.env.example
+
+# Local data and coverage.
+/data
+**/coverage
+**/htmlcov
+**/.coverage
+
+# Docs and specs: they change constantly and would bust the build cache without
+# changing a single byte of either image. Only the root-level `*.md` files are
+# dropped — package READMEs stay, because `services/worker/pyproject.toml`
+# declares one and hatchling refuses to build without it.
+docs
+phases
+evals
+*.md
+
+.editorconfig
+.vscode
+.idea
+.DS_Store

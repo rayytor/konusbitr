@@ -22,6 +22,17 @@ export {
   TERMINAL_DOCUMENT_STATUSES,
 } from './document.js';
 export {
+  CREDITS_MODES,
+  type Env,
+  EnvSchema,
+  EnvValidationError,
+  LLM_PROVIDERS,
+  loadEnv,
+  NODE_ENVS,
+  parseEnv,
+  resetEnvCache,
+} from './env.js';
+export {
   JOB_STAGES,
   type JobProgress,
   JobProgressSchema,

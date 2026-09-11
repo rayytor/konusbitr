@@ -63,3 +63,154 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  infra:
+    name: Backing services
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      # Errors only. This phase is shell-heavy and a real bug here breaks a
+      # self-hoster's first command; style opinions are not worth a red build.
+      - name: Shell check
+        run: |
+          shellcheck --severity=error \
+            scripts/infra.sh scripts/dev.sh \
+            docker/minio/init.sh docker/ollama/pull-models.sh
+
+      - name: Compose file is valid
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          docker compose --profile local-llm config --quiet
+
+      # This is the `pnpm dev:infra` path: backing services in containers, app
+      # code native. It has to publish every port on localhost, because that is
+      # what a natively-run web app and worker connect to.
+      - name: pnpm dev:infra
+        run: ./scripts/infra.sh up
+
+      - name: Every backing service is reachable from the host
+        run: |
+          for port in 5432 6379 9000 9001; do
+            nc -z localhost "$port" || { echo "nothing listening on $port"; exit 1; }
+          done
+
+      - name: Postgres has the extensions the pipeline needs
+        run: |
+          extensions=$(docker compose exec -T postgres \
+            psql -U konusbitr -d konusbitr -tAc 'SELECT extname FROM pg_extension ORDER BY 1')
+          echo "$extensions"
+          for extension in vector pg_trgm unaccent; do
+            echo "$extensions" | grep -qx "$extension" \
+              || { echo "missing extension: $extension"; exit 1; }
+          done
+
+      - name: The konusbitr bucket exists
+        run: |
+          docker compose run --rm --entrypoint /bin/sh minio-init -c '
+            mc alias set probe "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" > /dev/null
+            mc ls "probe/$S3_BUCKET"
+          '
+
+      - name: Bootstrap is idempotent
+        run: ./scripts/infra.sh up
+
+      - name: Ollama serves on 11434 under the local-llm profile
+        run: |
+          # Only the server: pulling models would cost gigabytes, and
+          # `ollama-init` is exercised by self-hosters rather than by CI.
+          docker compose --profile local-llm up -d ollama
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:11434/ > /dev/null && break
+            sleep 2
+          done
+          curl -fsS http://localhost:11434/
+
+      - name: Teardown
+        if: always()
+        run: ./scripts/infra.sh reset
+
+  images:
+    name: Image ${{ matrix.image }} (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [web, worker]
+        # Native runners rather than QEMU: emulated `next build` takes long
+        # enough to time the job out. `ubuntu-24.04-arm` is free for public
+        # repositories.
+        platform:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.Dockerfile
+          platforms: linux/${{ matrix.platform.arch }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform.arch }}
+
+  compose:
+    name: docker compose up
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Exactly the two commands the README promises a self-hoster, with nothing
+      # else in between. If this step ever needs a workaround, the workaround
+      # belongs in the Compose file instead.
+      - name: cp .env.example .env && docker compose up
+        run: |
+          cp .env.example .env
+          docker compose up -d --build
+          ./scripts/infra.sh wait
+
+      - name: GET /api/health returns ok
+        run: |
+          body=$(curl -fsS http://localhost:3000/api/health)
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+
+      - name: The worker is healthy
+        run: |
+          status=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q worker)")
+          echo "worker: $status"
+          test "$status" = healthy
+
+      - name: A missing variable stops the web container, and says which
+        run: |
+          if output=$(docker compose run --rm --no-deps -e DATABASE_URL= web 2>&1); then
+            echo "expected a non-zero exit"; echo "$output"; exit 1
+          fi
+          echo "$output"
+          echo "$output" | grep -q 'DATABASE_URL: is required but was not set'
+
+      - name: A missing variable stops the worker container, and says which
+        run: |
+          if output=$(docker compose run --rm --no-deps -e REDIS_URL= worker 2>&1); then
+            echo "expected a non-zero exit"; echo "$output"; exit 1
+          fi
+          echo "$output"
+          echo "$output" | grep -q 'REDIS_URL: is required but was not set'
+
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Teardown
+        if: always()
+        run: docker compose down --remove-orphans --volumes
