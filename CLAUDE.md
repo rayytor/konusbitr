@@ -4,16 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**There is no code yet.** The repo currently contains only specifications:
+**Phase 01 is done; Phase 02 is next.** The repo is a monorepo skeleton that
+installs, builds, lints, typechecks and tests on both runtimes, with no product
+features yet. What exists:
+
+- `apps/web` — Next.js 15 with the sepia theme tokens, a placeholder `/` and
+  `GET /api/health`. No auth, no database.
+- `packages/shared` — the four seed Zod contracts (`Citation`,
+  `DocumentStatus`, `ParseSettings`, `JobProgress`).
+- `services/worker` — a Python 3.12 package under uv, pytest and ruff green.
+  No FastAPI or arq yet (Phase 06).
+- `packages/db`, `packages/sdk`, `apps/extension`, `docs/`, `docker/` —
+  placeholders whose READMEs name the phase that fills them in.
+
+The specifications remain authoritative for everything not yet built:
 
 - `design.md` — the complete UI/visual design specification.
 - `phases/01..15-*.md` — a 15-phase implementation plan. Each phase file is
   self-contained (context, scope, non-goals, acceptance criteria) and assumes
   every earlier phase is merged and green.
-- `phases/README.md` — the phase index and cross-cutting conventions.
-
-Not a git repository yet. `phases/README.md` links `../implementation_plan_1.md`,
-which does not exist — the phase files are the authoritative plan.
+- `phases/README.md` — the phase index and cross-cutting conventions. It links
+  `../implementation_plan_1.md`, which does not exist — the phase files are the
+  authoritative plan.
 
 Work here means **implementing a phase**. Read the phase file first and treat its
 acceptance-criteria checklist as the definition of done; do not skip ahead to a
@@ -121,8 +133,11 @@ These cut across many files; violating one breaks the product rather than one fe
 
 ## Commands
 
-None of these exist yet — Phase 01 and 02 create them. Implement them with exactly
-these names, because every later phase assumes them.
+The first block exists as of Phase 01; the rest are created by Phase 02 and
+later. Implement them with exactly these names, because every later phase
+assumes them.
+
+Node 22.13+ and pnpm 11 are required; `uv` fetches its own Python 3.12.
 
 ```bash
 pnpm install
