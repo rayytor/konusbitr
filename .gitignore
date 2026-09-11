@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Caches
+.turbo/
+.cache/
+.eslintcache
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+coverage/
+htmlcov/
+.coverage
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local data (Phase 02+)
+/data/
