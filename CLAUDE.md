@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–02 are done; Phase 03 is next.** `cp .env.example .env &&
+**Phases 01–03 are done; Phase 04 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole backing stack, and the repo installs,
-builds, lints, typechecks and tests on both runtimes — but there are no product
-features and no database schema yet. What exists:
+builds, lints, typechecks and tests on both runtimes. The database schema is
+complete with 13 tables, pgvector, full-text search, and the docId cache
+constraint. What exists:
 
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
   (bucket and dev access key created automatically), the web image and the
@@ -23,7 +24,11 @@ features and no database schema yet. What exists:
   `settings.py` is the pydantic-settings half of the same contract; `__main__`
   validates it, heartbeats for the container healthcheck and idles. No FastAPI
   or arq yet (Phase 06).
-- `packages/db`, `packages/sdk`, `apps/extension`, `docs/` — placeholders whose
+- `packages/db` — the complete Drizzle schema (13 tables), migrations,
+  `scopedDb(orgId)` multi-tenancy helper, `newId(prefix)` ID generator,
+  migration runner (`pnpm db:migrate`) and seed script (`pnpm db:seed`).
+  Integration-tested with Testcontainers against real Postgres with pgvector.
+- `packages/sdk`, `apps/extension`, `docs/` — placeholders whose
   READMEs name the phase that fills them in.
 
 The specifications remain authoritative for everything not yet built:
