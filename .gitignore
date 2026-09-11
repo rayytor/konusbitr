@@ -35,5 +35,11 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 
-# Local data (Phase 02+)
+# Local data. The Compose stack keeps state in named volumes, but a bind-mounted
+# ./data is a common local variation.
 /data/
+
+# Per-machine Compose tweaks (extra ports, a GPU device, a different image).
+# Compose merges this automatically and it is nobody else's business.
+docker-compose.override.yml
+docker-compose.override.yaml
