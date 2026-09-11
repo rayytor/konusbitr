@@ -1,4 +1,10 @@
 {
   "extends": "@konusbitr/tsconfig/library.json",
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "drizzle.config.ts",
+    "vitest.config.ts",
+    "vitest.config.integration.ts"
+  ]
 }
