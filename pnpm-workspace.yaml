@@ -7,8 +7,11 @@ packages:
 # native binary.
 allowBuilds:
   "@biomejs/biome": true
+  cpu-features: true
   esbuild: true
   lefthook: true
+  protobufjs: true
+  ssh2: true
   unrs-resolver: true
 
 # New releases are held back for a day as a supply-chain speed bump. These two
