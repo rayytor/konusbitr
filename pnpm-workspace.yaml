@@ -1,0 +1,18 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Postinstall scripts are denied by default. Anything listed here has been
+# looked at and needs to run — all four fetch or link a platform-specific
+# native binary.
+allowBuilds:
+  "@biomejs/biome": true
+  esbuild: true
+  lefthook: true
+  unrs-resolver: true
+
+# New releases are held back for a day as a supply-chain speed bump. These two
+# were wanted before the window elapsed and were reviewed.
+minimumReleaseAgeExclude:
+  - lucide-react@1.45.0
+  - zod@4.6.2
