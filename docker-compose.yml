@@ -1,0 +1,219 @@
+# Konusbitr, self-hosted.
+#
+#   cp .env.example .env && docker compose up
+#
+# That is the whole setup. This file is a headline feature of the project, not
+# developer convenience — a self-hoster's first impression is whether one
+# command produces a working stack — so it carries no manual steps, no
+# post-install shell, and no assumptions about the host beyond Docker itself.
+#
+# Profiles:
+#   (default)   postgres, redis, minio, minio-init, web, worker
+#   local-llm   adds Ollama and pre-pulls a chat + embedding model, which is
+#               what makes OFFLINE_MODE=true a real claim rather than a flag
+#   advanced    reserved for the AGPL / commercially-restricted parser extras
+#               (PyMuPDF, Marker) that Phase 12 adds. The default images must
+#               stay cleanly Apache-2.0 compatible, and a CI licence audit
+#               asserts it, so nothing may be added to the services below that
+#               would pull those in.
+#
+# Ports, credentials and model names all come from `.env`; the defaults after
+# `:-` exist so that a bare `docker compose config` still resolves.
+
+name: konusbitr
+
+services:
+  # --------------------------------------------------------------- Postgres --
+  # One database holds embeddings, full-text search and JSONB parse artifacts,
+  # so an operator has exactly one thing to back up. Extensions are enabled by
+  # the init script; tables are owned by migrations (Phase 03), never by this
+  # file.
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-konusbitr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-konusbitr}
+      POSTGRES_DB: ${POSTGRES_DB:-konusbitr}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Runs once, on an empty data directory, before anything can connect.
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U "${POSTGRES_USER:-konusbitr}" -d "${POSTGRES_DB:-konusbitr}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # ------------------------------------------------------------------ Redis --
+  # The job queue, the progress pub/sub channel and rate-limit counters. AOF is
+  # on because a queue that loses jobs on restart is worse than no queue.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--appendfsync', 'everysec']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  # ------------------------------------------------------------------ MinIO --
+  # S3-compatible object storage, so the same code path runs against S3, R2 or
+  # B2 in production with only S3_ENDPOINT changed.
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-konusbitr-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-konusbitr-root-secret}
+    ports:
+      - '${MINIO_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      # `mc ready` probes /minio/health/live from inside the container. The
+      # image no longer ships curl, and this is what MinIO documents.
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # One-shot: create the bucket and an unprivileged access key, then exit 0.
+  # Everything that follows depends on it having completed, so a first boot can
+  # never race an upload against a missing bucket.
+  minio-init:
+    image: minio/mc
+    restart: 'no'
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-konusbitr-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-konusbitr-root-secret}
+      S3_BUCKET: ${S3_BUCKET:-konusbitr}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-konusbitr}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-konusbitr-dev-secret}
+    entrypoint: ['/bin/sh', '/init.sh']
+    volumes:
+      - ./docker/minio/init.sh:/init.sh:ro
+
+  # -------------------------------------------------------------------- Web --
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      # Container hostnames override the localhost URLs in `.env`, which are
+      # there for natively-run processes. See the header of `.env.example`.
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-konusbitr}:${POSTGRES_PASSWORD:-konusbitr}@postgres:5432/${POSTGRES_DB:-konusbitr}
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      OLLAMA_BASE_URL: http://ollama:11434
+      HOSTNAME: 0.0.0.0
+      PORT: '3000'
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # ----------------------------------------------------------------- Worker --
+  # The Python half of the pipeline. Until Phase 06 it validates its settings,
+  # reports itself healthy and idles: enough to prove the image builds, the env
+  # contract holds on both runtimes, and Compose ordering is right.
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-konusbitr}:${POSTGRES_PASSWORD:-konusbitr}@postgres:5432/${POSTGRES_DB:-konusbitr}
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      OLLAMA_BASE_URL: http://ollama:11434
+    healthcheck:
+      test: ['CMD', 'python', '-m', 'konusbitr_worker.health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # ----------------------------------------------------- Profile: local-llm --
+  ollama:
+    image: ollama/ollama
+    profiles: [local-llm]
+    restart: unless-stopped
+    ports:
+      - '${OLLAMA_PORT:-11434}:11434'
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ['CMD-SHELL', 'ollama list > /dev/null 2>&1']
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  # One-shot: pull a chat and an embedding model so the offline stack is usable
+  # the moment it comes up rather than on the first slow query.
+  ollama-init:
+    image: ollama/ollama
+    profiles: [local-llm]
+    restart: 'no'
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2:3b}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+    entrypoint: ['/bin/sh', '/pull-models.sh']
+    volumes:
+      - ./docker/ollama/pull-models.sh:/pull-models.sh:ro
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  ollama-models:
