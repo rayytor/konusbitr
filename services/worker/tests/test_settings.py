@@ -7,6 +7,8 @@ to what, and what an operator is told when something is wrong.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from konusbitr_worker.settings import EnvValidationError, load_settings
@@ -122,3 +124,28 @@ def test_settings_are_immutable(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(Exception):  # noqa: B017 - pydantic raises ValidationError
         settings.redis_url = "redis://elsewhere:6379"  # type: ignore[misc]
+
+
+def test_env_file_is_resolved_at_call_time_not_import_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`KONUSBITR_ENV_FILE` must steer the lookup on every call.
+
+    Resolving the `.env` once at import time silently pinned whichever file
+    happened to exist then, so a developer with a real `.env` on disk got a
+    different result from CI, which has none.
+    """
+    env_file = tmp_path / ".env"
+    env_file.write_text("REDIS_URL=redis://from-the-env-file:6379\n", encoding="utf-8")
+    monkeypatch.setenv("KONUSBITR_ENV_FILE", str(env_file))
+
+    for key, value in VALID.items():
+        if key != "REDIS_URL":
+            monkeypatch.setenv(key, value)
+
+    assert load_settings().redis_url == "redis://from-the-env-file:6379"
+
+    monkeypatch.setenv("KONUSBITR_ENV_FILE", str(tmp_path / "nonexistent"))
+    with pytest.raises(EnvValidationError) as caught:
+        load_settings()
+    assert "REDIS_URL: is required but was not set" in str(caught.value)

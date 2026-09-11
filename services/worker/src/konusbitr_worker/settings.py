@@ -74,7 +74,10 @@ class Settings(BaseSettings):
     """Every variable the worker reads, with the same defaults as the Zod schema."""
 
     model_config = SettingsConfigDict(
-        env_file=_find_env_file(),
+        # Resolved per-instantiation by `load_settings`, never baked in at import
+        # time: a module-level lookup would freeze whichever `.env` happened to
+        # exist when the module was first imported.
+        env_file=None,
         env_file_encoding="utf-8",
         case_sensitive=False,
         # The web app has variables the worker does not, and the same `.env`
@@ -172,6 +175,7 @@ def _describe(error: ValidationError) -> list[str]:
 
 def load_settings(**overrides: Any) -> Settings:
     """Validate the environment, raising :class:`EnvValidationError` on any problem."""
+    overrides.setdefault("_env_file", _find_env_file())
     try:
         return Settings(**overrides)
     except ValidationError as error:
