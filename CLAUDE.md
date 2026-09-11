@@ -1,0 +1,184 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Current state of this repository
+
+**There is no code yet.** The repo currently contains only specifications:
+
+- `design.md` — the complete UI/visual design specification.
+- `phases/01..15-*.md` — a 15-phase implementation plan. Each phase file is
+  self-contained (context, scope, non-goals, acceptance criteria) and assumes
+  every earlier phase is merged and green.
+- `phases/README.md` — the phase index and cross-cutting conventions.
+
+Not a git repository yet. `phases/README.md` links `../implementation_plan_1.md`,
+which does not exist — the phase files are the authoritative plan.
+
+Work here means **implementing a phase**. Read the phase file first and treat its
+acceptance-criteria checklist as the definition of done; do not skip ahead to a
+later phase's scope (each file has an explicit non-goals section).
+
+## What Konusbitr is
+
+An open-source, self-hostable alternative to PDF.ai: upload documents, chat with
+them, get answers with **clickable page-accurate citations**, and drive the whole
+thing through a PDF.ai-wire-compatible `/v2` REST API.
+
+Milestones: **Phase 11** = usable product (MVP ships). **Phase 13** = usable API
+platform. **Phase 15** = complete alternative, `v1.0.0`.
+
+## Architecture
+
+### Two runtimes, one hard seam
+
+TypeScript owns the product surface (web app, API, auth, billing) because the
+streaming-chat-UI ecosystem lives there. Python owns the document pipeline because
+every serious PDF layout/OCR library (Docling, PaddleOCR, Surya) is Python.
+
+**The entire contract between them is a Redis queue plus JSON payloads** — no
+shared ORM, no RPC framework, no imports across the boundary. Never add a
+cross-language import or a shared database access layer; that seam is what keeps a
+two-language codebase contributable.
+
+The Zod schema in `packages/shared` is the source of truth for the job payload;
+the pydantic model is **generated** from it via `pnpm codegen`, and CI fails on
+drift. Contract drift is the main failure mode of this design.
+
+### Planned layout
+
+```
+apps/web           Next.js 15 App Router, React 19, Tailwind v4, shadcn/ui
+apps/extension     WXT Chrome extension (Phase 15)
+services/worker    Python 3.12, FastAPI + arq, package konusbitr_worker
+packages/db        Drizzle schema, migrations, client
+packages/shared    Zod v4 schemas + inferred types (cross-boundary source of truth)
+packages/storage   S3-compatible client (MinIO/S3/R2/B2)
+packages/ai        LiteLLM model router + versioned prompt files
+packages/retrieval Hybrid search, RRF fusion, rerank
+packages/sdk       Generated TS client (Phase 13)
+docker/            Dockerfiles + compose fragments
+evals/             Golden set + eval harness results
+docs/              Docs site, ADRs, coordinates.md, licensing.md
+```
+
+### The data flow
+
+```
+upload (presigned PUT, direct to storage — never through the Next.js server)
+  → content_hash + settings_hash → docId cache check
+  → enqueue parse job on konusbitr:jobs
+  → worker: fetch → validate → text-coverage tier → Docling parse
+           → normalize to parse artifact → persist parse_results/pages/thumbnails
+  → chunk (layout-aware) → embed → upsert pgvector
+  → progress published to konusbitr:progress:{documentId}
+  → browser reads progress over SSE at /api/documents/:id/events
+```
+
+Query path: `retrieve()` → dense (pgvector HNSW) + sparse (Postgres `tsv`) → RRF
+fusion (k=60) → cross-encoder rerank → top 8 → prompt → `streamText` → citation
+extraction → **mechanical quote verification** → client.
+
+### Load-bearing invariants
+
+These cut across many files; violating one breaks the product rather than one feature.
+
+- **The docId cache is architecture, not optimization.** Cache key is
+  `sha256(file bytes)` + `sha256(canonical_json({quality, langList sorted, llm}))`,
+  enforced by a `UNIQUE (content_hash, settings_hash)` constraint on
+  `parse_results`. A repeat upload must return `ready` in milliseconds with zero
+  credits and no job. Cross-org reuse is **off by default**.
+- **One coordinate convention:** PDF user-space points, origin **top-left**, y
+  increasing downward, unrotated page. The worker normalizes Docling/OCR output
+  into it and applies page rotation; `pages` stores width/height. The viewer then
+  only applies a scale factor — if the viewer needs more than that, fix the
+  worker, not the viewer. Documented in `docs/coordinates.md`.
+- **Citations are verified mechanically before they reach the client.** Every
+  quote must actually appear in the parse result for the page it cites
+  (exact match, then fuzzy for hyphenation/ligature noise). Unverifiable citations
+  are dropped and logged; the rejection rate is a health metric. Target citation
+  accuracy ≥ 98% (≥ 95% on scans).
+- **Tenancy:** `org_id` is denormalized onto `chunks` so retrieval never joins to
+  filter. Every query path goes through `scopedDb(orgId)`; every route through
+  `withAuth`. Both are backed by tests that fail when a new route or query bypasses them.
+- **All model calls go through the LiteLLM router.** Never import a provider SDK
+  directly. Roles (`chat`, `embedding`, `rerank`, `vision`) are configured
+  independently. `OFFLINE_MODE=true` must make any non-local endpoint raise
+  immediately — it is a headline claim and is tested.
+- **Prompts live in versioned files** under `packages/ai/prompts/`, never inline
+  string literals, so an eval score change can be attributed to a prompt change.
+- **Document text is untrusted data.** It never becomes instructions, never drives
+  tool execution, and never reaches Sentry.
+- **Ids are prefixed ULID-ish strings** (`doc_…`, `chk_…`, `org_…`, `key_…`) via a
+  `newId(prefix)` helper. Storage keys are derived from generated ids, never from
+  user input.
+- **Fail loudly at boot** on missing/malformed env — Zod on the TS side,
+  pydantic-settings on the Python side. Never lazily at first use.
+- **No WebSockets anywhere.** Progress and streaming use SSE.
+- **Licensing discipline:** the default build must be cleanly Apache-2.0
+  compatible. AGPL/commercially-restricted dependencies (PyMuPDF, Marker) live
+  only behind the Compose `advanced` profile, asserted by a CI license audit.
+
+## Commands
+
+None of these exist yet — Phase 01 and 02 create them. Implement them with exactly
+these names, because every later phase assumes them.
+
+```bash
+pnpm install
+pnpm turbo build lint typecheck test     # the standard gate
+pnpm --filter @konusbitr/web dev
+pnpm codegen                             # Zod → pydantic; must be a no-op on a clean tree
+pnpm dev:infra                           # compose up backing services only (native hot reload)
+pnpm dev                                 # infra + native web + native worker
+pnpm db:migrate                          # idempotent; runs on container start
+pnpm db:seed
+pnpm eval:retrieval                      # recall@8, MRR, context precision
+pnpm eval:chat                           # Ragas + citation accuracy
+```
+
+Python side (`services/worker`): `uv sync` then `uv run pytest`. Use `uv` — not
+pip or poetry.
+
+Single test: `pnpm vitest run path/to/file.test.ts -t "name"` for TS,
+`uv run pytest path/to/test.py::test_name` for Python.
+
+Infra: `docker compose up` (default profile), `--profile local-llm` adds Ollama,
+`--profile advanced` adds the restrictively-licensed extras.
+
+## Conventions
+
+- Package scope `@konusbitr/*`; Python package `konusbitr_worker`.
+- TypeScript strict everywhere, plus `noUncheckedIndexedAccess` and
+  `verbatimModuleSyntax`. Zod v4 for all boundary validation. Drizzle for all SQL.
+- Conventional commits, enforced by a commitlint hook. Each phase is one or more
+  PRs, never one giant commit. Changesets for versioning.
+- Apache-2.0.
+- Nothing merges without typecheck, lint, unit tests, **and** the phase's
+  acceptance criteria.
+- Performance budgets are acceptance criteria, not aspirations: 50-page text PDF
+  parsed < 20s; 50-page scanned PDF < 2min on CPU OCR; retrieval p95 < 400ms on
+  100k chunks; chat p95 TTFT < 1.5s. CI fails on regression.
+- Eval gates: recall@8 dropping more than 2 points fails CI; faithfulness dropping
+  more than 2 points fails CI.
+
+## Design rules (from `design.md`)
+
+Read `design.md` before writing any UI. It is a specification, not a mood board,
+and several of its rules are absolute:
+
+- **Instrument Serif** for headings/display; **LINE Seed JP** for all other UI text.
+- **Sepia light is the default theme** — warm archival paper, never pure white.
+  Tokens are defined in `design.md` §3.
+- **Never use emoji in the product UI.** Use icons — simple, monoline, monochrome.
+- **Hover must not animate anything.** No transform, scale, slide, fade, or
+  rotation on hover; only the pointer cursor changes. Motion is reserved for
+  purposeful transitions (menus, dialogs, sidebar, citation focus) at
+  120/180/280ms, respecting `prefers-reduced-motion`.
+- Minimal, document-first: avoid unnecessary cards, borders, shadows, gradients.
+  Hierarchy comes from typography and whitespace.
+- Never communicate state by color alone; accessibility is never traded for
+  minimalism (keyboard navigation, focus rings, ARIA live regions for streaming,
+  screen-reader labels on icon-only controls).
+- Responsive down to 375px by simplifying, not by cramming the three-column
+  desktop layout onto a phone.
