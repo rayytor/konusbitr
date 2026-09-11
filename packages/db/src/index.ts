@@ -1,8 +1,38 @@
 /**
  * `@konusbitr/db` — Drizzle schema, migrations and the scoped client.
  *
- * Placeholder until Phase 03. Every SQL query in Konusbitr goes through Drizzle
- * here; no other package talks to Postgres, and no query path bypasses the
- * `scopedDb(orgId)` helper this package will own.
+ * Every SQL query in Konusbitr goes through Drizzle here; no other package
+ * talks to Postgres, and no query path bypasses the `scopedDb(orgId)` helper
+ * this package owns.
  */
-export {};
+
+export type { Database } from './client.js';
+
+// Client
+export { createDb } from './client.js';
+export type { IdPrefix } from './id.js';
+// ID generation
+export { ID_PREFIXES, newId } from './id.js';
+// Migrations
+export { migrate } from './migrate.js';
+// Schema tables
+export {
+  apiKeys,
+  chunks,
+  conversations,
+  creditLedger,
+  documents,
+  extractions,
+  folders,
+  jobs,
+  membershipRoleEnum,
+  memberships,
+  messages,
+  organizations,
+  pages,
+  parseResults,
+  users,
+} from './schema/index.js';
+export type { ScopedDb } from './scoped.js';
+// Multi-tenancy
+export { scopedDb } from './scoped.js';
