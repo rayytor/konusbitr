@@ -1,0 +1,37 @@
+import { createId } from '@paralleldrive/cuid2';
+
+/**
+ * Generate a prefixed, collision-resistant, sortable-ish ID.
+ *
+ * Format: `prefix_<cuid2>` — readable in logs, safe in URLs, and unique
+ * without coordination. Every table in Konusbitr uses this; raw UUIDs and
+ * auto-incrementing integers are banned.
+ *
+ * @example
+ * ```ts
+ * newId('doc');  // "doc_clx1abc..."
+ * newId('org');  // "org_clx1def..."
+ * ```
+ */
+export function newId(prefix: string): string {
+  return `${prefix}_${createId()}`;
+}
+
+/** Known ID prefixes used across the schema. */
+export const ID_PREFIXES = {
+  user: 'usr',
+  organization: 'org',
+  apiKey: 'key',
+  folder: 'fld',
+  document: 'doc',
+  parseResult: 'prs',
+  page: 'pag',
+  chunk: 'chk',
+  conversation: 'cnv',
+  message: 'msg',
+  extraction: 'ext',
+  job: 'job',
+  creditLedger: 'crl',
+} as const;
+
+export type IdPrefix = (typeof ID_PREFIXES)[keyof typeof ID_PREFIXES];
