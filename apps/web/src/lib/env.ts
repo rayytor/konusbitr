@@ -41,12 +41,9 @@ export const WebEnvSchema = EnvSchema.extend({
    * Signs session cookies and every short-lived token. Rotating it logs
    * everyone out, which is the intended behaviour after a leak.
    */
-  AUTH_SECRET: z
-    .string()
-    .trim()
-    .min(32, {
-      message: 'must be at least 32 characters — generate with `openssl rand -base64 32`',
-    }),
+  AUTH_SECRET: z.string().trim().min(32, {
+    message: 'must be at least 32 characters — generate with `openssl rand -base64 32`',
+  }),
 
   GOOGLE_CLIENT_ID: nonEmpty.optional(),
   GOOGLE_CLIENT_SECRET: nonEmpty.optional(),

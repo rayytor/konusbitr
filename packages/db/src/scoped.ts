@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';

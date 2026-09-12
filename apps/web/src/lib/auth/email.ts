@@ -33,13 +33,13 @@ function renderText(message: AuthEmail): string {
 }
 
 function renderHtml(message: AuthEmail): string {
-  const escape = (value: string) =>
+  const esc = (value: string) =>
     value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   return [
     '<div style="font-family:ui-sans-serif,system-ui,sans-serif;color:#29251f">',
-    `<p>${escape(message.body)}</p>`,
-    `<p><a href="${escape(message.url)}">${escape(message.url)}</a></p>`,
+    `<p>${esc(message.body)}</p>`,
+    `<p><a href="${esc(message.url)}">${esc(message.url)}</a></p>`,
     '</div>',
   ].join('');
 }
@@ -48,7 +48,6 @@ function renderHtml(message: AuthEmail): string {
 export function createLogMailer(): Mailer {
   return {
     async send(message) {
-      // biome-ignore lint/suspicious/noConsole: this *is* the delivery mechanism.
       console.warn(
         [
           '',
