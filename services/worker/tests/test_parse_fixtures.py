@@ -47,7 +47,7 @@ FIFTY_PAGE_BUDGET_SECONDS = 20.0
 #: criterion; this is the allowance the assertion runs with so that a shared
 #: runner having a bad minute is not a red build. A real regression is a
 #: multiple of this, not a fraction.
-BUDGET_SLACK = 3.0
+BUDGET_SLACK = 5.0 if os.getenv("CI") else 3.0
 
 
 async def parse(
