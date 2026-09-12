@@ -16,10 +16,12 @@ because the streaming-chat-UI ecosystem lives there. Python owns the document
 pipeline because every serious PDF layout and OCR library (Docling, PaddleOCR,
 Surya) is Python.
 
-The entire contract between them is a Redis queue plus JSON payloads: no shared
-ORM, no RPC framework, no imports across the boundary. The Zod schemas in
-`packages/shared` are the source of truth, and the worker's pydantic models are
-generated from them.
+The entire contract between them is a Redis stream plus JSON payloads: no
+shared ORM, no RPC framework, no imports across the boundary. The Zod schemas
+in `packages/shared` are the source of truth, and the worker's pydantic models
+— along with the Redis key names themselves — are generated from them, with CI
+failing on any drift. [`docs/adr/0001-queue.md`](docs/adr/0001-queue.md)
+records why the transport is a plain stream rather than a job library.
 
 ## Layout
 
@@ -27,7 +29,7 @@ generated from them.
 |---|---|
 | `apps/web` | Next.js 15 App Router, React 19, Tailwind v4, shadcn/ui |
 | `apps/extension` | WXT Chrome extension (Phase 15) |
-| `services/worker` | Python 3.12, FastAPI + arq, package `konusbitr_worker` |
+| `services/worker` | Python 3.12, FastAPI + a Redis-stream consumer, package `konusbitr_worker` |
 | `packages/shared` | Zod schemas and types — the cross-boundary source of truth |
 | `packages/db` | Drizzle schema, migrations, scoped client |
 | `packages/sdk` | Generated TypeScript client (Phase 13) |
@@ -49,7 +51,8 @@ docker compose up
 That brings up Postgres with pgvector, Redis, MinIO, the web app and the worker,
 creates the storage bucket, enables the database extensions and applies the
 database migrations, with no manual steps. `http://localhost:3000/api/health`
-then returns `{ "ok": true, "version": "…" }` and the MinIO console is on
+then returns `{ "ok": true, "version": "…" }`, the worker answers on
+`http://localhost:8081/health` and `/ready`, and the MinIO console is on
 `http://localhost:9001`.
 
 Add `--profile local-llm` for Ollama on `:11434` with a chat and an embedding

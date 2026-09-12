@@ -4,14 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–05 are done; Phase 06 is next.** `cp .env.example .env &&
-docker compose up` brings up the whole backing stack, and the repo installs,
-builds, lints, typechecks and tests on both runtimes. The database schema is
-complete, every request into the app resolves to an authenticated principal
-scoped to one organization, and documents can be uploaded (direct-to-storage
-presigned PUTs), imported from URLs (with SSRF protection), listed, read, and
-deleted. The docId cache is live: re-uploading the same file returns the same
-document in milliseconds with zero cost and no job. What exists:
+**Phases 01–06 are done; Phase 07 is next.** `cp .env.example .env &&
+docker compose up` brings up the whole stack, and the repo installs, builds,
+lints, typechecks and tests on both runtimes. The database schema is complete,
+every request into the app resolves to an authenticated principal scoped to one
+organization, and documents can be uploaded (direct-to-storage presigned PUTs),
+imported from URLs (with SSRF protection), listed, read, and deleted. The docId
+cache is live: re-uploading the same file returns the same document in
+milliseconds with zero cost and no job. **Both runtimes now run**: a job
+enqueued by TypeScript is consumed by the Python worker, which walks the
+document from `queued` to `ready` and publishes progress the browser reads over
+SSE — the parse itself is a stub until Phase 07. What exists:
 
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
   (bucket and dev access key created automatically), a `migrate` one-shot that
@@ -29,10 +32,16 @@ document in milliseconds with zero cost and no job. What exists:
   (`/library`) with drag-and-drop upload, URL import, status badges, and
   deletion. `src/lib/ingest/` owns the intake pipeline: SSRF guard, PDF
   validation (magic bytes, encryption, bomb detection), streaming SHA-256
-  hashing, and the docId cache resolver. `src/lib/upload-client.ts` is the
-  browser-side uploader (XHR direct-to-storage, multipart above 16MiB,
-  progress events). Standalone output for the container; env validated at boot
-  from `src/instrumentation.ts`. No parsing or chat yet (Phase 06+).
+  hashing, the docId cache resolver, and `queue.ts`, which appends the job to
+  the Redis stream. Phase 06 adds `/api/documents/:id/events` (SSE progress —
+  subscribe, replay from the `jobs` row, then flush, so a mid-parse refresh
+  resumes) and `/api/admin/jobs/failed` (the operator view of failed jobs and
+  the dead-letter list; owner-only and closed to API keys).
+  `src/lib/upload-client.ts` is the browser-side uploader (XHR
+  direct-to-storage, multipart above 16MiB, progress events);
+  `src/lib/use-document-progress.ts` is the `EventSource` hook the library page
+  watches with. Standalone output for the container; env validated at boot from
+  `src/instrumentation.ts`. No chunking, retrieval or chat yet (Phase 08+).
 - `packages/storage` — the S3-compatible object store client (AWS SDK v3).
   `presignPut`, `presignGet`, `head`, `delete`, `deletePrefix`, `streamGet`,
   `uploadStream`, `presignMultipart`, `completeMultipart`, `abortMultipart`.
@@ -40,23 +49,35 @@ document in milliseconds with zero cost and no job. What exists:
   derived from generated ids, never from user input. Unit and Testcontainers
   integration-tested against real MinIO.
 - `packages/shared` — the Zod contracts (`Citation`, `DocumentStatus`,
-  `ParseSettings`, `JobProgress`) plus `upload.ts` (intake request/response
-  schemas, MIME allowlist, filename sanitization) and `env.ts`, the TypeScript
-  half of the environment contract.
+  `ParseSettings`) plus `upload.ts` (intake request/response schemas, MIME
+  allowlist, filename sanitization) and `env.ts`, the TypeScript half of the
+  environment contract. `job.ts` and `queue.ts` are the cross-runtime job
+  contract — `JobPayload`, `JobProgress`, the stage and error-code
+  vocabularies, `STAGE_PERCENT`, and the Redis key names — and
+  `scripts/emit-contract.ts` turns them into the JSON Schema and the constants
+  that `pnpm codegen` generates the worker's `contracts.py` from.
 - `services/worker` — a Python 3.12 package under uv, pytest and ruff green.
-  `settings.py` is the pydantic-settings half of the same contract; `__main__`
-  validates it, heartbeats for the container healthcheck and idles. No FastAPI
-  or arq yet (Phase 06).
+  FastAPI serves `/health` (the job loop plus Redis) and `/ready` (Postgres,
+  Redis, storage) on `WORKER_PORT`; the consumer loop runs inside the app's
+  lifespan. `contracts.py` is generated and must never be hand-edited;
+  `queue.py` owns the stream, `runtime.py` the loop (concurrency, per-job
+  timeout, retry classification, dead-lettering), `db.py` the worker's own raw
+  SQL, and `pipeline.py` the work — a stub that sleeps through the stages and
+  writes a placeholder parse result until Phase 07 replaces its body.
 - `packages/db` — the complete Drizzle schema (17 tables, auth included),
   migrations, the `scopedDb(orgId)` multi-tenancy helper with document CRUD
   queries (`listDocuments`, `documentById`, `documentByHashes`,
-  `createDocument`, `deleteDocument`), `newId(prefix)`, the migration runner
-  (`pnpm db:migrate`) and the seed script (`pnpm db:seed`).
+  `createDocument`, `deleteDocument`) and job queries
+  (`latestJobForDocument`, `listFailedJobs`), `newId(prefix)`, the migration
+  runner (`pnpm db:migrate`) and the seed script (`pnpm db:seed`).
   `packages/db/src/queries/documents.ts` has the unscoped
   `globalParseResultByHashes` for `ALLOW_GLOBAL_PARSE_CACHE`. Integration-tested
   with Testcontainers against real Postgres with pgvector.
-- `packages/sdk`, `apps/extension`, `docs/` — placeholders whose
-  READMEs name the phase that fills them in.
+- `docs/adr/0001-queue.md` — why the TypeScript ↔ Python transport is a Redis
+  stream with a consumer group rather than BullMQ or arq, and when to revisit
+  that.
+- `packages/sdk`, `apps/extension` — placeholders whose READMEs name the phase
+  that fills them in.
 
 The specifications remain authoritative for everything not yet built:
 
@@ -89,14 +110,23 @@ TypeScript owns the product surface (web app, API, auth, billing) because the
 streaming-chat-UI ecosystem lives there. Python owns the document pipeline because
 every serious PDF layout/OCR library (Docling, PaddleOCR, Surya) is Python.
 
-**The entire contract between them is a Redis queue plus JSON payloads** — no
+**The entire contract between them is a Redis stream plus JSON payloads** — no
 shared ORM, no RPC framework, no imports across the boundary. Never add a
 cross-language import or a shared database access layer; that seam is what keeps a
-two-language codebase contributable.
+two-language codebase contributable. (The worker does read and write Postgres,
+with raw SQL it owns in `services/worker/src/konusbitr_worker/db.py`. That is
+not a shared access layer: Drizzle owns the *tables*, and nothing in the worker
+imports from `packages/db`.)
 
-The Zod schema in `packages/shared` is the source of truth for the job payload;
-the pydantic model is **generated** from it via `pnpm codegen`, and CI fails on
-drift. Contract drift is the main failure mode of this design.
+The Zod schemas in `packages/shared` are the source of truth for the job payload
+**and for the Redis key names**; the pydantic models and the key constants are
+both **generated** into `konusbitr_worker.contracts` via `pnpm codegen`, and CI
+fails on drift. Contract drift is the main failure mode of this design — and a
+queue name that drifts is worse than a field name, because everything looks
+healthy and nothing happens.
+
+`docs/adr/0001-queue.md` records why the transport is a hand-rolled Redis stream
+with a consumer group rather than BullMQ or arq.
 
 ### Planned layout
 
@@ -120,7 +150,7 @@ docs/              Docs site, ADRs, coordinates.md, licensing.md
 ```
 upload (presigned PUT, direct to storage — never through the Next.js server)
   → content_hash + settings_hash → docId cache check
-  → enqueue parse job on konusbitr:jobs
+  → XADD parse job onto the konusbitr:jobs stream
   → worker: fetch → validate → text-coverage tier → Docling parse
            → normalize to parse artifact → persist parse_results/pages/thumbnails
   → chunk (layout-aware) → embed → upsert pgvector
@@ -183,7 +213,26 @@ These cut across many files; violating one breaks the product rather than one fe
   user input.
 - **Fail loudly at boot** on missing/malformed env — Zod on the TS side,
   pydantic-settings on the Python side. Never lazily at first use.
-- **No WebSockets anywhere.** Progress and streaming use SSE.
+- **No WebSockets anywhere.** Progress and streaming use SSE. The progress
+  endpoint subscribes to Redis *before* it replays the `jobs` row, and holds
+  what arrives in between — reading the row first leaves a window in which a
+  job finishes and publishes to nobody.
+- **Delivery is at-least-once; "exactly once" is a property of the writes.**
+  Every write the worker makes is an upsert, and the parse handler
+  short-circuits when the parse it was about to produce already exists. A job
+  re-delivered after a crash must be a no-op. Never add a write to the worker
+  that a second delivery would duplicate.
+- **A terminal failure never spends a retry.** `JOB_ERROR_CODES` in
+  `packages/shared/src/job.ts` divides the codes; a corrupt file is
+  dead-lettered on the first attempt, a Redis blip gets three with exponential
+  backoff. An unrecognised exception is `internal`, which is *retryable* — the
+  safe default, because wrongly marking a document permanently failed costs
+  somebody their upload.
+- **Absent optionals cross the boundary as `null`, not `undefined`.** Pydantic
+  serialises an unset `str | None` as JSON `null` and `undefined` has no JSON
+  spelling, so any optional field in a schema both runtimes read must be
+  `.nullish()` rather than `.optional()`. `packages/shared/test/contract.test.ts`
+  holds literal `model_dump_json()` output to keep that honest.
 - **Licensing discipline:** the default build must be cleanly Apache-2.0
   compatible. AGPL/commercially-restricted dependencies (PyMuPDF, Marker) live
   only behind the Compose `advanced` profile, asserted by a CI license audit.
