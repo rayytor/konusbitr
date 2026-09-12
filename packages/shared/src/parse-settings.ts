@@ -12,6 +12,18 @@ export const ParseQualitySchema = z.enum(['standard', 'advanced']);
 export type ParseQuality = z.infer<typeof ParseQualitySchema>;
 
 /**
+ * A BCP-47-ish OCR language hint.
+ *
+ * Named rather than written inline so it survives code generation as a type
+ * alias: an anonymous constrained string inside an array becomes a wrapper
+ * class on the pydantic side, and the worker would then be reading
+ * `settings.langList[0].root` instead of a string.
+ */
+export const LanguageTagSchema = z.string().min(1);
+
+export type LanguageTag = z.infer<typeof LanguageTagSchema>;
+
+/**
  * Everything that can change the bytes of a parse result.
  *
  * This object is hashed (canonical JSON, `langList` sorted) into the
@@ -21,7 +33,7 @@ export type ParseQuality = z.infer<typeof ParseQualitySchema>;
 export const ParseSettingsSchema = z.object({
   quality: ParseQualitySchema.default('standard'),
   /** BCP-47-ish OCR language hints. Order is not significant. */
-  langList: z.array(z.string().min(1)).default([]),
+  langList: z.array(LanguageTagSchema).default([]),
   /** Whether a vision/LLM pass may be used to enrich the parse. */
   llm: z.boolean().default(false),
 });
