@@ -1,8 +1,9 @@
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb } from '../../src/client.js';
 import { ID_PREFIXES, newId } from '../../src/id.js';
 import { migrate } from '../../src/migrate.js';
+import { globalParseResultByHashes } from '../../src/queries/documents.js';
 import * as schema from '../../src/schema/index.js';
 import { scopedDb } from '../../src/scoped.js';
 
@@ -309,6 +310,141 @@ describe('docId cache (unique constraint)', () => {
 
     const rows = await db.select().from(schema.parseResults);
     expect(rows.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─── parse_results provenance & cross-tenant cascade ─────────────────────────
+
+describe('parse results provenance and cross-tenant cascade', () => {
+  it('sets document_id to NULL on document delete rather than cascading parse_results', async () => {
+    const orgA = newId(ID_PREFIXES.organization);
+    const orgB = newId(ID_PREFIXES.organization);
+    await db.insert(schema.organizations).values([
+      { id: orgA, name: 'Org A', slug: `org-a-${Date.now()}` },
+      { id: orgB, name: 'Org B', slug: `org-b-${Date.now()}` },
+    ]);
+
+    const contentHash = 'sha256:shared-content-bytes';
+    const settingsHash = 'sha256:shared-settings';
+
+    const [docA] = await db
+      .insert(schema.documents)
+      .values({
+        orgId: orgA,
+        filename: 'doc-a.pdf',
+        mime: 'application/pdf',
+        byteSize: 54321,
+        storageKey: 'uploads/doc-a.pdf',
+        contentHash,
+        settingsHash,
+        status: 'ready',
+      })
+      .returning();
+
+    const [docB] = await db
+      .insert(schema.documents)
+      .values({
+        orgId: orgB,
+        filename: 'doc-b.pdf',
+        mime: 'application/pdf',
+        byteSize: 54321,
+        storageKey: 'uploads/doc-b.pdf',
+        contentHash,
+        settingsHash,
+        status: 'ready',
+      })
+      .returning();
+
+    // Insert parse result tied to doc A (provenance)
+    if (!docA || !docB) {
+      throw new Error('Failed to insert test documents');
+    }
+    const docAId = docA.id;
+    const docBId = docB.id;
+
+    const [parseRow] = await db
+      .insert(schema.parseResults)
+      .values({
+        documentId: docAId,
+        contentHash,
+        settingsHash,
+        quality: 'standard',
+        markdown: '# Shared Parse Content',
+        pageCount: 5,
+      })
+      .returning();
+
+    if (!parseRow) {
+      throw new Error('Failed to insert test parse result');
+    }
+    const parseRowId = parseRow.id;
+    expect(parseRow.documentId).toBe(docAId);
+
+    // Both tenants can read the parse result via global lookup
+    const foundBefore = await globalParseResultByHashes(db, contentHash, settingsHash);
+    expect(foundBefore).toBeDefined();
+    expect(foundBefore?.documentId).toBe(docAId);
+    expect(foundBefore?.pageCount).toBe(5);
+
+    // Delete Org A's document
+    await db.delete(schema.documents).where(eq(schema.documents.id, docAId));
+
+    // doc A is deleted
+    const checkDocA = await db
+      .select()
+      .from(schema.documents)
+      .where(eq(schema.documents.id, docAId));
+    expect(checkDocA).toHaveLength(0);
+
+    // parse_results row MUST NOT be deleted (ON DELETE SET NULL)
+    const remainingParses = await db
+      .select()
+      .from(schema.parseResults)
+      .where(eq(schema.parseResults.id, parseRowId));
+    expect(remainingParses).toHaveLength(1);
+    expect(remainingParses[0]?.documentId).toBeNull();
+    expect(remainingParses[0]?.contentHash).toBe(contentHash);
+
+    // Global lookup still succeeds and backs doc B
+    const foundAfter = await globalParseResultByHashes(db, contentHash, settingsHash);
+    expect(foundAfter).toBeDefined();
+    expect(foundAfter?.id).toBe(parseRowId);
+    expect(foundAfter?.documentId).toBeNull();
+    expect(foundAfter?.pageCount).toBe(5);
+
+    // doc B remains intact in org B
+    const checkDocB = await db
+      .select()
+      .from(schema.documents)
+      .where(eq(schema.documents.id, docBId));
+    expect(checkDocB).toHaveLength(1);
+    expect(checkDocB[0]?.status).toBe('ready');
+  });
+
+  it('allows inserting parse_results with null document_id directly', async () => {
+    const contentHash = 'sha256:direct-null-content';
+    const settingsHash = 'sha256:direct-null-settings';
+
+    const [row] = await db
+      .insert(schema.parseResults)
+      .values({
+        documentId: null,
+        contentHash,
+        settingsHash,
+        quality: 'standard',
+        markdown: '# Direct Null Document Parse',
+        pageCount: 2,
+      })
+      .returning();
+
+    if (!row) {
+      throw new Error('Failed to insert test parse result');
+    }
+    expect(row.documentId).toBeNull();
+
+    const lookup = await globalParseResultByHashes(db, contentHash, settingsHash);
+    expect(lookup?.documentId).toBeNull();
+    expect(lookup?.pageCount).toBe(2);
   });
 });
 
