@@ -40,6 +40,7 @@
       },
       "suspicious": {
         "noExplicitAny": "error",
+        "noControlCharactersInRegex": "off",
         "noConsole": {
           "level": "warn",
           "options": {
