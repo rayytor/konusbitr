@@ -16,8 +16,12 @@ const MIN_PASSWORD_LENGTH = 10;
  * form ends on a message telling the reader where to look. That is the honest
  * outcome, and hiding it behind an optimistic redirect to a page that would
  * bounce them back is worse.
+ *
+ * `redirectTo` is therefore not somewhere this form navigates. It is where the
+ * verification link in the email lands, so someone who arrived from an
+ * invitation finishes on the invitation rather than on the API keys page.
  */
-export function SignupForm() {
+export function SignupForm({ redirectTo }: { redirectTo: string }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -36,7 +40,12 @@ export function SignupForm() {
     setPending(true);
     setError(undefined);
 
-    const result = await authClient.signUp.email({ name, email, password });
+    const result = await authClient.signUp.email({
+      name,
+      email,
+      password,
+      callbackURL: redirectTo,
+    });
     setPending(false);
 
     if (result.error) {
