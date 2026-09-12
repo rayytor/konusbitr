@@ -316,8 +316,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          hash=$(printf 'a%.0s' $(seq 64))
+          hash=$(sha256sum fixtures/pdf/clean-text-10p.pdf | awk '{print $1}')
           settings=$(printf 'b%.0s' $(seq 64))
+          size=$(wc -c < fixtures/pdf/clean-text-10p.pdf | tr -d ' ')
+
+          docker compose run --rm -T --entrypoint /bin/sh minio-init -c '
+            mc alias set probe "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" > /dev/null
+            mc pipe "probe/$S3_BUCKET/orgs/org_ci/documents/doc_ci/original.pdf" > /dev/null
+          ' < fixtures/pdf/clean-text-10p.pdf
 
           docker compose exec -T postgres psql -U konusbitr -d konusbitr -v ON_ERROR_STOP=1 <<SQL
           INSERT INTO organizations (id, name, slug) VALUES ('org_ci', 'CI Worker', 'ci-worker') ON CONFLICT (id) DO NOTHING;
@@ -325,7 +331,7 @@ jobs:
             id, org_id, filename, mime, byte_size, page_count,
             storage_key, content_hash, settings_hash, status
           ) VALUES (
-            'doc_ci', 'org_ci', 'ci.pdf', 'application/pdf', 1024, 2,
+            'doc_ci', 'org_ci', 'clean-text-10p.pdf', 'application/pdf', $size, 10,
             'orgs/org_ci/documents/doc_ci/original.pdf',
             '$hash', '$settings', 'queued'
           );
@@ -358,6 +364,11 @@ jobs:
           parses=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
             "SELECT count(*) FROM parse_results WHERE document_id = 'doc_ci'")
           test "$parses" -eq 1
+
+          # Pages were written for all 10 pages.
+          pages=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(*) FROM pages WHERE document_id = 'doc_ci'")
+          test "$pages" -eq 10
 
           # Nothing left in the consumer group: the entry was acknowledged.
           pending=$(docker compose exec -T redis redis-cli \
