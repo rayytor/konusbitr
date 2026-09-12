@@ -18,7 +18,7 @@ this phase handles text PDFs only and fails cleanly on anything else.
 
 ### 1. Replace the stub `parse` handler
 
-Pipeline stages inside `services/worker/konusbitr_worker/parse/`:
+Pipeline stages inside `services/worker/src/konusbitr_worker/parse/`:
 
 1. **Fetch** the object from storage to a temp path; verify the SHA-256 matches
    `contentHash`.
@@ -105,13 +105,13 @@ or later. Chunking and embedding — Phase 08.
 
 ## Acceptance criteria
 
-- [ ] Each good fixture parses to markdown that a human would call faithful
+- [x] Each good fixture parses to markdown that a human would call faithful
       (headings, reading order, and tables correct).
-- [ ] Every `contents` element has a page number and a bbox in the documented
+- [x] Every `contents` element has a page number and a bbox in the documented
       top-left convention, verified against the rotated and non-Letter fixtures.
-- [ ] Tables appear both as markdown and as `tableJson`.
-- [ ] The 50-page text fixture completes in under 20 seconds in CI.
-- [ ] Scanned, encrypted, and corrupt inputs fail with distinct `error_code`s and
+- [x] Tables appear both as markdown and as `tableJson`.
+- [x] The 50-page text fixture completes in under 20 seconds in CI.
+- [x] Scanned, encrypted, and corrupt inputs fail with distinct `error_code`s and
       user-readable messages.
-- [ ] Page thumbnails exist in storage for every page.
-- [ ] `docs/coordinates.md` exists and the coordinate test suite passes.
+- [x] Page thumbnails exist in storage for every page.
+- [x] `docs/coordinates.md` exists and the coordinate test suite passes.

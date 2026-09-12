@@ -24,7 +24,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
@@ -32,6 +31,7 @@ from konusbitr_worker import __version__
 from konusbitr_worker.db import Database
 from konusbitr_worker.health import is_alive, touch_heartbeat
 from konusbitr_worker.log import configure_logging, get_logger
+from konusbitr_worker.parse.storage import ObjectStore
 from konusbitr_worker.queue import JobQueue
 from konusbitr_worker.runtime import WorkerRuntime
 from konusbitr_worker.settings import Settings, load_settings
@@ -56,11 +56,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         queue = JobQueue.connect(resolved.redis_url, consumer=resolved.consumer_name())
         database = await Database.connect(resolved.database_url)
-        runtime = WorkerRuntime(settings=resolved, queue=queue, database=database)
+        # One client for the process. Every parse fetches through it, and
+        # building a fresh boto3 client per job would re-read the credential
+        # chain and re-resolve the endpoint for each document.
+        store = ObjectStore.from_settings(resolved)
+        runtime = WorkerRuntime(settings=resolved, queue=queue, database=database, store=store)
 
         app.state.settings = resolved
         app.state.queue = queue
         app.state.database = database
+        app.state.store = store
         app.state.runtime = runtime
 
         await runtime.start()
@@ -119,11 +124,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def ready() -> JSONResponse:
         queue: JobQueue = app.state.queue
         database: Database = app.state.database
+        store: ObjectStore = app.state.store
 
         checks = {
             "postgres": await _probe(database.ping()),
             "redis": await _probe(queue.ping()),
-            "storage": await _probe(_reach_storage(resolved)),
+            "storage": await _probe(store.ping()),
         }
         ok = all(value is True for value in checks.values())
         return JSONResponse(
@@ -153,19 +159,6 @@ async def _probe(awaitable: Any) -> bool | str:
     except Exception as error:
         return f"{type(error).__name__}: {error}"
     return True
-
-
-async def _reach_storage(settings: Settings) -> None:
-    """Confirm the object store answers.
-
-    A bare HTTP request, not a signed one: any response at all — including the
-    403 that an anonymous request to S3 earns — proves the endpoint is up and
-    routable, which is the question readiness asks. Whether the *credentials*
-    work is a different question, and Phase 07 answers it the only honest way
-    there is, by fetching a real object.
-    """
-    async with httpx.AsyncClient(timeout=PROBE_TIMEOUT_SECONDS) as client:
-        await client.get(settings.s3_endpoint)
 
 
 async def _model_availability(settings: Settings) -> dict[str, Any]:

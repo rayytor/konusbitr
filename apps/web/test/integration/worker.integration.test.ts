@@ -1,6 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createDb, type Database, migrate, scopedDb } from '@konusbitr/db';
 import {
   createOrganization,
@@ -9,6 +11,7 @@ import {
   parseResultsForDocument,
 } from '@konusbitr/db/testing';
 import { JOBS_DEAD_LETTER, JOBS_STREAM, JOBS_STREAM_FIELD } from '@konusbitr/shared';
+import { createStorage, type Storage } from '@konusbitr/storage';
 import type { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { StartedRedisContainer } from '@testcontainers/redis';
 import Redis from 'ioredis';
@@ -54,6 +57,7 @@ let redisContainer: StartedRedisContainer;
 let minio: StartedTestContainer;
 let db: Database;
 let redis: Redis;
+let storage: Storage;
 let worker: Worker;
 
 let databaseUrl: string;
@@ -98,6 +102,16 @@ beforeAll(async () => {
   await migrate(databaseUrl);
 
   redis = new Redis(redisUrl, { maxRetriesPerRequest: null });
+
+  storage = createStorage({
+    endpoint: s3Endpoint,
+    region: 'us-east-1',
+    bucket: BUCKET,
+    accessKeyId: MINIO_ROOT,
+    secretAccessKey: MINIO_SECRET,
+    forcePathStyle: true,
+  });
+  await storage.client.send(new CreateBucketCommand({ Bucket: BUCKET }));
 
   Object.assign(process.env, {
     NODE_ENV: 'test',
@@ -255,18 +269,98 @@ function freePort(): Promise<number> {
 
 let seq = 0;
 
+/**
+ * Generate a minimal valid PDF with `pageCount` pages containing enough text
+ * density to satisfy PDFium text-coverage check and Docling conversion.
+ */
+function generatePdf(pageCount: number): Buffer {
+  const objects: Buffer[] = [];
+  objects.push(Buffer.from('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n', 'latin1'));
+
+  const kids = Array.from({ length: pageCount }, (_, i) => `${3 + 2 * i} 0 R`).join(' ');
+  objects.push(
+    Buffer.from(
+      `2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pageCount} >>\nendobj\n`,
+      'latin1',
+    ),
+  );
+
+  const fontId = 3 + 2 * pageCount;
+  for (let i = 0; i < pageCount; i++) {
+    const pageId = 3 + 2 * i;
+    const contentId = 4 + 2 * i;
+    objects.push(
+      Buffer.from(
+        `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>\nendobj\n`,
+        'latin1',
+      ),
+    );
+    const text = `Section ${i + 1}: This is a test document generated for worker integration tests with enough characters to pass text coverage.`;
+    const streamContent = Buffer.from(`BT\n/F1 12 Tf\n72 700 Td\n(${text}) Tj\nET\n`, 'latin1');
+    objects.push(
+      Buffer.concat([
+        Buffer.from(
+          `${contentId} 0 obj\n<< /Length ${streamContent.length} >>\nstream\n`,
+          'latin1',
+        ),
+        streamContent,
+        Buffer.from('endstream\nendobj\n', 'latin1'),
+      ]),
+    );
+  }
+
+  objects.push(
+    Buffer.from(
+      `${fontId} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`,
+      'latin1',
+    ),
+  );
+
+  const header = Buffer.from('%PDF-1.4\n', 'latin1');
+  const offsets = [0];
+  let currentLength = header.length;
+  for (const obj of objects) {
+    offsets.push(currentLength);
+    currentLength += obj.length;
+  }
+
+  const startxref = currentLength;
+  const totalObjs = objects.length + 1;
+  const xrefHeader = Buffer.from(`xref\n0 ${totalObjs}\n0000000000 65535 f \n`, 'latin1');
+  const xrefEntries = offsets
+    .slice(1)
+    .map((offset) => Buffer.from(`${String(offset).padStart(10, '0')} 00000 n \n`, 'latin1'));
+  const trailer = Buffer.from(
+    `trailer\n<< /Size ${totalObjs} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF\n`,
+    'latin1',
+  );
+
+  return Buffer.concat([header, ...objects, xrefHeader, ...xrefEntries, trailer]);
+}
+
 /** A queued document and its job row, as the intake path would leave them. */
 async function queuedDocument(pageCount = 2) {
   const scoped = scopedDb(db, orgId);
   const suffix = String(++seq).padStart(4, '0');
-  const contentHash = `${'0'.repeat(60)}${suffix}`;
+  const pdf = generatePdf(pageCount);
+  const contentHash = createHash('sha256').update(pdf).digest('hex');
+  const storageKey = `orgs/${orgId}/documents/doc-${suffix}/original.pdf`;
+
+  await storage.client.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: storageKey,
+      Body: pdf,
+      ContentType: 'application/pdf',
+    }),
+  );
 
   const document = await scoped.createDocument({
     filename: `report-${suffix}.pdf`,
     mime: 'application/pdf',
-    byteSize: 2048,
+    byteSize: pdf.length,
     pageCount,
-    storageKey: `orgs/${orgId}/documents/doc-${suffix}/original.pdf`,
+    storageKey,
     contentHash,
     settingsHash: `${'f'.repeat(60)}${suffix}`,
     status: 'queued',
@@ -460,8 +554,7 @@ describe('the browser watches over SSE', () => {
     expect(stages[0]).not.toBeUndefined();
     expect(['queued', 'fetching']).toContain(stages[0]);
     expect(stages).toContain('parsing');
-    expect(stages).toContain('ocr');
-    expect(stages).toContain('embedding');
+    expect(stages).toContain('persisting');
     expect(stages.at(-1)).toBe('ready');
     expect(received.at(-1)?.event).toBe('done');
   });

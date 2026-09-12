@@ -29,6 +29,7 @@ from konusbitr_worker.contracts import JobErrorCode, JobPayload, JobStage, JobTy
 from konusbitr_worker.db import Database
 from konusbitr_worker.errors import JobFailure, classify_exception
 from konusbitr_worker.log import get_logger, job_context
+from konusbitr_worker.parse.storage import ObjectStore
 from konusbitr_worker.pipeline import JobOutcome, run_parse
 from konusbitr_worker.progress import ProgressReporter
 from konusbitr_worker.queue import Delivery, JobQueue, UndecodableEntry
@@ -48,10 +49,18 @@ JANITOR_INTERVAL_SECONDS = 1.0
 class WorkerRuntime:
     """Owns the consumer loop and everything it needs."""
 
-    def __init__(self, *, settings: Settings, queue: JobQueue, database: Database) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        queue: JobQueue,
+        database: Database,
+        store: ObjectStore | None = None,
+    ) -> None:
         self._settings = settings
         self._queue = queue
         self._database = database
+        self._store = store
         self._stopping = asyncio.Event()
         self._slots = asyncio.Semaphore(settings.worker_concurrency)
         self._in_flight: set[asyncio.Task[None]] = set()
@@ -261,6 +270,7 @@ class WorkerRuntime:
                 database=self._database,
                 progress=progress,
                 settings=self._settings,
+                store=self._store,
             )
 
         # `chunk_embed`, `split` and `reindex` are in the contract so that both

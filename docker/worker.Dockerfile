@@ -9,8 +9,15 @@
 # Builds on linux/amd64 and linux/arm64.
 #
 # This runs the real job loop: a FastAPI app serving /health and /ready, with
-# the Redis-stream consumer started from its lifespan. The parse itself is a
-# stub until Phase 07; nothing about the image changes when that lands.
+# the Redis-stream consumer started from its lifespan, and the Phase 07 parse
+# pipeline behind it: PDFium for structure and thumbnails, Docling for layout.
+#
+# Docling's layout models are **baked into the image** rather than fetched on
+# first use. A worker that downloads several hundred megabytes from Hugging
+# Face the first time somebody uploads a document is a worker that fails in an
+# air-gapped deployment, fails behind a corporate proxy, and turns the first
+# parse after every deploy into a two-minute one. OFFLINE_MODE is a headline
+# claim of this project; a model downloaded at runtime would quietly break it.
 
 ARG PYTHON_VERSION=3.12
 ARG UV_VERSION=0.12
@@ -45,6 +52,14 @@ COPY services/worker/ ./
 RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
+# ------------------------------------------------------------------- models --
+# Fetched once at build time into a directory the runtime stage copies. Cached
+# as its own layer, so an edit to worker source never re-downloads them.
+FROM deps AS models
+ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models \
+    HF_HUB_DISABLE_TELEMETRY=1
+RUN /opt/venv/bin/docling-tools models download --output-dir /opt/docling-models layout tableformer
+
 # ------------------------------------------------------------------ runtime --
 FROM base AS runtime
 ENV PATH=/opt/venv/bin:$PATH \
@@ -52,12 +67,33 @@ ENV PATH=/opt/venv/bin:$PATH \
     WORKER_PORT=8081 \
     KONUSBITR_WORKER_HEARTBEAT=/var/run/konusbitr/worker.heartbeat
 
+# DOCLING_ARTIFACTS_PATH is where Docling looks for the weights baked in above;
+# without it Docling reaches for Hugging Face at first use, which is the failure
+# this image exists to avoid, and HF_HUB_OFFLINE makes that attempt fail loudly
+# rather than hang. OMP_NUM_THREADS is capped because torch sizes its pool from
+# the *host's* core count — inside a CPU-limited container that is dozens of
+# threads fighting over two cores. WORKER_PARSE_THREADS is the knob that should
+# decide parse parallelism.
+ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models \
+    HF_HUB_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    OMP_NUM_THREADS=4
+
+# OpenCV arrives through Docling's layout models and links against the system
+# GL and glib shared objects, which `python:slim` does not ship. Without these
+# two packages the image builds cleanly and then fails on the first import, at
+# the first job — the worst place to discover a missing library.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # A dedicated unprivileged user; the slim image has no equivalent of node's.
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin konusbitr \
     && mkdir -p /var/run/konusbitr \
     && chown konusbitr:konusbitr /var/run/konusbitr
 
 COPY --from=deps --chown=konusbitr:konusbitr /opt/venv /opt/venv
+COPY --from=models --chown=konusbitr:konusbitr /opt/docling-models /opt/docling-models
 
 USER konusbitr
 WORKDIR /home/konusbitr

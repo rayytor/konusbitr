@@ -25,7 +25,7 @@ import asyncpg
 
 from konusbitr_worker.contracts import DocumentStatus, JobStage
 
-__all__ = ["STAGE_TO_STATUS", "Database", "DocumentRecord"]
+__all__ = ["STAGE_TO_STATUS", "Database", "DocumentRecord", "PageRow"]
 
 #: How a pipeline stage is reported as a document status.
 #:
@@ -45,6 +45,22 @@ STAGE_TO_STATUS: dict[JobStage, DocumentStatus] = {
     JobStage.ready: DocumentStatus.ready,
     JobStage.failed: DocumentStatus.failed,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class PageRow:
+    """One row of `pages`, as the pipeline hands it over.
+
+    Width and height are integers because the column is: a page dimension in
+    points is a whole number on every real document, and a float column would
+    invite the viewer to believe in precision the source does not have.
+    """
+
+    id: str
+    page_no: int
+    width: int
+    height: int
+    thumbnail_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,31 +342,32 @@ class Database:
             page_count,
         )
 
-    async def upsert_pages(
-        self,
-        *,
-        document_id: str,
-        pages: list[tuple[str, int, int, int]],
-    ) -> None:
+    async def upsert_pages(self, *, document_id: str, pages: list[PageRow]) -> None:
         """Replace this document's page geometry.
 
         Keyed on `(document_id, page_no)`, so a replay overwrites rather than
         duplicates. Width and height are in the one coordinate convention —
-        PDF points, origin top-left — that `docs/coordinates.md` describes and
-        the viewer assumes.
+        PDF points, origin top-left, rotation already applied — that
+        `docs/coordinates.md` describes and the viewer assumes.
+
+        `thumbnail_key` is coalesced rather than assigned, so a re-delivery that
+        has not re-rendered the thumbnails does not blank out keys that point
+        at objects still sitting in the bucket.
         """
         if not pages:
             return
 
         await self._pool.executemany(
             """
-            INSERT INTO pages (id, document_id, page_no, width, height)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO pages (id, document_id, page_no, width, height, thumbnail_key)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (document_id, page_no)
-            DO UPDATE SET width = EXCLUDED.width, height = EXCLUDED.height
+            DO UPDATE SET width = EXCLUDED.width,
+                          height = EXCLUDED.height,
+                          thumbnail_key = COALESCE(EXCLUDED.thumbnail_key, pages.thumbnail_key)
             """,
             [
-                (page_id, document_id, page_no, width, height)
-                for page_id, page_no, width, height in pages
+                (page.id, document_id, page.page_no, page.width, page.height, page.thumbnail_key)
+                for page in pages
             ],
         )

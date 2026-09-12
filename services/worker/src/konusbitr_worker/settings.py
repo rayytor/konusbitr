@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     max_pages: int = 0
     allow_global_parse_cache: bool = False
 
+    #: The extractable-character coverage a page must reach for the standard
+    #: parser to treat it as born-digital. See `.env.example`.
+    text_coverage_threshold: float = 0.1
+
     llm_provider: LlmProvider = "openai"
     llm_api_key: str | None = None
     llm_chat_model: str | None = None
@@ -141,11 +145,17 @@ class Settings(BaseSettings):
     #: Backoff base: attempt *n* waits ``base * 2 ** (n - 1)`` seconds.
     worker_retry_base_seconds: float = 5.0
 
-    #: How long the Phase 06 stub pipeline pauses in each stage.
+    #: Size of the thread pool the parser's blocking work runs on.
     #:
-    #: A knob only because the tests turn it down to nothing. Phase 07 deletes
-    #: it along with the stub.
-    worker_stub_stage_seconds: float = 0.4
+    #: Docling and PDFium are synchronous and CPU-bound; the event loop that
+    #: also has to keep publishing progress and answering `/health` must not be
+    #: the thread doing them. Kept small on purpose — the parse is already
+    #: parallel inside itself, and oversubscribing cores makes a 50-page
+    #: document slower, not faster.
+    worker_parse_threads: int = 4
+
+    #: Longest edge of a generated page thumbnail, in pixels.
+    worker_thumbnail_max_edge: int = 1600
 
     #: Identity in the Redis consumer group.
     #:
@@ -156,7 +166,13 @@ class Settings(BaseSettings):
     #: hostname is both, which is why it is the default.
     worker_name: str | None = None
 
-    @field_validator("worker_concurrency", "worker_job_timeout_seconds", "worker_max_attempts")
+    @field_validator(
+        "worker_concurrency",
+        "worker_job_timeout_seconds",
+        "worker_max_attempts",
+        "worker_parse_threads",
+        "worker_thumbnail_max_edge",
+    )
     @classmethod
     def _check_positive_int(cls, value: int) -> int:
         if value <= 0:
@@ -170,11 +186,11 @@ class Settings(BaseSettings):
             raise ValueError("must be greater than zero")
         return value
 
-    @field_validator("worker_stub_stage_seconds")
+    @field_validator("text_coverage_threshold")
     @classmethod
-    def _check_non_negative_float(cls, value: float) -> float:
-        if value < 0:
-            raise ValueError("must be zero or more seconds")
+    def _check_fraction(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("must be a fraction between 0 and 1")
         return value
 
     def consumer_name(self) -> str:
