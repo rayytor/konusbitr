@@ -57,7 +57,11 @@ class JsonFormatter(logging.Formatter):
         payload.update(_JOB_CONTEXT.get() or {})
 
         for key, value in record.__dict__.items():
-            if key not in _STANDARD_ATTRIBUTES and not key.startswith("_"):
+            if (
+                key not in _STANDARD_ATTRIBUTES
+                and key not in _DROPPED_ATTRIBUTES
+                and not key.startswith("_")
+            ):
                 payload[key] = value
 
         if record.exc_info:
@@ -67,6 +71,21 @@ class JsonFormatter(logging.Formatter):
             payload["error"] = str(exc_value)
 
         return json.dumps(payload, default=str, ensure_ascii=False)
+
+
+#: Libraries that are interesting only when they go wrong.
+#:
+#: `httpx` and `httpcore` log a dozen lines per request at DEBUG and the
+#: readiness probe makes one every ten seconds; `redis` reports, on every new
+#: connection, that a Redis 8 feature is missing from the Redis 7 the stack
+#: ships. Neither is wrong, and together they are how a development stack ends
+#: up with the worker's own log buried under connection bookkeeping. They keep
+#: their warnings, which is the part anyone reads.
+_QUIET_LIBRARIES = ("httpx", "httpcore", "redis", "asyncio", "urllib3", "botocore", "asyncpg")
+
+#: Uvicorn attaches an ANSI-coloured copy of its own message under this key.
+#: One message per line is the whole point of the format.
+_DROPPED_ATTRIBUTES = frozenset({"color_message"})
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -87,6 +106,9 @@ def configure_logging(level: str = "INFO") -> None:
         logger = logging.getLogger(name)
         logger.handlers = []
         logger.propagate = True
+
+    for name in _QUIET_LIBRARIES:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str = "konusbitr.worker") -> logging.Logger:
