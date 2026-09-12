@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–06 are done; Phase 07 is next.** `cp .env.example .env &&
+**Phases 01–07 are done; Phase 08 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -14,7 +14,11 @@ cache is live: re-uploading the same file returns the same document in
 milliseconds with zero cost and no job. **Both runtimes now run**: a job
 enqueued by TypeScript is consumed by the Python worker, which walks the
 document from `queued` to `ready` and publishes progress the browser reads over
-SSE — the parse itself is a stub until Phase 07. What exists:
+SSE. **The parse is real as of Phase 07** — a born-digital PDF comes back as
+markdown plus a `contents` array in which every element has a page number and a
+bounding box, tables survive as markdown *and* as JSON, and every page has a
+WebP thumbnail in storage. A scan is refused with `needs_ocr` rather than parsed
+into silence. What exists:
 
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
   (bucket and dev access key created automatically), a `migrate` one-shot that
@@ -73,6 +77,14 @@ SSE — the parse itself is a stub until Phase 07. What exists:
   `packages/db/src/queries/documents.ts` has the unscoped
   `globalParseResultByHashes` for `ALLOW_GLOBAL_PARSE_CACHE`. Integration-tested
   with Testcontainers against real Postgres with pgvector.
+- `fixtures/` — the PDF corpus, every file produced by `fixtures/generate.py`
+  and nothing scraped: a clean 10-page document, a 50-page budget fixture, a
+  table-heavy report, a two-column paper, a rotated A4 document, an image-only
+  scan, an encrypted PDF and a truncated one. Regeneration is byte-stable, so a
+  diff on those files means the corpus actually moved. The 500-page monster is
+  generated at test time rather than committed.
+- `docs/coordinates.md` — the coordinate convention, written out: the
+  conversions, the rotation table, and what is deliberately *not* in it.
 - `docs/adr/0001-queue.md` — why the TypeScript ↔ Python transport is a Redis
   stream with a consumer group rather than BullMQ or arq, and when to revisit
   that.
@@ -175,7 +187,14 @@ These cut across many files; violating one breaks the product rather than one fe
   increasing downward, unrotated page. The worker normalizes Docling/OCR output
   into it and applies page rotation; `pages` stores width/height. The viewer then
   only applies a scale factor — if the viewer needs more than that, fix the
-  worker, not the viewer. Documented in `docs/coordinates.md`.
+  worker, not the viewer. Documented in `docs/coordinates.md`, implemented in
+  `services/worker/src/konusbitr_worker/parse/geometry.py` and **nowhere else**.
+- **A document the standard tier cannot read honestly is refused, not parsed.**
+  A scan has no text layer; parsing it anyway returns almost nothing and a chat
+  built on that answers confidently out of an empty document. `inspect.py`
+  measures extractable-character coverage per page and fails the job with
+  `needs_ocr` when more than a fifth of the pages fall below
+  `TEXT_COVERAGE_THRESHOLD`.
 - **Citations are verified mechanically before they reach the client.** Every
   quote must actually appear in the parse result for the page it cites
   (exact match, then fuzzy for hyphenation/ligature noise). Unverifiable citations

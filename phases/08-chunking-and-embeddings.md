@@ -43,7 +43,14 @@ A layout-aware chunker consuming the Phase 07 `contents` array:
 - Prepend the `sectionPath` breadcrumb to the chunk text (`Financials > Revenue`)
   — cheap context that measurably improves retrieval.
 - Carry the **union of the bboxes** of the elements composing the chunk, as a list
-  of per-page rectangles: a chunk spanning a page break has entries for both pages.
+  of per-page rectangles using the canonical `[x0, y0, x1, y1]` tuple from
+  `BoundingBoxSchema`: a chunk spanning a page break has entries for both pages.
+  **Schema migration required:** the Phase 03 `chunks` table has a single
+  `page_no integer` and a single `bbox jsonb` (with an `{x,y,width,height}`
+  shape). Migrate to `pages jsonb` holding `{ page: number, bbox: BoundingBox }[]`
+  (or equivalent), drop the old `page_no`/`bbox` columns, and align the bbox
+  shape to the `[x0, y0, x1, y1]` convention used by `BoundingBoxSchema` and
+  the `Citation` type everywhere else.
 - Attach `tableJson` to the chunk metadata when present.
 
 Unit-test boundary behavior explicitly: tiny documents, one 5,000-token paragraph,
@@ -54,9 +61,15 @@ a table larger than the target, a section spanning 30 pages, an empty page.
 - Batch embeddings (configurable batch size), respect provider rate limits, retry
   partial failures without re-embedding successes.
 - Upsert into `chunks` keyed on `(document_id, ordinal)` so a re-run is idempotent.
-- Record `embedding_model` and `dims` on the document; refuse to write a chunk
-  whose dimension disagrees with the table's, with an error telling the operator
-  to re-index.
+- **Schema migration required:** the Phase 03 `chunks.embedding` column is
+  declared as `vector(1024)` — a fixed width baked into the DDL. Add
+  `embedding_model text` and `dims integer` columns to `documents`, and make
+  the vector column's dimension configurable (or use an untyped `vector` column
+  and validate at insert time) so that switching between the 1024-dim local
+  default (BGE-M3) and a cloud model (e.g. `text-embedding-3-large` at 1024
+  via Matryoshka truncation, or 3072 native) does not require a hand-rolled
+  migration. Refuse to write a chunk whose dimension disagrees with the
+  table's, with an error telling the operator to re-index.
 - A `reindex` job type that re-chunks and re-embeds a document (used when the
   chunker or embedding model changes) without re-parsing — the `docId` cache means
   re-parsing is never necessary.
