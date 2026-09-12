@@ -17,6 +17,7 @@ export { ID_PREFIXES, newId } from './id.js';
 export { migrate } from './migrate.js';
 // Schema tables
 export {
+  accounts,
   apiKeys,
   chunks,
   conversations,
@@ -24,6 +25,8 @@ export {
   documents,
   extractions,
   folders,
+  invitationStatusEnum,
+  invitations,
   jobs,
   membershipRoleEnum,
   memberships,
@@ -31,7 +34,9 @@ export {
   organizations,
   pages,
   parseResults,
+  sessions,
   users,
+  verifications,
 } from './schema/index.js';
 export type { ScopedDb } from './scoped.js';
 // Multi-tenancy
