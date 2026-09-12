@@ -7,10 +7,20 @@ license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "asyncpg>=0.31.0",
+    "boto3>=1.35",
+    "docling>=2.55",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
+    "pillow>=11",
     "pydantic-settings>=2.12.0",
+    "pypdfium2>=4.30",
     "redis>=5",
+    # Declared explicitly, though Docling would pull them in anyway: a
+    # `tool.uv.sources` entry only binds a *direct* dependency, so without
+    # these two lines the CPU-only index below is silently ignored and the
+    # lockfile fills with multi-gigabyte CUDA wheels this worker cannot use.
+    "torch>=2.4",
+    "torchvision>=0.19",
     "uvicorn>=0.52.4",
     "uvloop>=0.22.1",
 ]
@@ -20,8 +30,25 @@ dev = [
     "datamodel-code-generator>=0.79.0",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.4.0",
+    # Fixture corpus generation only. The PDFs under `fixtures/pdf/` are
+    # committed, so a normal test run never reaches for this — it is needed by
+    # `fixtures/generate.py` and by the 500-page test that builds its monster
+    # on the fly rather than committing 20MB of it.
+    "reportlab>=4.2",
     "ruff>=0.14.0",
 ]
+
+[tool.uv.sources]
+# CPU-only torch. Docling's layout models pull torch transitively; the default
+# index serves CUDA wheels that are gigabytes larger and useless on the CPU-only
+# machines this worker is budgeted for.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
@@ -34,6 +61,12 @@ packages = ["src/konusbitr_worker"]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 addopts = "-q --strict-markers --strict-config"
+markers = [
+    # The fixture suite runs Docling over real PDFs: seconds, not milliseconds,
+    # and it needs the layout model on disk. CI runs everything; `-m "not slow"`
+    # is the loop to iterate in.
+    "slow: runs the real parser over the fixture corpus",
+]
 xfail_strict = true
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"

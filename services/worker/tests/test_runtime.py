@@ -19,16 +19,28 @@ from konusbitr_worker.errors import JobFailure
 from konusbitr_worker.queue import Delivery, UndecodableEntry
 from konusbitr_worker.runtime import WorkerRuntime
 from konusbitr_worker.settings import Settings
-from tests.factories import FakeDatabase, FakeQueue, make_document, make_payload
+from tests.factories import (
+    FakeDatabase,
+    FakeObjectStore,
+    FakeQueue,
+    make_document,
+    make_payload,
+)
 
 pytestmark = pytest.mark.asyncio
 
 
-def runtime(settings: Settings, queue: FakeQueue, database: FakeDatabase) -> WorkerRuntime:
+def runtime(
+    settings: Settings,
+    queue: FakeQueue,
+    database: FakeDatabase,
+    store: Any = None,
+) -> WorkerRuntime:
     return WorkerRuntime(
         settings=settings,
         queue=cast(Any, queue),
         database=cast(Any, database),
+        store=store or FakeObjectStore(),
     )
 
 
@@ -38,7 +50,7 @@ def delivery(payload: Any = None, entry_id: str = "1-0") -> Delivery:
 
 
 async def test_a_successful_job_completes_and_is_acknowledged(
-    settings: Settings, queue: FakeQueue
+    settings: Settings, queue: FakeQueue, stub_parse: list[dict[str, Any]]
 ) -> None:
     database = FakeDatabase(make_document(page_count=2))
     entry = delivery()
@@ -55,7 +67,7 @@ async def test_a_successful_job_completes_and_is_acknowledged(
 
 
 async def test_redelivery_after_a_crash_completes_exactly_once(
-    settings: Settings, queue: FakeQueue
+    settings: Settings, queue: FakeQueue, stub_parse: list[dict[str, Any]]
 ) -> None:
     """The acceptance criterion, at the level the loop controls.
 

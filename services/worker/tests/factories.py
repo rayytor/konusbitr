@@ -15,10 +15,19 @@ run against the doubles below, which record what was asked of them.
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import Any
 
 from konusbitr_worker.contracts import JobErrorCode, JobPayload, JobProgress, JobStage
-from konusbitr_worker.db import DocumentRecord
+from konusbitr_worker.db import DocumentRecord, PageRow
+from konusbitr_worker.errors import JobFailure
+
+
+def sha256_of(path: Path) -> str:
+    """The digest the pipeline will re-derive, so a test document can declare it."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
 
 CONTENT_HASH = "a" * 64
 
@@ -74,7 +83,7 @@ class FakeDatabase:
     def __init__(self, document: DocumentRecord | None = None) -> None:
         self._document = document
         self.parse_results: list[dict[str, Any]] = []
-        self.pages: list[tuple[str, int, int, int]] = []
+        self.pages: list[PageRow] = []
         self.stages: list[tuple[JobStage, int]] = []
         self.started: list[tuple[str, int]] = []
         self.completed: list[dict[str, Any]] = []
@@ -115,13 +124,47 @@ class FakeDatabase:
             return
         self.parse_results.append(kwargs)
 
-    async def upsert_pages(
-        self, *, document_id: str, pages: list[tuple[str, int, int, int]]
-    ) -> None:
-        existing = {page_no for _id, page_no, _w, _h in self.pages}
-        for page in pages:
-            if page[1] not in existing:
-                self.pages.append(page)
+    async def upsert_pages(self, *, document_id: str, pages: list[PageRow]) -> None:
+        # The real statement upserts on (document_id, page_no); the double has
+        # to replace rather than append or a replay test would pass by
+        # accumulating duplicates.
+        by_page = {page.page_no: page for page in self.pages}
+        by_page.update({page.page_no: page for page in pages})
+        self.pages = [by_page[page_no] for page_no in sorted(by_page)]
+
+
+class FakeObjectStore:
+    """Serves one local file as the document, and keeps every upload in memory.
+
+    Standing in for S3 rather than running MinIO because what the pipeline tests
+    ask about is the pipeline: does the hash get re-checked, does a thumbnail
+    get written for every page, does a missing object fail terminally. The real
+    client is exercised against real MinIO by the integration suite, which is
+    where a signing or addressing bug would actually show up.
+    """
+
+    def __init__(self, source: Path | None = None) -> None:
+        self.source = source
+        self.uploads: dict[str, bytes] = {}
+        self.content_types: dict[str, str] = {}
+        self.downloads: list[str] = []
+
+    async def download(self, key: str, destination: Path) -> None:
+        self.downloads.append(key)
+        if self.source is None:
+            raise JobFailure(
+                JobErrorCode.object_missing,
+                "The uploaded file is no longer in storage.",
+            )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(self.source.read_bytes())
+
+    async def put_bytes(self, key: str, body: bytes, *, content_type: str) -> None:
+        self.uploads[key] = body
+        self.content_types[key] = content_type
+
+    async def ping(self) -> None:
+        return None
 
 
 class FakeQueue:

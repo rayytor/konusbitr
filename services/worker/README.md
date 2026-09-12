@@ -4,11 +4,62 @@ The Python half of Konusbitr: fetch, validate, parse, OCR, chunk and embed
 documents. FastAPI for health and control, a Redis-stream consumer for the job
 loop.
 
-**The parse itself is a stub until Phase 07.** Everything around it is real:
-the job contract, the consumer group, the retry policy, the progress events the
-browser reads over SSE, and the writes that make a redelivered job harmless.
-`pipeline.py` sleeps where Docling will work, and Phase 07 replaces the body of
-`run_parse` without touching the seam.
+**The parse is real as of Phase 07** and handles born-digital PDFs. A document
+is fetched from storage and re-hashed, opened with PDFium for structure and
+text-layer coverage, converted by Docling, normalized into the Konusbitr parse
+artifact, and written to `parse_results` and `pages` alongside one WebP
+thumbnail per page. OCR, scanned documents and the VLM tier are Phase 12;
+chunking and embedding are Phase 08.
+
+## The parse pipeline
+
+`parse/` is one module per stage, and the split is deliberate — `pipeline.py`
+holds the orchestration and every write, so the rules that make an
+at-least-once queue safe stay small enough to read in one sitting:
+
+| module              | what it owns                                              |
+| ------------------- | --------------------------------------------------------- |
+| `storage.py`        | the S3 client: get the object down, put thumbnails back up |
+| `inspect.py`        | PDFium: readable, not encrypted, page ceiling, text layer  |
+| `docling_parser.py` | Docling, and the normalization of what it returns          |
+| `geometry.py`       | the one coordinate convention, and every conversion into it |
+| `thumbnails.py`     | one WebP per page, rendered from the rotated page          |
+| `artifact.py`       | the shape everything downstream reads                       |
+
+Two things are worth knowing before changing any of it.
+
+**Coordinates.** PDF points, origin top-left, y downward, rotation already
+applied. `docs/coordinates.md` is the specification and `geometry.py` is the
+only place anything converts into it. If the Phase 11 viewer ever needs more
+than a scale factor, the bug is here.
+
+**A scan is refused, not parsed.** A standard-tier parse of an image-only PDF
+succeeds and returns almost nothing, and a chat built on that answers
+confidently out of an empty document. `inspect.py` measures extractable-character
+coverage per page and fails the job with `needs_ocr` when more than a fifth of
+the pages fall below `TEXT_COVERAGE_THRESHOLD`.
+
+Docling's layout models are baked into the container image at build time
+(`docker/worker.Dockerfile`), so no job ever waits on a model download and
+`OFFLINE_MODE` stays honest. Running natively, Docling fetches them to its own
+cache on first use.
+
+### Fixtures and the slow suite
+
+`fixtures/pdf/` at the repo root holds the committed corpus, all of it produced
+by `fixtures/generate.py` — nothing scraped, nothing copyrighted, and every
+expected string is one this repository wrote into the document. Regenerate with:
+
+```bash
+uv run --no-project --with reportlab --with pillow python ../../fixtures/generate.py
+```
+
+`tests/test_parse_fixtures.py` runs the real parser over that corpus and is
+marked `slow`. CI runs it; while iterating, `uv run pytest -m "not slow"` skips
+it. Golden markdown lives in `tests/golden/` and is compared after whitespace
+normalization — a parser may change how it wraps a line and may not change what
+the line says. Rewrite them with `KONUSBITR_UPDATE_GOLDEN=1` and **read the
+diff**; a golden file updated without reading the diff is a test switched off.
 
 ## Running it alone
 
