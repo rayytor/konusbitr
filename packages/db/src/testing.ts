@@ -96,6 +96,23 @@ export async function creditEntriesOf(db: Database, orgId: string) {
     .orderBy(asc(schema.creditLedger.createdAt));
 }
 
+/** The parse results recorded for a document — one, if the cache is working. */
+export async function parseResultsForDocument(db: Database, documentId: string) {
+  return db
+    .select()
+    .from(schema.parseResults)
+    .where(eq(schema.parseResults.documentId, documentId));
+}
+
+/** A document's page geometry, oldest page first. */
+export async function pagesForDocument(db: Database, documentId: string) {
+  return db
+    .select()
+    .from(schema.pages)
+    .where(eq(schema.pages.documentId, documentId))
+    .orderBy(asc(schema.pages.pageNo));
+}
+
 /** Rows in a table that reference a document, for asserting a cascade. */
 export async function chunksForDocument(db: Database, documentId: string) {
   return db.select().from(schema.chunks).where(eq(schema.chunks.documentId, documentId));

@@ -40,6 +40,16 @@ export const documents = pgTable(
     sourceUrl: text('source_url'),
     status: text('status').notNull().default('queued'),
     error: text('error'),
+    /**
+     * A stable machine-readable reason the document failed, from
+     * `JOB_ERROR_CODES` in `@konusbitr/shared`.
+     *
+     * Separate from `error` because the two have different audiences and
+     * different lifetimes: the message is a sentence written for the person who
+     * uploaded the file and will be reworded, while the code is what a client,
+     * a dashboard and Phase 13's public API switch on and must not be.
+     */
+    errorCode: text('error_code'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
