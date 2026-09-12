@@ -1,50 +1,80 @@
-import type { ParseSettings } from '@konusbitr/shared';
+import {
+  JOB_PAYLOAD_VERSION,
+  JOBS_STREAM,
+  JOBS_STREAM_FIELD,
+  JOBS_STREAM_MAX_LENGTH,
+  type JobPayload,
+  JobPayloadSchema,
+  type JobProgress,
+  JobProgressSchema,
+} from '@konusbitr/shared';
 import { redis } from '../redis';
 
 /**
  * Handing a document to the Python half.
  *
- * The entire contract between the two runtimes is this list and a JSON payload
- * — no shared ORM, no RPC framework, no imports across the boundary. That seam
- * is what keeps a two-language codebase contributable, so it is deliberately
- * the smallest thing that could work.
+ * The entire contract between the two runtimes is this stream and a JSON
+ * payload — no shared ORM, no RPC framework, no imports across the boundary.
+ * That seam is what keeps a two-language codebase contributable, so it is
+ * deliberately the smallest thing that could work, and the payload's shape is
+ * generated into the worker's pydantic models from the same Zod schema this
+ * file validates against. `docs/adr/0001-queue.md` records why it is a stream
+ * with a consumer group rather than BullMQ or arq.
  *
- * **Phase 05 ends here.** Nothing consumes this queue yet; Phase 06 brings up
- * the worker and, with it, the generated payload schema that replaces the
- * hand-written shape below. What is written now is the minimum a worker needs
- * to find the bytes and know what to do with them, and it is versioned so the
- * Phase 06 consumer can tell an old envelope from a new one.
+ * The one thing to understand before changing anything here: a *list* is not
+ * good enough. `RPUSH`/`BLPOP` hands a job to a worker and immediately forgets
+ * it, so a worker killed mid-parse takes the job to the grave with it. A
+ * stream entry stays in the consumer group's pending list until the worker
+ * acknowledges it, which is the whole of Phase 06's crash-recovery story.
  */
 
-/** The list the worker will block on. */
-export const JOBS_QUEUE = 'konusbitr:jobs';
+export type EnqueueParseJob = Omit<JobPayload, 'v' | 'attempt' | 'enqueuedAt' | 'type'>;
 
-/** The channel progress is published to, per document. Read over SSE, never a socket. */
-export function progressChannel(documentId: string): string {
-  return `konusbitr:progress:${documentId}`;
+/**
+ * Append a parse job.
+ *
+ * Validated on the way out, not merely typed: this is the one place a payload
+ * becomes bytes another language will parse, and a runtime check here turns
+ * "the worker dead-letters everything and nobody knows why" into a 500 with a
+ * stack trace pointing at the caller.
+ */
+export async function enqueueParseJob(job: EnqueueParseJob): Promise<string> {
+  const payload = JobPayloadSchema.parse({
+    v: JOB_PAYLOAD_VERSION,
+    type: 'parse',
+    attempt: 1,
+    enqueuedAt: new Date().toISOString(),
+    ...job,
+  } satisfies JobPayload);
+
+  // `MAXLEN ~` trims lazily at whole-node boundaries, which is what makes the
+  // cap free. Acknowledged entries are not removed by `XACK` — they only stop
+  // being redeliverable — so without a cap the stream is an append-only log of
+  // every job the instance has ever run.
+  return redis().xadd(
+    JOBS_STREAM,
+    'MAXLEN',
+    '~',
+    String(JOBS_STREAM_MAX_LENGTH),
+    '*',
+    JOBS_STREAM_FIELD,
+    JSON.stringify(payload),
+  ) as Promise<string>;
 }
 
-export type ParseJobEnvelope = {
-  v: 1;
-  jobId: string;
-  type: 'parse';
-  orgId: string;
-  documentId: string;
-  storageKey: string;
-  settings: ParseSettings;
-  enqueuedAt: string;
-};
-
-export async function enqueueParseJob(
-  envelope: Omit<ParseJobEnvelope, 'v' | 'enqueuedAt'>,
-): Promise<void> {
-  const payload: ParseJobEnvelope = {
-    v: 1,
-    ...envelope,
-    enqueuedAt: new Date().toISOString(),
-  };
-
-  // `rpush` with a blocking `blpop` at the other end gives FIFO ordering and
-  // costs nothing while the queue is empty.
-  await redis().rpush(JOBS_QUEUE, JSON.stringify(payload));
+/**
+ * Parse a progress frame published by the worker.
+ *
+ * Returns `undefined` for anything that does not validate. The SSE route drops
+ * those silently rather than tearing the stream down: a malformed frame is a
+ * worker-side bug, and killing the browser's connection over it would replace
+ * a missing progress bar with a page that looks broken.
+ */
+export function parseProgress(message: string): JobProgress | undefined {
+  try {
+    const result = JobProgressSchema.safeParse(JSON.parse(message));
+    return result.success ? result.data : undefined;
+  } catch {
+    return undefined;
+  }
 }

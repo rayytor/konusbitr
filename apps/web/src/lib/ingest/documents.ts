@@ -109,10 +109,10 @@ export async function resolveDocument(input: ResolveInput): Promise<ResolveResul
   if (job) {
     await enqueueParseJob({
       jobId: job.id,
-      type: 'parse',
       orgId: input.orgId,
       documentId: document.id,
       storageKey: document.storageKey,
+      contentHash: document.contentHash,
       settings: input.settings,
     });
   }
@@ -176,6 +176,7 @@ export function presentDocument(row: DocumentRow, cached?: boolean): DocumentVie
     pageCount: row.pageCount,
     status: row.status,
     error: row.error,
+    errorCode: row.errorCode,
     folderId: row.folderId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
