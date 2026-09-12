@@ -41,7 +41,25 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Isolate from the developer's own shell and from any `.env` on disk."""
     extras = [
         "LLM_PROVIDER",
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_CHAT_MODEL",
+        "CHAT_PROVIDER",
+        "EMBEDDING_PROVIDER",
+        "EMBEDDING_MODEL",
+        "EMBEDDING_DIMENSIONS",
+        "EMBEDDING_BATCH_SIZE",
+        "RERANK_PROVIDER",
+        "RERANK_MODEL",
+        "VISION_PROVIDER",
+        "VISION_MODEL",
+        "OLLAMA_BASE_URL",
+        "VLLM_BASE_URL",
         "OFFLINE_MODE",
+        "CHUNK_TARGET_TOKENS",
+        "CHUNK_MIN_TOKENS",
+        "CHUNK_MAX_TOKENS",
+        "CHUNK_OVERLAP_RATIO",
         "BILLING_ENABLED",
         "CREDITS_MODE",
         "MAX_UPLOAD_BYTES",
@@ -120,7 +138,13 @@ def test_rejects_unknown_llm_provider(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_reads_booleans_the_way_a_dotenv_writes_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = load({**VALID, "OFFLINE_MODE": "true", "BILLING_ENABLED": "1"}, monkeypatch)
+    # Offline mode needs a local provider alongside it, which is its own test
+    # in `test_model_router_settings.py`; here it only stands in for "a boolean
+    # spelled `true`".
+    settings = load(
+        {**VALID, "OFFLINE_MODE": "true", "LLM_PROVIDER": "ollama", "BILLING_ENABLED": "1"},
+        monkeypatch,
+    )
 
     assert settings.offline_mode is True
     assert settings.billing_enabled is True

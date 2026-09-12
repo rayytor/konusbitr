@@ -111,7 +111,12 @@ async def parse_document(
         ]
 
         with _timed(timings, "thumbnails"):
-            await _announce(on_stage, JobStage.persisting)
+            # No stage announcement. `ProgressReporter` clamps the percentage
+            # to be monotonic, so announcing `persisting` (95%) here — before
+            # `chunking` (70%) and `embedding` (85%) had happened — pinned the
+            # bar at 95% for the whole of the chunking and embedding that
+            # follow. Thumbnails belong to `parsing`, which is what the caller
+            # has already announced.
             await _write_thumbnails(
                 path,
                 store=store,

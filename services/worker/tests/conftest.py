@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 
 from konusbitr_worker.contracts import JobStage
-from konusbitr_worker.parse.artifact import ParseArtifact, ParsedPage
+from konusbitr_worker.parse.artifact import (
+    ElementType,
+    ParseArtifact,
+    ParsedElement,
+    ParsedPage,
+)
+from konusbitr_worker.parse.geometry import BBox
 from konusbitr_worker.settings import Settings
 from tests.factories import BASE_ENV, FakeQueue
 
@@ -42,11 +48,44 @@ def fixtures_dir() -> Path:
 
 @pytest.fixture
 def artifact() -> ParseArtifact:
-    """A parse result, without a parser. Stands in for whatever Docling returns."""
+    """A parse result, without a parser. Stands in for whatever Docling returns.
+
+    `contents` is populated because the chunker is downstream of it: a fixture
+    with an empty element list would let every chunking assertion pass by
+    producing nothing.
+    """
     return ParseArtifact(
         markdown="# Title\n\nRevenue grew 18% year over year.\n",
         page_count=2,
-        contents=[],
+        contents=[
+            ParsedElement(
+                id="el_0000",
+                type=ElementType.heading,
+                text="Title",
+                markdown="# Title",
+                page=1,
+                bbox=BBox(72.0, 72.0, 540.0, 92.0),
+                level=1,
+            ),
+            ParsedElement(
+                id="el_0001",
+                type=ElementType.paragraph,
+                text="Revenue grew 18% year over year.",
+                markdown="Revenue grew 18% year over year.",
+                page=1,
+                bbox=BBox(72.0, 100.0, 540.0, 140.0),
+                section_path=["Title"],
+            ),
+            ParsedElement(
+                id="el_0002",
+                type=ElementType.paragraph,
+                text="Costs were flat against a rising headcount.",
+                markdown="Costs were flat against a rising headcount.",
+                page=2,
+                bbox=BBox(72.0, 100.0, 540.0, 150.0),
+                section_path=["Title"],
+            ),
+        ],
         pages=[
             ParsedPage(page_no=1, width=612.0, height=792.0, thumbnail_key="thumb/1.webp"),
             ParsedPage(page_no=2, width=841.89, height=595.28, rotation=90),
@@ -63,12 +102,7 @@ def stub_parse(monkeypatch: pytest.MonkeyPatch, artifact: ParseArtifact) -> list
         calls.append(kwargs)
         on_stage = kwargs.get("on_stage")
         if on_stage is not None:
-            for stage in (
-                JobStage.fetching,
-                JobStage.validating,
-                JobStage.parsing,
-                JobStage.persisting,
-            ):
+            for stage in (JobStage.fetching, JobStage.validating, JobStage.parsing):
                 await on_stage(stage)
         return artifact
 

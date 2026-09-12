@@ -25,21 +25,110 @@ from __future__ import annotations
 import os
 import socket
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
+    "CLOUD_PROVIDERS",
+    "DEFAULT_CHAT_MODELS",
+    "DEFAULT_EMBEDDING_MODELS",
+    "LOCAL_PROVIDERS",
+    "MODEL_ROLES",
+    "PROVIDERS_WITHOUT_EMBEDDINGS",
+    "ROLE_PROVIDER_VARIABLE",
     "EnvValidationError",
+    "LlmProvider",
+    "ModelRole",
     "Settings",
+    "is_local_endpoint",
     "load_settings",
 ]
 
 NodeEnv = Literal["development", "test", "production"]
 LlmProvider = Literal["openai", "anthropic", "google", "mistral", "ollama", "vllm"]
 CreditsMode = Literal["unlimited", "metered"]
+
+#: What a model is being asked to do.
+#:
+#: Mirrors ``MODEL_ROLES`` in ``packages/shared/src/models.ts``. Hand-written
+#: rather than generated, because this is the *environment* contract rather than
+#: a wire payload — the generated ``contracts`` module covers what crosses the
+#: Redis seam, and this module has to be importable before any code generation
+#: has run. ``tests/test_settings.py`` pins it against the TypeScript half.
+ModelRole = Literal["chat", "embedding", "rerank", "vision"]
+
+MODEL_ROLES: tuple[ModelRole, ...] = ("chat", "embedding", "rerank", "vision")
+
+#: Providers that run on hardware the operator controls. This is the whole of
+#: the definition of "local", and what ``OFFLINE_MODE=true`` permits.
+LOCAL_PROVIDERS: tuple[LlmProvider, ...] = ("ollama", "vllm")
+
+#: Everything else: an endpoint on somebody else's computer.
+CLOUD_PROVIDERS: tuple[LlmProvider, ...] = ("openai", "anthropic", "google", "mistral")
+
+#: Providers that serve chat but expose no embedding endpoint this router can
+#: address, so naming one for the embedding role is a configuration mistake
+#: rather than a call that fails later.
+PROVIDERS_WITHOUT_EMBEDDINGS: tuple[LlmProvider, ...] = ("anthropic", "google")
+
+#: The variable that names a role's provider, for error messages.
+ROLE_PROVIDER_VARIABLE: dict[ModelRole, str] = {
+    "chat": "CHAT_PROVIDER",
+    "embedding": "EMBEDDING_PROVIDER",
+    "rerank": "RERANK_PROVIDER",
+    "vision": "VISION_PROVIDER",
+}
+
+#: The model each provider gets when only a provider is named, in LiteLLM's
+#: ``provider/model`` spelling. ``vllm`` serves whatever was loaded into it, so
+#: it has no default worth inventing.
+DEFAULT_EMBEDDING_MODELS: dict[LlmProvider, str] = {
+    "openai": "text-embedding-3-large",
+    "mistral": "mistral-embed",
+    "ollama": "ollama/bge-m3",
+}
+
+DEFAULT_CHAT_MODELS: dict[LlmProvider, str] = {
+    "openai": "gpt-4.1-mini",
+    "anthropic": "claude-sonnet-4-5",
+    "google": "gemini/gemini-2.5-flash",
+    "mistral": "mistral-small-latest",
+    "ollama": "ollama/llama3.2:3b",
+}
+
+
+def is_local_endpoint(value: str) -> bool:
+    """Whether a URL points at this machine or this network.
+
+    Shape rather than DNS: this runs at boot and in the hot path of every model
+    call, and a resolver lookup would be both slow and a second thing that can
+    fail. A bare hostname with no dot is a container or service name and is by
+    construction not a public DNS name. The resolving, SSRF-grade guard lives in
+    ``apps/web/src/lib/ingest/ssrf.ts`` and exists for a different job:
+    user-supplied URLs. These endpoints come from the operator's own ``.env``.
+    """
+    hostname = urlparse(value).hostname
+    if not hostname:
+        return False
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return True
+    if hostname == "::1":
+        return True
+    if "." not in hostname:
+        return True
+
+    parts = hostname.split(".")
+    if len(parts) != 4 or not all(part.isdigit() for part in parts):
+        return False
+    first, second = int(parts[0]), int(parts[1])
+    if first in (10, 127):
+        return True
+    if first == 192 and second == 168:
+        return True
+    return first == 172 and 16 <= second <= 31
 
 
 class EnvValidationError(RuntimeError):
@@ -116,12 +205,76 @@ class Settings(BaseSettings):
     #: parser to treat it as born-digital. See `.env.example`.
     text_coverage_threshold: float = 0.1
 
+    # ── The model router ─────────────────────────────────────────────────────
+    #
+    # Every model call goes through LiteLLM; nothing here imports a provider
+    # SDK. Roles are configured independently and each falls back to
+    # ``llm_provider``, so the common case is one variable and the mixed case
+    # — cloud chat, local embeddings, which is the shape a law firm wants — is
+    # two. The TypeScript half of this contract is ``EnvSchema``; the defaults
+    # on both sides have to match, and ``.env.example`` documents both.
+
     llm_provider: LlmProvider = "openai"
     llm_api_key: str | None = None
+    #: An OpenAI-compatible base URL to route everything through: a LiteLLM
+    #: proxy, a gateway, an air-gapped mirror.
+    llm_base_url: str | None = None
+
+    chat_provider: LlmProvider | None = None
     llm_chat_model: str | None = None
+
+    embedding_provider: LlmProvider | None = None
     embedding_model: str | None = None
+
+    #: The width ``chunks.embedding`` is declared at. A model that returns
+    #: anything else cannot be stored: pgvector needs a fixed dimension to
+    #: build an HNSW index, so the column is ``vector(1024)`` and the worker
+    #: refuses the write rather than letting a batch insert fail inside
+    #: Postgres. Changing it is a migration plus a full reindex.
+    embedding_dimensions: int = 1024
+    #: Passages per embedding request.
+    embedding_batch_size: int = 64
+
+    rerank_provider: LlmProvider | None = None
+    rerank_model: str | None = None
+
+    vision_provider: LlmProvider | None = None
+    vision_model: str | None = None
+
     ollama_base_url: str = "http://localhost:11434"
+    vllm_base_url: str | None = None
+
+    #: Attempts per model call, the first included.
+    model_max_retries: int = 3
+    #: Per-call deadline for chat, rerank and vision.
+    model_timeout_seconds: float = 60.0
+    #: Per-call deadline for one embedding batch, which is slower than a chat turn.
+    embedding_timeout_seconds: float = 120.0
+    #: Consecutive failures that open a role's circuit.
+    model_breaker_failures: int = 5
+    #: How long an open circuit refuses calls before letting one through.
+    model_breaker_cooldown_seconds: float = 30.0
+
+    #: When true, any attempt to reach a non-local endpoint raises immediately.
+    #:
+    #: Enforced here at boot — a cloud provider named for *any* role fails the
+    #: process — and again at every call site in
+    #: :mod:`konusbitr_worker.ai`, because configuration can change under a
+    #: running process and a guarantee that lapses at the next deploy is not a
+    #: guarantee. It is a headline claim of the project, so it is tested.
     offline_mode: bool = False
+
+    # ── The chunker ──────────────────────────────────────────────────────────
+    #
+    # The band is 600 to 900 tokens: long enough for a passage to answer a
+    # question on its own, short enough that eight of them fit in a prompt with
+    # room for an answer. ``chunk_max_tokens`` is the hard ceiling a merge may
+    # not cross, and the 15% overlap is what keeps a sentence straddling a
+    # boundary retrievable from either side.
+    chunk_target_tokens: int = 800
+    chunk_min_tokens: int = 600
+    chunk_max_tokens: int = 1100
+    chunk_overlap_ratio: float = 0.15
 
     billing_enabled: bool = False
     credits_mode: CreditsMode = "unlimited"
@@ -172,6 +325,13 @@ class Settings(BaseSettings):
         "worker_max_attempts",
         "worker_parse_threads",
         "worker_thumbnail_max_edge",
+        "embedding_dimensions",
+        "embedding_batch_size",
+        "model_max_retries",
+        "model_breaker_failures",
+        "chunk_target_tokens",
+        "chunk_min_tokens",
+        "chunk_max_tokens",
     )
     @classmethod
     def _check_positive_int(cls, value: int) -> int:
@@ -179,7 +339,12 @@ class Settings(BaseSettings):
             raise ValueError("must be greater than zero")
         return value
 
-    @field_validator("worker_retry_base_seconds")
+    @field_validator(
+        "worker_retry_base_seconds",
+        "model_timeout_seconds",
+        "embedding_timeout_seconds",
+        "model_breaker_cooldown_seconds",
+    )
     @classmethod
     def _check_positive_float(cls, value: float) -> float:
         if value <= 0:
@@ -192,6 +357,113 @@ class Settings(BaseSettings):
         if not 0.0 <= value <= 1.0:
             raise ValueError("must be a fraction between 0 and 1")
         return value
+
+    @field_validator("chunk_overlap_ratio")
+    @classmethod
+    def _check_overlap(cls, value: float) -> float:
+        # At a half, every chunk repeats half of its neighbour and the index
+        # doubles in size for nothing; the ceiling is there to catch a ratio
+        # typed as a percentage.
+        if not 0.0 <= value <= 0.5:
+            raise ValueError("must be a fraction between 0 and 0.5")
+        return value
+
+    def provider_for(self, role: ModelRole) -> LlmProvider:
+        """Which provider serves a role: its own variable, or ``llm_provider``.
+
+        The fallback is what keeps the common case one variable. It is also why
+        the offline check has to walk all four roles rather than reading
+        ``llm_provider`` alone — a deployment with ``LLM_PROVIDER=ollama`` and
+        ``CHAT_PROVIDER=openai`` is a cloud deployment, whatever the fallback
+        says.
+        """
+        override = {
+            "chat": self.chat_provider,
+            "embedding": self.embedding_provider,
+            "rerank": self.rerank_provider,
+            "vision": self.vision_provider,
+        }[role]
+        return override or self.llm_provider
+
+    def model_for(self, role: ModelRole) -> str | None:
+        """The model configured for a role, or ``None`` to take the default."""
+        return {
+            "chat": self.llm_chat_model,
+            "embedding": self.embedding_model,
+            "rerank": self.rerank_model,
+            "vision": self.vision_model,
+        }[role]
+
+    @model_validator(mode="after")
+    def _check_offline_mode(self) -> Self:
+        """Fail the process when offline mode and a cloud provider disagree.
+
+        Loudly, at boot, naming what the operator actually wrote. The
+        alternative is a deployment installed *because* document text cannot
+        leave the building quietly sending its first document to the internet,
+        which is the one failure this project cannot absorb.
+        """
+        if not self.offline_mode:
+            return self
+
+        offending = [
+            (ROLE_PROVIDER_VARIABLE[role], self.provider_for(role))
+            for role in MODEL_ROLES
+            if self.provider_for(role) in CLOUD_PROVIDERS
+        ]
+        if offending:
+            # Name only variables that were set. Every role inherits
+            # ``llm_provider``, so listing all four would report three unset
+            # variables as the cause of a mistake in one that is set.
+            explicit = [
+                f"{name}={provider}"
+                for name, provider in offending
+                if getattr(self, name.lower()) is not None
+            ]
+            named = ", ".join(explicit) or f"LLM_PROVIDER={self.llm_provider}"
+            raise ValueError(
+                f"OFFLINE_MODE: is true, but a cloud provider is configured ({named}). "
+                "Offline mode "
+                "means a document's text cannot leave this deployment, so every role "
+                f"must name one of {' or '.join(LOCAL_PROVIDERS)}. Refusing to start "
+                "rather than quietly sending the first document to the internet."
+            )
+
+        if self.llm_base_url is not None and not is_local_endpoint(self.llm_base_url):
+            raise ValueError(
+                f"LLM_BASE_URL: points at {urlparse(self.llm_base_url).hostname}, "
+                "which is not a local "
+                "address, and OFFLINE_MODE is true. An OpenAI-compatible proxy is still "
+                "the internet if it is hosted on it."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def _check_chunk_band(self) -> Self:
+        if self.chunk_min_tokens > self.chunk_target_tokens:
+            raise ValueError(
+                f"CHUNK_MIN_TOKENS: is {self.chunk_min_tokens}, above "
+                f"CHUNK_TARGET_TOKENS={self.chunk_target_tokens}"
+            )
+        if self.chunk_max_tokens < self.chunk_target_tokens:
+            raise ValueError(
+                f"CHUNK_MAX_TOKENS: is {self.chunk_max_tokens}, below "
+                f"CHUNK_TARGET_TOKENS={self.chunk_target_tokens}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_embedding_provider(self) -> Self:
+        provider = self.provider_for("embedding")
+        if provider in PROVIDERS_WITHOUT_EMBEDDINGS and self.embedding_model is not None:
+            raise ValueError(
+                f"EMBEDDING_PROVIDER: is {provider}, which has no embedding endpoint "
+                "this router can "
+                "address. Set EMBEDDING_PROVIDER to one that does — openai, mistral, "
+                "ollama or vllm — and leave the chat role where it is."
+            )
+        return self
 
     def consumer_name(self) -> str:
         """This process's name inside the consumer group."""
@@ -266,12 +538,20 @@ def _describe(error: ValidationError) -> list[str]:
     issues: list[str] = []
     for detail in error.errors():
         location = detail["loc"]
-        name = str(location[0]).upper() if location else "(root)"
+        message = detail["msg"].removeprefix("Value error, ")
+
+        if not location:
+            # A cross-field rule: pydantic gives a whole-model validator no
+            # field location, so the validator names the variable itself and
+            # the message is already in the right shape.
+            issues.append(message)
+            continue
+
+        name = str(location[0]).upper()
         if detail["type"] == "missing":
             issues.append(f"{name}: is required but was not set")
         else:
-            message = detail["msg"]
-            issues.append(f"{name}: {message.removeprefix('Value error, ')}")
+            issues.append(f"{name}: {message}")
     return issues
 
 

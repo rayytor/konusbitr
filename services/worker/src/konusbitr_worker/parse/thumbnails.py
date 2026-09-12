@@ -42,6 +42,16 @@ def thumbnail_key(org_id: str, document_id: str, page_no: int) -> str:
     The same layout as the original object, one level deeper. Every segment is
     a generated id or an integer — nothing here is ever built from a filename
     or anything else a user chose.
+
+    Zero-padded to five digits so that a lexical listing of the prefix is a
+    page-order listing: `00002` sorts before `00010`, where `2` sorts after
+    `10`. The viewer's page rail pages through the prefix rather than asking
+    for each key, so the order is load-bearing.
+
+    **This must agree character for character with `pageThumbnailKey` in
+    `packages/storage/src/keys.ts`.** The worker writes these keys and the web
+    app reads them, across a seam with no shared code, so both sides assert the
+    layout in their own tests rather than trusting it. They disagreed once.
     """
     return f"orgs/{org_id}/documents/{document_id}/thumbnails/{page_no:05d}.webp"
 

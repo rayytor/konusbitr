@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from konusbitr_worker.contracts import JobErrorCode, JobPayload, JobProgress, JobStage
-from konusbitr_worker.db import DocumentRecord, PageRow
+from konusbitr_worker.db import ChunkRow, DocumentRecord, PageRow, ParseArtifactRow
 from konusbitr_worker.errors import JobFailure
 
 
@@ -84,10 +84,17 @@ class FakeDatabase:
         self._document = document
         self.parse_results: list[dict[str, Any]] = []
         self.pages: list[PageRow] = []
+        self.chunks: list[ChunkRow] = []
         self.stages: list[tuple[JobStage, int]] = []
         self.started: list[tuple[str, int]] = []
         self.completed: list[dict[str, Any]] = []
         self.failures: list[dict[str, Any]] = []
+        self.chunk_counts: list[tuple[int, int]] = []
+        self.embedding_recorded: list[tuple[str | None, int | None]] = []
+        #: What `chunks.embedding` is declared as. `None` stands in for an
+        #: untyped column, which the schema forbids but a hand-altered database
+        #: could still present.
+        self.declared_dimensions: int | None = 1024
 
     async def document(self, document_id: str, org_id: str) -> DocumentRecord | None:
         if self._document is None:
@@ -101,6 +108,24 @@ class FakeDatabase:
             row["content_hash"] == content_hash and row["settings_hash"] == settings_hash
             for row in self.parse_results
         )
+
+    async def parse_artifact(
+        self, content_hash: str, settings_hash: str
+    ) -> ParseArtifactRow | None:
+        for row in self.parse_results:
+            if row["content_hash"] == content_hash and row["settings_hash"] == settings_hash:
+                return ParseArtifactRow(
+                    markdown=row["markdown"],
+                    contents=row["contents"],
+                    page_count=row["page_count"],
+                )
+        return None
+
+    async def chunk_count(self, document_id: str) -> int:
+        return len([row for row in self.chunks if row.document_id == document_id])
+
+    async def embedding_dimensions(self) -> int | None:
+        return self.declared_dimensions
 
     async def start_job(self, job_id: str, attempt: int) -> None:
         self.started.append((job_id, attempt))
@@ -123,6 +148,27 @@ class FakeDatabase:
         if await self.parse_result_exists(kwargs["content_hash"], kwargs["settings_hash"]):
             return
         self.parse_results.append(kwargs)
+
+    async def upsert_chunks(self, rows: list[ChunkRow]) -> None:
+        # The real statement upserts on (document_id, ordinal); the double has
+        # to replace rather than append, or an idempotency test would pass by
+        # accumulating duplicates.
+        by_key = {(row.document_id, row.ordinal): row for row in self.chunks}
+        by_key.update({(row.document_id, row.ordinal): row for row in rows})
+        self.chunks = [by_key[key] for key in sorted(by_key)]
+
+    async def prune_chunks(self, *, document_id: str, keep: int) -> None:
+        self.chunks = [
+            row for row in self.chunks if row.document_id != document_id or row.ordinal < keep
+        ]
+
+    async def set_chunk_counts(self, *, document_id: str, ready: int, total: int) -> None:
+        self.chunk_counts.append((ready, total))
+
+    async def set_document_embedding(
+        self, *, document_id: str, model: str | None, dims: int | None
+    ) -> None:
+        self.embedding_recorded.append((model, dims))
 
     async def upsert_pages(self, *, document_id: str, pages: list[PageRow]) -> None:
         # The real statement upserts on (document_id, page_no); the double has
