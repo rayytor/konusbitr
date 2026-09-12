@@ -37,6 +37,9 @@ export async function seed(databaseUrl?: string) {
     id: userId,
     email: 'dev@konusbitr.local',
     name: 'Dev User',
+    // The dev user exists to own seeded rows, not to receive mail. Marking it
+    // verified keeps it usable when `requireEmailVerification` is on.
+    emailVerified: true,
   });
 
   await db.insert(schema.organizations).values({

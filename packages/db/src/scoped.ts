@@ -1,5 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 import type { Database } from './client.js';
+import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';
 
 /**
@@ -53,6 +54,118 @@ export function scopedDb(db: Database, orgId: string) {
     /** Query API keys belonging to this org. */
     apiKeys() {
       return db.select().from(schema.apiKeys).where(eq(schema.apiKeys.orgId, orgId));
+    },
+
+    /** Every API key ever issued to this org, newest first, revoked ones included. */
+    listApiKeys() {
+      return db
+        .select()
+        .from(schema.apiKeys)
+        .where(eq(schema.apiKeys.orgId, orgId))
+        .orderBy(desc(schema.apiKeys.createdAt));
+    },
+
+    /**
+     * Store a new API key. The caller generates the secret and hands over only
+     * its hash and prefix — this layer never sees a raw key.
+     */
+    async createApiKey(input: {
+      name: string;
+      hashedKey: string;
+      prefix: string;
+      scopes: string[];
+      expiresAt?: Date | null;
+    }) {
+      const [row] = await db
+        .insert(schema.apiKeys)
+        .values({
+          id: newId(ID_PREFIXES.apiKey),
+          orgId,
+          name: input.name,
+          hashedKey: input.hashedKey,
+          prefix: input.prefix,
+          scopes: input.scopes,
+          expiresAt: input.expiresAt ?? null,
+        })
+        .returning();
+      return row;
+    },
+
+    /**
+     * Revoke a key, returning `undefined` when there was no live key with that
+     * id *in this org*. The org predicate is what stops an admin of one
+     * organization from revoking another's key by guessing an id.
+     */
+    async revokeApiKey(keyId: string) {
+      const [row] = await db
+        .update(schema.apiKeys)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(schema.apiKeys.id, keyId),
+            eq(schema.apiKeys.orgId, orgId),
+            isNull(schema.apiKeys.revokedAt),
+          ),
+        )
+        .returning({ id: schema.apiKeys.id });
+      return row;
+    },
+
+    /** Every member of this org with the user behind them, oldest first. */
+    members() {
+      return db
+        .select({
+          id: schema.memberships.id,
+          userId: schema.users.id,
+          email: schema.users.email,
+          name: schema.users.name,
+          role: schema.memberships.role,
+          createdAt: schema.memberships.createdAt,
+        })
+        .from(schema.memberships)
+        .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+        .where(eq(schema.memberships.orgId, orgId))
+        .orderBy(asc(schema.memberships.createdAt));
+    },
+
+    /** Invitations to this org that nobody has answered yet. */
+    pendingInvitations() {
+      return db
+        .select({
+          id: schema.invitations.id,
+          email: schema.invitations.email,
+          role: schema.invitations.role,
+          expiresAt: schema.invitations.expiresAt,
+        })
+        .from(schema.invitations)
+        .where(
+          and(
+            eq(schema.invitations.orgId, orgId),
+            eq(schema.invitations.status, 'pending'),
+            gt(schema.invitations.expiresAt, new Date()),
+          ),
+        )
+        .orderBy(desc(schema.invitations.createdAt));
+    },
+
+    /** This user's role in this org, or `undefined` if they are not a member. */
+    async membershipOf(userId: string) {
+      const [row] = await db
+        .select({ role: schema.memberships.role })
+        .from(schema.memberships)
+        .where(and(eq(schema.memberships.userId, userId), eq(schema.memberships.orgId, orgId)))
+        .limit(1);
+      return row;
+    },
+
+    /** Query memberships belonging to this org. */
+    memberships() {
+      return db.select().from(schema.memberships).where(eq(schema.memberships.orgId, orgId));
+    },
+
+    /** Query pending and settled invitations belonging to this org. */
+    invitations() {
+      return db.select().from(schema.invitations).where(eq(schema.invitations.orgId, orgId));
     },
 
     /** Query extractions belonging to this org. */

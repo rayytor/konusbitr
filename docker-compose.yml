@@ -71,7 +71,10 @@ services:
   # S3-compatible object storage, so the same code path runs against S3, R2 or
   # B2 in production with only S3_ENDPOINT changed.
   minio:
-    image: minio/minio
+    # quay.io, not Docker Hub: MinIO stopped serving `minio/minio` there, and an
+    # untagged image is not something a self-hoster's first command should
+    # depend on either. Pinned so the stack is reproducible.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: ['server', '/data', '--console-address', ':9001']
     environment:
@@ -95,7 +98,7 @@ services:
   # Everything that follows depends on it having completed, so a first boot can
   # never race an upload against a missing bucket.
   minio-init:
-    image: minio/mc
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     restart: 'no'
     depends_on:
       minio:
