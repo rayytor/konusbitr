@@ -1,55 +1,28 @@
-"""Worker entrypoint.
+"""Worker entrypoint: the job loop and the health endpoints, in one process.
 
-Placeholder until **Phase 06**, which replaces the idle loop below with FastAPI
-for health and control and arq for the job loop. What it does today is real and
-load-bearing, though:
+One deployable rather than two, because they are two views of the same thing —
+the probes exist to report on the loop, and a sidecar that reported on a
+*different* process would be answering a question nobody asked.
 
-* it validates the environment and dies immediately, naming the variable, if
-  anything is missing — the same promise the web app makes;
-* it keeps a heartbeat so the container healthcheck means something;
-* it exits cleanly on SIGTERM, so ``docker compose down`` is not a 10-second
-  wait for a kill.
+The loop runs inside FastAPI's lifespan, so uvicorn's signal handling is the
+shutdown path: SIGTERM stops the server, the lifespan tears the runtime down,
+and the runtime waits for whatever is in flight. ``docker compose down`` is
+therefore a clean stop rather than a ten-second wait for a kill.
 
-Nothing here touches Postgres, Redis or storage. The worker learns to talk to
-those over the Redis job queue in Phase 06, and never through a shared ORM.
+The environment is validated before any of that, and the process dies naming
+the offending variable — the same promise the web app makes, for the same
+reason: a worker that starts with an unset ``REDIS_URL`` and only notices when
+the first job arrives has turned a typo into an incident.
 """
 
 from __future__ import annotations
 
-import logging
-import signal
 import sys
-import threading
-from types import FrameType
 
-from konusbitr_worker import __version__
-from konusbitr_worker.health import touch_heartbeat
-from konusbitr_worker.settings import EnvValidationError, Settings, load_settings
+import uvicorn
 
-HEARTBEAT_INTERVAL_SECONDS = 5.0
-
-logger = logging.getLogger("konusbitr.worker")
-
-
-def _configure_logging(settings: Settings) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if settings.node_env == "development" else logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
-    )
-
-
-def run(settings: Settings, stop: threading.Event) -> None:
-    """Hold the process open, heartbeating, until asked to stop."""
-    logger.info(
-        "konusbitr-worker %s ready (env=%s, offline=%s); job loop arrives in Phase 06",
-        __version__,
-        settings.node_env,
-        settings.offline_mode,
-    )
-    while not stop.is_set():
-        touch_heartbeat()
-        stop.wait(HEARTBEAT_INTERVAL_SECONDS)
-    logger.info("konusbitr-worker stopping")
+from konusbitr_worker.app import create_app
+from konusbitr_worker.settings import EnvValidationError, load_settings
 
 
 def main() -> int:
@@ -61,21 +34,19 @@ def main() -> int:
         print(f"\n{error}\n", file=sys.stderr)
         return 1
 
-    _configure_logging(settings)
-
-    stop = threading.Event()
-
-    def handle(signum: int, _frame: FrameType | None) -> None:
-        logger.info("received %s", signal.Signals(signum).name)
-        stop.set()
-
-    signal.signal(signal.SIGTERM, handle)
-    signal.signal(signal.SIGINT, handle)
-
-    # Written before the first sleep so the healthcheck's start period does not
-    # have to cover a whole interval.
-    touch_heartbeat()
-    run(settings, stop)
+    uvicorn.run(
+        create_app(settings),
+        host=settings.worker_host,
+        port=settings.worker_port,
+        # Logging is configured by `create_app` and formats every line as JSON;
+        # letting uvicorn install its own would give the same stream two shapes.
+        log_config=None,
+        access_log=False,
+        # The grace period a job gets to finish before the loop is abandoned.
+        # Anything still running is left unacknowledged, which is precisely
+        # where the restarted worker looks for it.
+        timeout_graceful_shutdown=30,
+    )
     return 0
 
 
