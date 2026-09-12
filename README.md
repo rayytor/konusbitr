@@ -47,9 +47,9 @@ docker compose up
 ```
 
 That brings up Postgres with pgvector, Redis, MinIO, the web app and the worker,
-creates the storage bucket and enables the database extensions, with no manual
-steps. `http://localhost:3000/api/health` then returns
-`{ "ok": true, "version": "…" }` and the MinIO console is on
+creates the storage bucket, enables the database extensions and applies the
+database migrations, with no manual steps. `http://localhost:3000/api/health`
+then returns `{ "ok": true, "version": "…" }` and the MinIO console is on
 `http://localhost:9001`.
 
 Add `--profile local-llm` for Ollama on `:11434` with a chat and an embedding
@@ -61,12 +61,9 @@ the app refuses to start with as soon as `APP_URL` stops being localhost.
 
 ### Signing in
 
-Run the migrations once against the running stack, then create an account at
-`http://localhost:3000/signup`:
-
-```bash
-pnpm db:migrate
-```
+Create an account at `http://localhost:3000/signup` — the schema is already
+there, because a one-shot `migrate` container applies the migrations before the
+web app starts and again on every `up`.
 
 Email and password and magic links both work with no further configuration;
 Google and GitHub appear on the login page only when you set their client id and
@@ -84,13 +81,18 @@ itself.
 
 ```bash
 pnpm install
-pnpm dev:infra          # postgres, redis and minio in containers
+pnpm dev:infra          # postgres, redis and minio in containers, migrated
 pnpm dev                # the same, plus native web and native worker
 ```
 
 Running the app natively is what makes hot reload instant and lets a debugger
 attach normally. This is why `.env` points at `localhost`: `docker-compose.yml`
 substitutes container hostnames for its own two services.
+
+Both apply pending migrations first, so the schema a native `pnpm dev` talks to
+is the schema `docker compose up` would have produced. After editing the Drizzle
+schema, `pnpm --filter @konusbitr/db db:generate` writes the migration and
+`pnpm infra:migrate` applies it without restarting anything.
 
 The standard gate, which is also what CI runs:
 
@@ -99,8 +101,8 @@ pnpm turbo build lint typecheck test
 cd services/worker && uv sync && uv run pytest
 ```
 
-`make help` lists the container shortcuts (`up`, `down`, `reset`, `logs`,
-`psql`); each one also exists as a `pnpm infra:*` script.
+`make help` lists the container shortcuts (`up`, `migrate`, `down`, `reset`,
+`logs`, `psql`); each one also exists as a `pnpm infra:*` script.
 
 ## Contributing
 

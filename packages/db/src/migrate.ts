@@ -17,7 +17,7 @@ export async function migrate(databaseUrl?: string) {
     throw new Error('DATABASE_URL is required — set it in .env or pass it directly');
   }
 
-  const db = createDb(url);
+  const db = createDb(url, { quiet: true });
 
   await drizzleMigrate(db, {
     migrationsFolder: resolve(__dirname, '../drizzle'),

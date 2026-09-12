@@ -5,7 +5,7 @@
 # what a command does.
 
 .DEFAULT_GOAL := help
-.PHONY: help up stack down reset logs ps psql redis dev dev-infra install check
+.PHONY: help up migrate stack down reset logs ps psql redis dev dev-infra install check
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -17,6 +17,9 @@ install: ## Install TypeScript and Python dependencies
 
 up: ## Start the backing services (postgres, redis, minio)
 	./scripts/infra.sh up
+
+migrate: ## Apply pending database migrations
+	./scripts/infra.sh migrate
 
 stack: ## Start everything in containers, including web and worker
 	./scripts/infra.sh stack

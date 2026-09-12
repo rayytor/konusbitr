@@ -2,6 +2,7 @@
 # Konusbitr local infrastructure.
 #
 #   ./scripts/infra.sh up       backing services only (postgres, redis, minio)
+#   ./scripts/infra.sh migrate  apply pending database migrations
 #   ./scripts/infra.sh stack    the whole thing, including web and worker
 #   ./scripts/infra.sh down     stop everything, keep the data
 #   ./scripts/infra.sh reset    stop everything and delete the volumes
@@ -13,7 +14,9 @@
 #
 # `up` is what `pnpm dev:infra` calls: it brings up the backing services and
 # nothing else, so the web app and the worker can run natively with hot reload
-# while still talking to real Postgres, Redis and MinIO.
+# while still talking to real Postgres, Redis and MinIO. It also migrates, for
+# the same reason `docker compose up` does: a database with no tables in it is
+# not a working backing service.
 
 set -euo pipefail
 
@@ -103,7 +106,19 @@ cmd_up() {
   # Bucket and access key. Idempotent, and run as a foreground one-shot so a
   # failure is visible rather than buried in `docker compose logs`.
   docker compose run --rm --no-deps minio-init
-  echo "infra: postgres, redis and minio are up"
+  cmd_migrate
+  echo "infra: postgres, redis and minio are up, and the schema is current"
+}
+
+# The same one-shot Compose runs before web and worker start, so the native dev
+# loop and `docker compose up` cannot end up with different schemas. It goes
+# through Docker rather than the host's `pnpm db:migrate` so that this script
+# needs nothing installed beyond Docker itself.
+cmd_migrate() {
+  require_docker
+  require_env
+  docker compose build --quiet migrate
+  docker compose run --rm --no-deps migrate
 }
 
 cmd_stack() {
@@ -144,6 +159,7 @@ main() {
 
   case "$command" in
     up) cmd_up ;;
+    migrate) cmd_migrate ;;
     stack) cmd_stack ;;
     down) cmd_down ;;
     reset) cmd_reset ;;
