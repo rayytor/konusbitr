@@ -82,6 +82,23 @@
   }
 
   /*
+   * Menus and dialogs are one of the few things design.md §19 does animate.
+   * The reduced-motion reset below collapses it to nothing.
+   */
+  @keyframes kb-menu-enter {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .kb-menu-enter {
+    animation: kb-menu-enter var(--motion-fast) ease-out;
+  }
+
+  /*
    * Motion is reserved for purposeful transitions, and never runs at all for
    * readers who have asked for less of it.
    */

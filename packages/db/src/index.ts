@@ -15,8 +15,18 @@ export type { IdPrefix } from './id.js';
 export { ID_PREFIXES, newId } from './id.js';
 // Migrations
 export { migrate } from './migrate.js';
+export type { ApiKeyRow } from './queries/api-keys.js';
+// Queries that run before an organization is known
+export {
+  findApiKeysByPrefix,
+  firstOrganizationOf,
+  liveApiKey,
+  organizationsOf,
+  touchApiKey,
+} from './queries/api-keys.js';
 // Schema tables
 export {
+  accounts,
   apiKeys,
   chunks,
   conversations,
@@ -24,6 +34,8 @@ export {
   documents,
   extractions,
   folders,
+  invitationStatusEnum,
+  invitations,
   jobs,
   membershipRoleEnum,
   memberships,
@@ -31,7 +43,9 @@ export {
   organizations,
   pages,
   parseResults,
+  sessions,
   users,
+  verifications,
 } from './schema/index.js';
 export type { ScopedDb } from './scoped.js';
 // Multi-tenancy

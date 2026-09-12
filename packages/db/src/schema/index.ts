@@ -4,6 +4,13 @@
  */
 
 export { apiKeys } from './api-keys.js';
+export {
+  accounts,
+  invitationStatusEnum,
+  invitations,
+  sessions,
+  verifications,
+} from './auth.js';
 export { chunks } from './chunks.js';
 export { conversations, messages } from './conversations.js';
 export { creditLedger } from './credit-ledger.js';
