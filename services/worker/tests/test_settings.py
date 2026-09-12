@@ -39,7 +39,16 @@ REQUIRED = [
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Isolate from the developer's own shell and from any `.env` on disk."""
-    for key in [*VALID, "LLM_PROVIDER", "OFFLINE_MODE", "BILLING_ENABLED", "CREDITS_MODE"]:
+    extras = [
+        "LLM_PROVIDER",
+        "OFFLINE_MODE",
+        "BILLING_ENABLED",
+        "CREDITS_MODE",
+        "MAX_UPLOAD_BYTES",
+        "MAX_PAGES",
+        "ALLOW_GLOBAL_PARSE_CACHE",
+    ]
+    for key in [*VALID, *extras]:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("KONUSBITR_ENV_FILE", "/nonexistent/.env")
 
@@ -58,6 +67,11 @@ def test_accepts_the_documented_minimum(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.s3_region == "us-east-1"
     assert settings.llm_provider == "openai"
     assert settings.offline_mode is False
+    # Phase 05's ingest limits share the same defaults as the Zod schema, and
+    # the global parse cache is off unless an operator turns it on.
+    assert settings.max_upload_bytes == 500 * 1024 * 1024
+    assert settings.max_pages == 0
+    assert settings.allow_global_parse_cache is False
     assert settings.billing_enabled is False
     assert settings.credits_mode == "unlimited"
     assert settings.ollama_base_url == "http://localhost:11434"
@@ -149,3 +163,27 @@ def test_env_file_is_resolved_at_call_time_not_import_time(
     with pytest.raises(EnvValidationError) as caught:
         load_settings()
     assert "REDIS_URL: is required but was not set" in str(caught.value)
+
+
+def test_reads_the_ingest_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = load(
+        {**VALID, "MAX_UPLOAD_BYTES": "1048576", "MAX_PAGES": "200", "ALLOW_GLOBAL_PARSE_CACHE": "true"},
+        monkeypatch,
+    )
+
+    assert settings.max_upload_bytes == 1048576
+    assert settings.max_pages == 200
+    assert settings.allow_global_parse_cache is True
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("MAX_UPLOAD_BYTES", "0"), ("MAX_PAGES", "-1")],
+)
+def test_rejects_nonsensical_limits(
+    name: str, value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(EnvValidationError) as raised:
+        load({**VALID, name: value}, monkeypatch)
+
+    assert any(issue.startswith(name) for issue in raised.value.issues)

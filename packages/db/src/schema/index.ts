@@ -14,7 +14,7 @@ export {
 export { chunks } from './chunks.js';
 export { conversations, messages } from './conversations.js';
 export { creditLedger } from './credit-ledger.js';
-export { documents } from './documents.js';
+export { type DocumentRow, documents } from './documents.js';
 export { extractions } from './extractions.js';
 export { folders } from './folders.js';
 export { jobs } from './jobs.js';
