@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–07 are done; Phase 08 is next.** `cp .env.example .env &&
+**Phases 01–08 are done; Phase 09 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -18,7 +18,21 @@ SSE. **The parse is real as of Phase 07** — a born-digital PDF comes back as
 markdown plus a `contents` array in which every element has a page number and a
 bounding box, tables survive as markdown *and* as JSON, and every page has a
 WebP thumbnail in storage. A scan is refused with `needs_ocr` rather than parsed
-into silence. What exists:
+into silence. **Phase 08 makes it retrievable**: a parse artifact becomes chunks
+that each carry their page and bounding box, no table is ever split, and every
+model call — cloud or local — goes through one router whose four roles are
+configured independently. Nothing is retrieved or answered yet (Phase 09+).
+
+One thing to know before touching the pipeline: **with no embedding model
+configured — which is the default `.env` — chunks are written without vectors.**
+That is a supported state, not a half-finished one. The passages are stored and
+keyword-searchable, and `POST /api/documents/:id/reindex` fills the vectors in
+once a model is named. It is the same shape as `SMTP_URL` being unset, and it is
+what keeps `docker compose up` a stack that finishes a job rather than one that
+needs an API key first. A role that *is* configured and then fails is a hard
+job failure; that distinction is the one that matters.
+
+What exists:
 
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
   (bucket and dev access key created automatically), a `migrate` one-shot that
@@ -44,8 +58,12 @@ into silence. What exists:
   `src/lib/upload-client.ts` is the browser-side uploader (XHR
   direct-to-storage, multipart above 16MiB, progress events);
   `src/lib/use-document-progress.ts` is the `EventSource` hook the library page
-  watches with. Standalone output for the container; env validated at boot from
-  `src/instrumentation.ts`. No chunking, retrieval or chat yet (Phase 08+).
+  watches with. Phase 08 adds `POST /api/documents/:id/reindex`, which re-chunks
+  and re-embeds a document from the cached parse without re-running Docling —
+  what an operator runs after changing `EMBEDDING_MODEL` — and puts
+  `chunksReady`/`chunksTotal`/`embeddingModel` on `DocumentView`. Standalone
+  output for the container; env validated at boot from `src/instrumentation.ts`.
+  No retrieval or chat yet (Phase 09+).
 - `packages/storage` — the S3-compatible object store client (AWS SDK v3).
   `presignPut`, `presignGet`, `head`, `delete`, `deletePrefix`, `streamGet`,
   `uploadStream`, `presignMultipart`, `completeMultipart`, `abortMultipart`.
@@ -59,21 +77,28 @@ into silence. What exists:
   contract — `JobPayload`, `JobProgress`, the stage and error-code
   vocabularies, `STAGE_PERCENT`, and the Redis key names — and
   `scripts/emit-contract.ts` turns them into the JSON Schema and the constants
-  that `pnpm codegen` generates the worker's `contracts.py` from.
+  that `pnpm codegen` generates the worker's `contracts.py` from. Phase 08 adds
+  `chunk.ts` (`ChunkPage`, `ChunkMeta`, `CHUNKING_DEFAULTS`, `unionChunkPages`)
+  and `models.ts` (`MODEL_ROLES`, the local/cloud provider partition,
+  `EMBEDDING_DIMENSIONS`) — neither crosses the Redis seam, so neither is
+  generated; the Python side mirrors them and both halves assert the shape.
 - `services/worker` — a Python 3.12 package under uv, pytest and ruff green.
   FastAPI serves `/health` (the job loop plus Redis) and `/ready` (Postgres,
   Redis, storage) on `WORKER_PORT`; the consumer loop runs inside the app's
   lifespan. `contracts.py` is generated and must never be hand-edited;
   `queue.py` owns the stream, `runtime.py` the loop (concurrency, per-job
   timeout, retry classification, dead-lettering), `db.py` the worker's own raw
-  SQL, and `pipeline.py` the work — a stub that sleeps through the stages and
-  writes a placeholder parse result until Phase 07 replaces its body.
+  SQL, `parse/` the Docling pipeline, `chunk/` the layout-aware chunker and the
+  batched embed-and-upsert, `ai/` the LiteLLM router (role resolution, offline
+  enforcement, retries, circuit breaker, the tokenizer the chunker measures
+  with), and `pipeline.py` the coordination — one `run_job` for `parse`,
+  `chunk_embed` and `reindex`, differing only in which short-circuits apply.
 - `packages/db` — the complete Drizzle schema (17 tables, auth included),
   migrations, the `scopedDb(orgId)` multi-tenancy helper with document CRUD
   queries (`listDocuments`, `documentById`, `documentByHashes`,
-  `createDocument`, `deleteDocument`) and job queries
-  (`latestJobForDocument`, `listFailedJobs`), `newId(prefix)`, the migration
-  runner (`pnpm db:migrate`) and the seed script (`pnpm db:seed`).
+  `createDocument`, `deleteDocument`), job queries (`latestJobForDocument`,
+  `listFailedJobs`) and `chunkCounts`, `newId(prefix)`, the migration runner
+  (`pnpm db:migrate`) and the seed script (`pnpm db:seed`).
   `packages/db/src/queries/documents.ts` has the unscoped
   `globalParseResultByHashes` for `ALLOW_GLOBAL_PARSE_CACHE`. Integration-tested
   with Testcontainers against real Postgres with pgvector.
@@ -85,9 +110,19 @@ into silence. What exists:
   generated at test time rather than committed.
 - `docs/coordinates.md` — the coordinate convention, written out: the
   conversions, the rotation table, and what is deliberately *not* in it.
+- `docs/chunking.md` — the rules a chunk is built by, including the two places
+  where Phase 08's own acceptance criteria pull against each other and how that
+  was resolved.
 - `docs/adr/0001-queue.md` — why the TypeScript ↔ Python transport is a Redis
   stream with a consumer group rather than BullMQ or arq, and when to revisit
   that.
+- `docs/adr/0002-model-router.md` — why every model call goes through LiteLLM in
+  the worker and `packages/ai` on the product surface, why the four roles are
+  configured independently, and why the embedding width is fixed at 1024.
+- `packages/ai` — the TypeScript half of the model router: role resolution,
+  offline enforcement at the call site, retry with full jitter, a per-role
+  circuit breaker, usage accounting, and embeddings over the OpenAI-compatible
+  route. `prompts/` is where every prompt will live, as a versioned file.
 - `packages/sdk`, `apps/extension` — placeholders whose READMEs name the phase
   that fills them in.
 
@@ -200,6 +235,28 @@ These cut across many files; violating one breaks the product rather than one fe
   (exact match, then fuzzy for hyphenation/ligature noise). Unverifiable citations
   are dropped and logged; the rejection rate is a health metric. Target citation
   accuracy ≥ 98% (≥ 95% on scans).
+- **A chunk always knows where it came from.** `chunks.pages` is `NOT NULL` and
+  never empty: one `{ page, bbox }` per page the chunk touches, in the one
+  coordinate convention. A passage that cannot say where it came from cannot be
+  cited, and an uncitable answer is the failure this product exists to prevent.
+  Implemented in `services/worker/src/konusbitr_worker/chunk/` and documented in
+  `docs/chunking.md`.
+- **A table is never split.** Half a table cites nothing — the header row and
+  the number land in different chunks. An oversized table is its own chunk, past
+  the prose ceiling if it must be, and is truncated only when it exceeds the
+  embedding model's context, visibly, with a marker in the chunk *text*.
+- **Chunks are upserted on `(document_id, ordinal)`, and anything past the new
+  count is deleted.** Both halves are needed: the upsert is why a re-delivered
+  embed job leaves one row per ordinal, and the prune is why a re-chunk that
+  produces forty chunks where there were fifty does not leave ten stale rows
+  with stale vectors that retrieval would happily return.
+- **The embedding width is 1024 and it is in the DDL.** pgvector cannot build an
+  HNSW index over a column whose dimension it does not know, so
+  `chunks.embedding` is `vector(1024)` — never untyped — and the worker refuses
+  to write a vector of another width rather than letting a batch insert fail
+  inside Postgres. Changing it is a migration *and* a reindex of every document,
+  because a mixed index does not fail: it silently returns cosine distances
+  between two unrelated spaces.
 - **Tenancy:** `org_id` is denormalized onto `chunks` so retrieval never joins to
   filter. Every query path goes through `scopedDb(orgId)`; every route through
   `withAuth`. Both are backed by tests that fail when a new route or query
@@ -219,10 +276,14 @@ These cut across many files; violating one breaks the product rather than one fe
   follow the origin. The Compose web container is a production Next.js build
   serving plain HTTP on localhost, and a browser silently discards a
   `__Secure-` cookie that did not arrive over HTTPS.
-- **All model calls go through the LiteLLM router.** Never import a provider SDK
-  directly. Roles (`chat`, `embedding`, `rerank`, `vision`) are configured
-  independently. `OFFLINE_MODE=true` must make any non-local endpoint raise
-  immediately — it is a headline claim and is tested.
+- **All model calls go through the router.** LiteLLM in the worker
+  (`konusbitr_worker.ai`), `@konusbitr/ai` on the product surface. Never import a
+  provider SDK directly. Roles (`chat`, `embedding`, `rerank`, `vision`) are
+  configured independently and each falls back to `LLM_PROVIDER`.
+  `OFFLINE_MODE=true` is enforced **twice** — at boot, where a cloud provider
+  named for any role fails the process, and again at every call site, because
+  configuration can change under a running process. It is a headline claim and
+  is tested from both sides. See `docs/adr/0002-model-router.md`.
 - **Prompts live in versioned files** under `packages/ai/prompts/`, never inline
   string literals, so an eval score change can be attributed to a prompt change.
 - **Document text is untrusted data.** It never becomes instructions, never drives

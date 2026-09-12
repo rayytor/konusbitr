@@ -370,11 +370,95 @@ jobs:
             "SELECT count(*) FROM pages WHERE document_id = 'doc_ci'")
           test "$pages" -eq 10
 
+          # Chunks were written and the document knows how many. The default
+          # `.env` configures no embedding model, so they have no vectors: the
+          # passages are keyword-searchable and a `reindex` fills the vectors in
+          # once a model is named. That degradation is asserted rather than
+          # merely documented, because it is what keeps `cp .env.example .env &&
+          # docker compose up` a stack that finishes a job.
+          chunks=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(*) FROM chunks WHERE document_id = 'doc_ci'")
+          echo "chunks: $chunks"
+          test "$chunks" -gt 0
+
+          vectors=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(embedding) FROM chunks WHERE document_id = 'doc_ci'")
+          test "$vectors" -eq 0
+
+          counts=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT chunks_ready || '/' || chunks_total FROM documents WHERE id = 'doc_ci'")
+          echo "chunks ready: $counts"
+          test "$counts" = "0/$chunks"
+
+          # Every chunk knows where it came from. An uncitable chunk is the
+          # failure this product exists to prevent, so the column is NOT NULL
+          # and this asserts the worker actually fills it.
+          unlocated=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(*) FROM chunks WHERE document_id = 'doc_ci' AND jsonb_array_length(pages) = 0")
+          test "$unlocated" -eq 0
+
+          # Ordinals are dense from zero: they are the upsert key, and a gap
+          # would mean a re-run left stale rows behind.
+          ordinals=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(DISTINCT ordinal) = max(ordinal) + 1 FROM chunks WHERE document_id = 'doc_ci'")
+          test "$ordinals" = "t"
+
           # Nothing left in the consumer group: the entry was acknowledged.
           pending=$(docker compose exec -T redis redis-cli \
             XPENDING konusbitr:jobs konusbitr:workers | head -1)
           echo "pending: $pending"
           test "$pending" -eq 0
+
+      # Phase 08's idempotency criterion, through the real stack: the same job
+      # delivered a second time must not double anything, and a `reindex` must
+      # rebuild the index without re-running Docling.
+      - name: A redelivered job doubles nothing, and a reindex skips the parse
+        run: |
+          set -euo pipefail
+
+          hash=$(sha256sum fixtures/pdf/clean-text-10p.pdf | awk '{print $1}')
+          before=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(*) FROM chunks WHERE document_id = 'doc_ci'")
+
+          payload_for() {
+            printf '%s' \
+              "{\"v\":1,\"jobId\":\"job_ci_$1\",\"type\":\"$1\",\"orgId\":\"org_ci\"," \
+              '"documentId":"doc_ci",' \
+              '"storageKey":"orgs/org_ci/documents/doc_ci/original.pdf",' \
+              "\"contentHash\":\"$hash\"," \
+              '"settings":{"quality":"standard","langList":[],"llm":false},' \
+              '"attempt":1,"enqueuedAt":"2026-01-01T00:00:00Z"}'
+          }
+
+          for job_type in parse reindex; do
+            docker compose exec -T postgres psql -U konusbitr -d konusbitr -v ON_ERROR_STOP=1 -c \
+              "INSERT INTO jobs (id, org_id, document_id, type, status, stage)
+               VALUES ('job_ci_$job_type', 'org_ci', 'doc_ci', '$job_type', 'pending', 'queued')
+               ON CONFLICT (id) DO NOTHING"
+            docker compose exec -T redis redis-cli XADD konusbitr:jobs '*' payload "$(payload_for "$job_type")"
+          done
+
+          for _ in $(seq 1 60); do
+            done_count=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+              "SELECT count(*) FROM jobs WHERE id IN ('job_ci_parse','job_ci_reindex') AND status = 'succeeded'")
+            echo "finished: $done_count"
+            [ "$done_count" = "2" ] && break
+            sleep 2
+          done
+          test "$done_count" = "2"
+
+          # One parse result, still: the docId cache is a unique constraint and
+          # neither job re-parsed.
+          parses=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(*) FROM parse_results WHERE content_hash = '$hash'")
+          test "$parses" -eq 1
+
+          # And the same number of chunks: the re-delivered parse skipped an
+          # index that already existed, and the reindex replaced it row for row.
+          after=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(*) FROM chunks WHERE document_id = 'doc_ci'")
+          echo "chunks before=$before after=$after"
+          test "$after" -eq "$before"
 
       - name: A missing variable stops the web container, and says which
         run: |
