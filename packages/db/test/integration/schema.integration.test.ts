@@ -246,7 +246,14 @@ describe('docId cache (unique constraint)', () => {
         settingsHash: 'sha256:settings1',
         status: 'queued',
       }),
-    ).rejects.toThrow(/unique|duplicate/i);
+    ).rejects.toThrow(
+      expect.objectContaining({
+        cause: expect.objectContaining({
+          code: '23505',
+          message: expect.stringMatching(/unique|duplicate/i),
+        }),
+      }),
+    );
   });
 
   it('allows the same bytes again under different settings', async () => {
@@ -280,7 +287,14 @@ describe('docId cache (unique constraint)', () => {
         markdown: 'duplicate',
         pageCount: 1,
       }),
-    ).rejects.toThrow(/unique|duplicate/i);
+    ).rejects.toThrow(
+      expect.objectContaining({
+        cause: expect.objectContaining({
+          code: '23505',
+          message: expect.stringMatching(/unique|duplicate/i),
+        }),
+      }),
+    );
   });
 
   it('allows same content_hash with different settings_hash', async () => {

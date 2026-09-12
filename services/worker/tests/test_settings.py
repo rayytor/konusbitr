@@ -167,7 +167,12 @@ def test_env_file_is_resolved_at_call_time_not_import_time(
 
 def test_reads_the_ingest_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = load(
-        {**VALID, "MAX_UPLOAD_BYTES": "1048576", "MAX_PAGES": "200", "ALLOW_GLOBAL_PARSE_CACHE": "true"},
+        {
+            **VALID,
+            "MAX_UPLOAD_BYTES": "1048576",
+            "MAX_PAGES": "200",
+            "ALLOW_GLOBAL_PARSE_CACHE": "true",
+        },
         monkeypatch,
     )
 
@@ -180,9 +185,7 @@ def test_reads_the_ingest_limits(monkeypatch: pytest.MonkeyPatch) -> None:
     ("name", "value"),
     [("MAX_UPLOAD_BYTES", "0"), ("MAX_PAGES", "-1")],
 )
-def test_rejects_nonsensical_limits(
-    name: str, value: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rejects_nonsensical_limits(name: str, value: str, monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(EnvValidationError) as raised:
         load({**VALID, name: value}, monkeypatch)
 
