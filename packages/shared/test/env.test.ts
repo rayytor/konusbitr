@@ -105,7 +105,11 @@ describe('parseEnv', () => {
   });
 
   it('reads booleans written the way a .env writes them', () => {
-    expect(parseEnv({ ...valid, OFFLINE_MODE: 'true' }).OFFLINE_MODE).toBe(true);
+    // Offline mode needs a local provider alongside it, which is its own test
+    // below; here it is only standing in for "a boolean spelled `true`".
+    expect(parseEnv({ ...valid, OFFLINE_MODE: 'true', LLM_PROVIDER: 'ollama' }).OFFLINE_MODE).toBe(
+      true,
+    );
     expect(parseEnv({ ...valid, BILLING_ENABLED: '1' }).BILLING_ENABLED).toBe(true);
     expect(parseEnv({ ...valid, S3_FORCE_PATH_STYLE: 'false' }).S3_FORCE_PATH_STYLE).toBe(false);
   });
