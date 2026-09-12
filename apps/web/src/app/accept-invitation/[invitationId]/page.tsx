@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { AcceptInvitation } from '@/components/auth/accept-invitation';
 import { AuthShell } from '@/components/auth/auth-shell';
 import { auth } from '@/lib/auth/config';
+import { withRedirect } from '@/lib/auth/redirect';
 
 export const metadata: Metadata = { title: 'Join a workspace — Konusbitr' };
 
@@ -30,7 +31,7 @@ export default async function AcceptInvitationPage({
         description="Sign in, or create an account with the address the invitation was sent to, and you will land back here."
       >
         <Link
-          href={`/login?redirect=/accept-invitation/${encodeURIComponent(invitationId)}`}
+          href={withRedirect('/login', `/accept-invitation/${encodeURIComponent(invitationId)}`)}
           className="text-accent underline underline-offset-2"
         >
           Sign in to continue

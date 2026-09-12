@@ -137,6 +137,17 @@ jobs:
             mc ls "probe/$S3_BUCKET"
           '
 
+      - name: The schema is applied, so a native dev loop can sign someone up
+        run: |
+          tables=$(docker compose exec -T postgres \
+            psql -U konusbitr -d konusbitr -tAc \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1")
+          echo "$tables"
+          for table in users organizations memberships documents chunks; do
+            echo "$tables" | grep -qx "$table" \
+              || { echo "missing table: $table"; exit 1; }
+          done
+
       - name: Bootstrap is idempotent
         run: ./scripts/infra.sh up
 
@@ -162,7 +173,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [web, worker]
+        image: [web, worker, migrate]
         # Native runners rather than QEMU: emulated `next build` takes long
         # enough to time the job out. `ubuntu-24.04-arm` is free for public
         # repositories.
@@ -201,6 +212,27 @@ jobs:
           cp .env.example .env
           docker compose up -d --build
           ./scripts/infra.sh wait
+
+      # The Phase 03 promise: no manual `pnpm db:migrate` between `docker compose
+      # up` and a working signup. `wait` above already fails the job if the
+      # one-shot exited non-zero; this asserts it did the work.
+      - name: Migrations ran before the web app started
+        run: |
+          docker compose logs --no-color migrate
+          applied=$(docker compose exec -T postgres \
+            psql -U konusbitr -d konusbitr -tAc \
+            'SELECT count(*) FROM drizzle.__drizzle_migrations')
+          echo "applied migrations: $applied"
+          test "$applied" -gt 0
+
+      - name: Signing up reaches the database rather than a missing table
+        run: |
+          status=$(curl -s -o /tmp/signup.json -w '%{http_code}' \
+            -X POST http://localhost:3000/api/auth/sign-up/email \
+            -H 'content-type: application/json' \
+            -d '{"name":"CI","email":"ci@example.com","password":"correct-horse-battery"}')
+          echo "$status"; cat /tmp/signup.json
+          test "$status" = 200
 
       - name: GET /api/health returns ok
         run: |
