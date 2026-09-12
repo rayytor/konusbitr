@@ -1,5 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, or } from 'drizzle-orm';
 import type { Database } from './client.js';
+import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';
 
 /**
@@ -53,6 +54,71 @@ export function scopedDb(db: Database, orgId: string) {
     /** Query API keys belonging to this org. */
     apiKeys() {
       return db.select().from(schema.apiKeys).where(eq(schema.apiKeys.orgId, orgId));
+    },
+
+    /** Every API key ever issued to this org, newest first, revoked ones included. */
+    listApiKeys() {
+      return db
+        .select()
+        .from(schema.apiKeys)
+        .where(eq(schema.apiKeys.orgId, orgId))
+        .orderBy(desc(schema.apiKeys.createdAt));
+    },
+
+    /**
+     * Store a new API key. The caller generates the secret and hands over only
+     * its hash and prefix — this layer never sees a raw key.
+     */
+    async createApiKey(input: {
+      name: string;
+      hashedKey: string;
+      prefix: string;
+      scopes: string[];
+      expiresAt?: Date | null;
+    }) {
+      const [row] = await db
+        .insert(schema.apiKeys)
+        .values({
+          id: newId(ID_PREFIXES.apiKey),
+          orgId,
+          name: input.name,
+          hashedKey: input.hashedKey,
+          prefix: input.prefix,
+          scopes: input.scopes,
+          expiresAt: input.expiresAt ?? null,
+        })
+        .returning();
+      return row;
+    },
+
+    /**
+     * Revoke a key, returning `undefined` when there was no live key with that
+     * id *in this org*. The org predicate is what stops an admin of one
+     * organization from revoking another's key by guessing an id.
+     */
+    async revokeApiKey(keyId: string) {
+      const [row] = await db
+        .update(schema.apiKeys)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(schema.apiKeys.id, keyId),
+            eq(schema.apiKeys.orgId, orgId),
+            isNull(schema.apiKeys.revokedAt),
+          ),
+        )
+        .returning({ id: schema.apiKeys.id });
+      return row;
+    },
+
+    /** This user's role in this org, or `undefined` if they are not a member. */
+    async membershipOf(userId: string) {
+      const [row] = await db
+        .select({ role: schema.memberships.role })
+        .from(schema.memberships)
+        .where(and(eq(schema.memberships.userId, userId), eq(schema.memberships.orgId, orgId)))
+        .limit(1);
+      return row;
     },
 
     /** Query memberships belonging to this org. */
