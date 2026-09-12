@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_MAX_UPLOAD_BYTES } from './upload.js';
 
 /**
  * Runtime configuration, validated once at process start.
@@ -57,6 +58,15 @@ const redisUrl = urlWithProtocol(['redis:', 'rediss:'], 'redis://');
 
 const nonEmpty = z.string().trim().min(1);
 
+/**
+ * A byte count, given as a plain number of bytes.
+ *
+ * Deliberately not `500MB`-style shorthand: a unit suffix is one more thing to
+ * get subtly wrong (is `MB` 10^6 or 2^20?) in a variable whose only job is to
+ * be an unambiguous ceiling.
+ */
+const byteCount = z.coerce.number().int().positive();
+
 /** Origin the app is served from. No trailing slash, so joins stay predictable. */
 const originUrl = httpUrl.refine((value) => !value.endsWith('/'), {
   message: 'must not have a trailing slash',
@@ -89,6 +99,26 @@ export const EnvSchema = z.object({
   S3_SECRET_ACCESS_KEY: nonEmpty,
   /** MinIO and most non-AWS endpoints need path-style addressing. */
   S3_FORCE_PATH_STYLE: z.stringbool().default(false),
+
+  // Ingest limits. Both are ceilings an operator raises or lowers; neither is a
+  // product decision, which is why they are configuration rather than constants.
+  /** Largest file the intake path will accept, in bytes. Default 500MB. */
+  MAX_UPLOAD_BYTES: byteCount.default(DEFAULT_MAX_UPLOAD_BYTES),
+  /** Page ceiling per document. `0` means unlimited, which is the self-host default. */
+  MAX_PAGES: z.coerce.number().int().min(0).default(0),
+
+  /**
+   * Whether a parse may be reused across organizations.
+   *
+   * **Off by default, and it must stay that way for any multi-tenant
+   * deployment.** A global cache is a disclosure channel: an organization that
+   * uploads a file and gets an instant `ready` back has learned that some other
+   * organization on this instance already holds that exact file. On a
+   * single-tenant self-hosted instance there is no one to learn anything, and
+   * the saving is real, so the opt-in exists — as an operator decision, spelled
+   * out here and in `.env.example`.
+   */
+  ALLOW_GLOBAL_PARSE_CACHE: z.stringbool().default(false),
 
   // Models. Every call goes through the LiteLLM router, never a provider SDK.
   LLM_PROVIDER: z.enum(LLM_PROVIDERS).default('openai'),

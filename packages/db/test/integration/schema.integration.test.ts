@@ -134,6 +134,7 @@ describe('table inserts and reads', () => {
       byteSize: 12345,
       storageKey: 'uploads/test.pdf',
       contentHash: 'sha256:deadbeef',
+      settingsHash: 'sha256:settings1',
       status: 'queued',
     });
 
@@ -233,6 +234,42 @@ describe('table inserts and reads', () => {
 // ─── docId cache constraint ─────────────────────────────────────────────────
 
 describe('docId cache (unique constraint)', () => {
+  it('refuses a second document with the same bytes and settings in one org', async () => {
+    await expect(
+      db.insert(schema.documents).values({
+        orgId,
+        filename: 'same-again.pdf',
+        mime: 'application/pdf',
+        byteSize: 12345,
+        storageKey: 'uploads/same-again.pdf',
+        contentHash: 'sha256:deadbeef',
+        settingsHash: 'sha256:settings1',
+        status: 'queued',
+      }),
+    ).rejects.toThrow(/unique|duplicate/i);
+  });
+
+  it('allows the same bytes again under different settings', async () => {
+    const [row] = await db
+      .insert(schema.documents)
+      .values({
+        orgId,
+        filename: 'same-bytes-advanced.pdf',
+        mime: 'application/pdf',
+        byteSize: 12345,
+        storageKey: 'uploads/same-bytes-advanced.pdf',
+        contentHash: 'sha256:deadbeef',
+        settingsHash: 'sha256:settings2',
+        status: 'queued',
+      })
+      .returning();
+
+    // A different docId for the same bytes is the point: changing `quality`
+    // must produce a new document and its own job, not reuse the old one.
+    expect(row?.id).toBeDefined();
+    expect(row?.id).not.toBe(docId);
+  });
+
   it('rejects duplicate (content_hash, settings_hash)', async () => {
     await expect(
       db.insert(schema.parseResults).values({

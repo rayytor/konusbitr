@@ -36,6 +36,26 @@ describe('parseEnv', () => {
     expect(env.BILLING_ENABLED).toBe(false);
     expect(env.CREDITS_MODE).toBe('unlimited');
     expect(env.OLLAMA_BASE_URL).toBe('http://localhost:11434');
+    expect(env.MAX_UPLOAD_BYTES).toBe(500 * 1024 * 1024);
+    expect(env.MAX_PAGES).toBe(0);
+    expect(env.ALLOW_GLOBAL_PARSE_CACHE).toBe(false);
+  });
+
+  it('reads the ingest limits, keeping the global parse cache opt-in', () => {
+    const env = parseEnv({
+      ...valid,
+      MAX_UPLOAD_BYTES: '1048576',
+      MAX_PAGES: '200',
+      ALLOW_GLOBAL_PARSE_CACHE: 'true',
+    });
+
+    expect(env.MAX_UPLOAD_BYTES).toBe(1048576);
+    expect(env.MAX_PAGES).toBe(200);
+    expect(env.ALLOW_GLOBAL_PARSE_CACHE).toBe(true);
+  });
+
+  it.each(['0', '-1', 'lots'])('refuses MAX_UPLOAD_BYTES=%s', (value) => {
+    expect(() => parseEnv({ ...valid, MAX_UPLOAD_BYTES: value })).toThrow(/MAX_UPLOAD_BYTES/);
   });
 
   it.each(REQUIRED)('fails with a message naming %s when it is missing', (name) => {

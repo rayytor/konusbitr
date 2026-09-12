@@ -9,7 +9,7 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
     "./migrate": "./src/migrate.ts",
-    "./queries": "./src/queries/api-keys.ts",
+    "./queries": "./src/queries/index.ts",
     "./testing": "./src/testing.ts"
   },
   "scripts": {

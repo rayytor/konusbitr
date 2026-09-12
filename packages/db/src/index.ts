@@ -15,15 +15,17 @@ export type { IdPrefix } from './id.js';
 export { ID_PREFIXES, newId } from './id.js';
 // Migrations
 export { migrate } from './migrate.js';
-export type { ApiKeyRow } from './queries/api-keys.js';
-// Queries that run before an organization is known
+export type { ApiKeyRow } from './queries/index.js';
+// Queries that run before an organization is known, plus the one the operator
+// opts into with ALLOW_GLOBAL_PARSE_CACHE.
 export {
   findApiKeysByPrefix,
   firstOrganizationOf,
+  globalParseResultByHashes,
   liveApiKey,
   organizationsOf,
   touchApiKey,
-} from './queries/api-keys.js';
+} from './queries/index.js';
 // Schema tables
 export {
   accounts,
@@ -31,6 +33,7 @@ export {
   chunks,
   conversations,
   creditLedger,
+  type DocumentRow,
   documents,
   extractions,
   folders,

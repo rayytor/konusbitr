@@ -28,6 +28,16 @@ export const documents = pgTable(
     pageCount: integer('page_count'),
     storageKey: text('storage_key').notNull(),
     contentHash: text('content_hash').notNull(),
+    /**
+     * `sha256(canonical_json(parse settings))` — the other half of the docId
+     * cache key. It lives on the document, not only on `parse_results`,
+     * because the *identity* of a document is its bytes **and** the settings
+     * they were parsed with: the same PDF at `quality: 'advanced'` is a
+     * different `docId` with its own job, which is why the uniqueness below is
+     * over all three columns.
+     */
+    settingsHash: text('settings_hash').notNull(),
+    sourceUrl: text('source_url'),
     status: text('status').notNull().default('queued'),
     error: text('error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -35,6 +45,13 @@ export const documents = pgTable(
   },
   (table) => [
     index('documents_org_created_idx').on(table.orgId, table.createdAt),
-    uniqueIndex('documents_org_content_hash_idx').on(table.orgId, table.contentHash),
+    uniqueIndex('documents_org_content_settings_idx').on(
+      table.orgId,
+      table.contentHash,
+      table.settingsHash,
+    ),
   ],
 );
+
+/** A document row as it comes back from a select. */
+export type DocumentRow = typeof documents.$inferSelect;
