@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';
@@ -34,6 +34,27 @@ export function scopedDb(db: Database, orgId: string) {
     /** Query chunks belonging to this org. */
     chunks() {
       return db.select().from(schema.chunks).where(eq(schema.chunks.orgId, orgId));
+    },
+
+    /**
+     * How many chunks a document has, and how many of them carry a vector.
+     *
+     * Two numbers rather than one because they answer different questions.
+     * `total` is how much of the document is retrievable by keyword, which is
+     * true the moment the chunker has written a row. `embedded` is how much of
+     * it is retrievable by meaning — and on a stack with no embedding model
+     * configured it is legitimately zero forever, which is a state the library
+     * has to be able to render rather than a failure.
+     */
+    async chunkCounts(documentId: string) {
+      const [row] = await db
+        .select({
+          total: sql<number>`count(*)::int`,
+          embedded: sql<number>`count(${schema.chunks.embedding})::int`,
+        })
+        .from(schema.chunks)
+        .where(and(eq(schema.chunks.orgId, orgId), eq(schema.chunks.documentId, documentId)));
+      return { total: row?.total ?? 0, embedded: row?.embedded ?? 0 };
     },
 
     /** Query conversations belonging to this org. */

@@ -1,3 +1,4 @@
+import type { ChunkPage } from '@konusbitr/shared';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { ID_PREFIXES, newId } from './id.js';
@@ -125,12 +126,44 @@ export async function chunksForDocument(db: Database, documentId: string) {
   return db.select().from(schema.chunks).where(eq(schema.chunks.documentId, documentId));
 }
 
-/** Write a chunk directly, so a delete can be shown to take it with the document. */
-export async function seedChunk(db: Database, input: { documentId: string; orgId: string }) {
+/**
+ * Write a chunk directly, so a delete can be shown to take it with the document.
+ *
+ * `ordinal` and `pages` are not optional in the Phase 08 schema — a chunk with
+ * no location cannot be cited, so the column is `NOT NULL` — which means even a
+ * cascade test has to supply both.
+ */
+export async function seedChunk(
+  db: Database,
+  input: { documentId: string; orgId: string; ordinal?: number; pages?: ChunkPage[] },
+) {
   await db.insert(schema.chunks).values({
     documentId: input.documentId,
     orgId: input.orgId,
+    ordinal: input.ordinal ?? 0,
+    pages: input.pages ?? [{ page: 1, bbox: [72, 72, 540, 120] }],
     text: 'a chunk that should not survive its document',
     tokenCount: 9,
   });
+}
+
+/**
+ * The declared dimension of `chunks.embedding`, read back from the catalogue.
+ *
+ * Asserted by the schema integration test because it is a number that lives in
+ * three places at once — the DDL, `EMBEDDING_DIMENSIONS` in `@konusbitr/shared`,
+ * and the `EMBEDDING_DIMENSIONS` environment variable — and a mismatch between
+ * them surfaces as an insert failing inside a batch rather than as a
+ * configuration error.
+ */
+export async function embeddingColumnDimensions(db: Database): Promise<number> {
+  const rows = await db.execute<{ dims: number }>(sql`
+    SELECT atttypmod AS dims
+      FROM pg_attribute
+     WHERE attrelid = 'chunks'::regclass
+       AND attname = 'embedding'
+  `);
+  const [row] = rows as unknown as { dims: number }[];
+  if (row === undefined) throw new Error('chunks.embedding does not exist');
+  return row.dims;
 }

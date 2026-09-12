@@ -50,6 +50,33 @@ export const documents = pgTable(
      * a dashboard and Phase 13's public API switch on and must not be.
      */
     errorCode: text('error_code'),
+    /**
+     * The embedding model this document's chunks were produced by, and the
+     * width of the vectors it produced.
+     *
+     * On the document rather than on each chunk because it is a property of the
+     * *index*: every chunk of one document is embedded by one model in one
+     * pass, and mixing two embedding spaces inside a single similarity search
+     * does not fail — it silently returns nonsense. Storing the model is what
+     * lets a deployment that has changed `EMBEDDING_MODEL` find the documents
+     * that still need a `reindex` instead of quietly serving bad retrieval.
+     *
+     * Both are null until a document has been embedded, which includes the
+     * honest case of a stack with no embedding model configured at all: the
+     * chunks exist and are keyword-searchable, and the vectors arrive with the
+     * reindex that follows configuring one.
+     */
+    embeddingModel: text('embedding_model'),
+    dims: integer('dims'),
+    /**
+     * Partial readiness: how many of the document's chunks have been written.
+     *
+     * Counted as they land so that Phase 10's chat can answer over the first
+     * two hundred pages of a five-hundred-page document while the rest is
+     * still embedding, rather than showing a spinner for two minutes.
+     */
+    chunksReady: integer('chunks_ready'),
+    chunksTotal: integer('chunks_total'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
