@@ -125,6 +125,13 @@ export const JOB_ERROR_CODES = [
   'unsupported_format',
   'encrypted_document',
   'too_many_pages',
+  /**
+   * The file is a PDF with too little extractable text to parse honestly —
+   * a scan, or a page image wrapped in a PDF. Terminal for the `standard`
+   * tier: no number of retries adds a text layer. OCR arrives with the
+   * `advanced` pipeline in Phase 12, and the message says so.
+   */
+  'needs_ocr',
   // Retryable — the input is fine; something around it was not.
   'storage_unavailable',
   'database_unavailable',
@@ -152,6 +159,7 @@ export const TERMINAL_JOB_ERROR_CODES = [
   'unsupported_format',
   'encrypted_document',
   'too_many_pages',
+  'needs_ocr',
 ] as const satisfies readonly JobErrorCode[];
 
 export function isRetryableJobError(code: JobErrorCode): boolean {

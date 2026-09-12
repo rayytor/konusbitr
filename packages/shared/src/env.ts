@@ -120,6 +120,17 @@ export const EnvSchema = z.object({
    */
   ALLOW_GLOBAL_PARSE_CACHE: z.stringbool().default(false),
 
+  // Phase 07 — parse.
+  /**
+   * The extractable-character coverage a page must reach for the standard
+   * parser to treat it as born-digital, as a fraction in [0, 1].
+   *
+   * Read by the worker, not by the web app — but it lives here because it is
+   * one `.env`, and a variable that only one half validates is a variable that
+   * can be misspelled in the file the other half reads.
+   */
+  TEXT_COVERAGE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.1),
+
   // Models. Every call goes through the LiteLLM router, never a provider SDK.
   LLM_PROVIDER: z.enum(LLM_PROVIDERS).default('openai'),
   LLM_API_KEY: nonEmpty.optional(),

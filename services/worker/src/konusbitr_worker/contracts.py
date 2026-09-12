@@ -75,6 +75,7 @@ class JobErrorCode(StrEnum):
     unsupported_format = "unsupported_format"
     encrypted_document = "encrypted_document"
     too_many_pages = "too_many_pages"
+    needs_ocr = "needs_ocr"
     storage_unavailable = "storage_unavailable"
     database_unavailable = "database_unavailable"
     model_unavailable = "model_unavailable"
@@ -219,6 +220,7 @@ TERMINAL_JOB_ERROR_CODES: frozenset[JobErrorCode] = frozenset(
         JobErrorCode.unsupported_format,
         JobErrorCode.encrypted_document,
         JobErrorCode.too_many_pages,
+        JobErrorCode.needs_ocr,
     )
 )
 
