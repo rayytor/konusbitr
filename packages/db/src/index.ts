@@ -15,6 +15,15 @@ export type { IdPrefix } from './id.js';
 export { ID_PREFIXES, newId } from './id.js';
 // Migrations
 export { migrate } from './migrate.js';
+export type { ApiKeyRow } from './queries/api-keys.js';
+// Queries that run before an organization is known
+export {
+  findApiKeysByPrefix,
+  firstOrganizationOf,
+  liveApiKey,
+  organizationsOf,
+  touchApiKey,
+} from './queries/api-keys.js';
 // Schema tables
 export {
   accounts,
