@@ -8,7 +8,9 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['test/**/*.test.ts'],
-    exclude: ['test/**/*.integration.test.ts'],
+    include: ['test/**/*.integration.test.ts'],
+    testTimeout: 120_000,
+    hookTimeout: 180_000,
+    fileParallelism: false,
   },
 });

@@ -107,8 +107,12 @@ export function parseWebEnv(source: Record<string, string | undefined>): WebEnv 
 
   const issues = result.error.issues.map((issue) => {
     const name = String(issue.path[0] ?? '(root)');
-    const detail = name in candidate ? issue.message : 'is required but was not set';
-    return `${name}: ${detail}`;
+    // An absent variable reads better as "is required" than as Zod's type
+    // message — but not when the issue came from a cross-field rule, where the
+    // variable is legitimately absent and the real complaint is about its
+    // partner. Those carry their own wording.
+    const absent = !(name in candidate) && issue.code !== 'custom';
+    return `${name}: ${absent ? 'is required but was not set' : issue.message}`;
   });
 
   const message = [
