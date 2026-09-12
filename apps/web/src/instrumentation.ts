@@ -1,4 +1,5 @@
-import { EnvValidationError, loadEnv } from '@konusbitr/shared';
+import { EnvValidationError } from '@konusbitr/shared';
+import { loadWebEnv } from './lib/env';
 
 /**
  * Next.js calls this once per server instance, before the first request.
@@ -15,7 +16,7 @@ export function register(): void {
   if (process.env.NEXT_PHASE === 'phase-production-build') return;
 
   try {
-    loadEnv();
+    loadWebEnv();
   } catch (error) {
     if (!(error instanceof EnvValidationError)) throw error;
     console.error(`\n${error.message}\n`);

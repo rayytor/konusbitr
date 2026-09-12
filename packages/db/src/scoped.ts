@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';
@@ -109,6 +109,43 @@ export function scopedDb(db: Database, orgId: string) {
         )
         .returning({ id: schema.apiKeys.id });
       return row;
+    },
+
+    /** Every member of this org with the user behind them, oldest first. */
+    members() {
+      return db
+        .select({
+          id: schema.memberships.id,
+          userId: schema.users.id,
+          email: schema.users.email,
+          name: schema.users.name,
+          role: schema.memberships.role,
+          createdAt: schema.memberships.createdAt,
+        })
+        .from(schema.memberships)
+        .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
+        .where(eq(schema.memberships.orgId, orgId))
+        .orderBy(asc(schema.memberships.createdAt));
+    },
+
+    /** Invitations to this org that nobody has answered yet. */
+    pendingInvitations() {
+      return db
+        .select({
+          id: schema.invitations.id,
+          email: schema.invitations.email,
+          role: schema.invitations.role,
+          expiresAt: schema.invitations.expiresAt,
+        })
+        .from(schema.invitations)
+        .where(
+          and(
+            eq(schema.invitations.orgId, orgId),
+            eq(schema.invitations.status, 'pending'),
+            gt(schema.invitations.expiresAt, new Date()),
+          ),
+        )
+        .orderBy(desc(schema.invitations.createdAt));
     },
 
     /** This user's role in this org, or `undefined` if they are not a member. */
