@@ -1,18 +1,13 @@
 import { KeyRound, Users } from 'lucide-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { OrgSwitcher } from '@/components/settings/org-switcher';
-import { SignOutButton } from '@/components/settings/sign-out-button';
+import { AppHeader } from '@/components/app-header';
 import type { PageSession } from '@/lib/auth/session';
 import { cn } from '@/lib/utils';
 
 /**
  * The settings frame: a narrow, quiet, icon-led nav beside the section, as
  * `design.md` §4 and §25 describe.
- *
- * The organization switcher lives here because the active organization is the
- * `orgId` of every subsequent request — it belongs in the shell, above the
- * thing it scopes, not inside one section of it.
  */
 const SECTIONS = [
   { href: '/settings/api-keys', label: 'API keys', icon: KeyRound },
@@ -34,22 +29,7 @@ export function SettingsShell({
 }) {
   return (
     <div className="min-h-dvh">
-      <header className="border-b border-border-subtle">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="text-[13px] text-foreground-subtle">
-              Konusbitr
-            </Link>
-            <OrgSwitcher organizations={session.organizations} activeOrgId={session.orgId} />
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="hidden text-[13px] text-foreground-muted sm:inline">
-              {session.email}
-            </span>
-            <SignOutButton />
-          </div>
-        </div>
-      </header>
+      <AppHeader session={session} />
 
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-10 sm:flex-row sm:gap-12">
         {/* On a phone this becomes a row of two links rather than a squeezed

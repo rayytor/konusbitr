@@ -5,9 +5,9 @@ import { currentSession } from '@/lib/auth/session';
 /**
  * The front door.
  *
- * Still a placeholder — the library and the viewer arrive in Phase 11 — but it
- * now knows whether anyone is signed in, so the two entry points this phase
- * built are reachable from it.
+ * Still a placeholder — the viewer and the real product surface arrive in
+ * Phase 11 — but it knows whether anyone is signed in, so the library this
+ * phase built is one click away.
  */
 export default async function HomePage() {
   const session = await currentSession();
@@ -23,7 +23,10 @@ export default async function HomePage() {
         {session ? (
           <>
             <Button asChild>
-              <Link href="/settings/api-keys">Open settings</Link>
+              <Link href="/library">Open your library</Link>
+            </Button>
+            <Button asChild variant="secondary">
+              <Link href="/settings/api-keys">Settings</Link>
             </Button>
             <span className="text-[13px] text-foreground-muted">Signed in as {session.email}</span>
           </>
