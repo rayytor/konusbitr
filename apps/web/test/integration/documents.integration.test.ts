@@ -234,7 +234,7 @@ async function upload(
 }
 
 async function queuedJobs(): Promise<number> {
-  return redis.llen('konusbitr:jobs');
+  return redis.xlen('konusbitr:jobs');
 }
 
 // ─── The docId cache ─────────────────────────────────────────────────────────

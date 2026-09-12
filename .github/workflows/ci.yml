@@ -320,7 +320,7 @@ jobs:
           settings=$(printf 'b%.0s' $(seq 64))
 
           docker compose exec -T postgres psql -U konusbitr -d konusbitr -v ON_ERROR_STOP=1 <<SQL
-          INSERT INTO organizations (id, name, slug) VALUES ('org_ci', 'CI', 'ci');
+          INSERT INTO organizations (id, name, slug) VALUES ('org_ci', 'CI Worker', 'ci-worker') ON CONFLICT (id) DO NOTHING;
           INSERT INTO documents (
             id, org_id, filename, mime, byte_size, page_count,
             storage_key, content_hash, settings_hash, status
