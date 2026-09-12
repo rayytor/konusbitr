@@ -20,5 +20,11 @@ export const apiKeys = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('api_keys_org_id_idx').on(table.orgId)],
+  (table) => [
+    index('api_keys_org_id_idx').on(table.orgId),
+    // Presented keys are looked up by their `kb_live_xxxxxxxx` prefix, never by
+    // scanning hashes: the hash comparison happens in constant time afterwards,
+    // on the handful of candidates this index returns.
+    index('api_keys_prefix_idx').on(table.prefix),
+  ],
 );

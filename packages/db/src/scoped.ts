@@ -55,6 +55,16 @@ export function scopedDb(db: Database, orgId: string) {
       return db.select().from(schema.apiKeys).where(eq(schema.apiKeys.orgId, orgId));
     },
 
+    /** Query memberships belonging to this org. */
+    memberships() {
+      return db.select().from(schema.memberships).where(eq(schema.memberships.orgId, orgId));
+    },
+
+    /** Query pending and settled invitations belonging to this org. */
+    invitations() {
+      return db.select().from(schema.invitations).where(eq(schema.invitations.orgId, orgId));
+    },
+
     /** Query extractions belonging to this org. */
     extractions() {
       return db.select().from(schema.extractions).where(eq(schema.extractions.orgId, orgId));

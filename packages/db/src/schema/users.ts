@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 import { ID_PREFIXES, newId } from '../id.js';
 
 export const users = pgTable(
@@ -8,6 +8,9 @@ export const users = pgTable(
       .primaryKey()
       .$defaultFn(() => newId(ID_PREFIXES.user)),
     email: text('email').notNull(),
+    // Better Auth gates sign-in on this when `requireEmailVerification` is on,
+    // and sets it itself. Nothing else in the product writes it.
+    emailVerified: boolean('email_verified').notNull().default(false),
     name: text('name'),
     image: text('image'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

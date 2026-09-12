@@ -20,7 +20,12 @@ export function newId(prefix: string): string {
 /** Known ID prefixes used across the schema. */
 export const ID_PREFIXES = {
   user: 'usr',
+  session: 'ses',
+  account: 'acc',
+  verification: 'vrf',
   organization: 'org',
+  membership: 'mem',
+  invitation: 'inv',
   apiKey: 'key',
   folder: 'fld',
   document: 'doc',
