@@ -6,12 +6,20 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "asyncpg>=0.31.0",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
     "pydantic-settings>=2.12.0",
+    "redis>=5",
+    "uvicorn>=0.52.4",
+    "uvloop>=0.22.1",
 ]
 
 [dependency-groups]
 dev = [
+    "datamodel-code-generator>=0.79.0",
     "pytest>=8.4.2",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.14.0",
 ]
 
@@ -24,9 +32,11 @@ packages = ["src/konusbitr_worker"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-q --strict-markers --strict-config"
 xfail_strict = true
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 src = ["src", "tests"]

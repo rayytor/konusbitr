@@ -33,11 +33,25 @@ export {
   resetEnvCache,
 } from './env.js';
 export {
+  isRetryableJobError,
+  isTerminalJobStage,
+  JOB_ERROR_CODES,
+  JOB_PAYLOAD_VERSION,
   JOB_STAGES,
+  JOB_TYPES,
+  type JobErrorCode,
+  JobErrorCodeSchema,
+  type JobPayload,
+  JobPayloadSchema,
   type JobProgress,
   JobProgressSchema,
   type JobStage,
   JobStageSchema,
+  type JobType,
+  JobTypeSchema,
+  STAGE_PERCENT,
+  TERMINAL_JOB_ERROR_CODES,
+  TERMINAL_JOB_STAGES,
 } from './job.js';
 export {
   canonicalizeParseSettings,
@@ -48,6 +62,17 @@ export {
   ParseSettingsSchema,
   parseSettingsHashInput,
 } from './parse-settings.js';
+export {
+  DEAD_LETTER_MAX_LENGTH,
+  JOBS_CONSUMER_GROUP,
+  JOBS_DEAD_LETTER,
+  JOBS_RETRY_ZSET,
+  JOBS_STREAM,
+  JOBS_STREAM_FIELD,
+  JOBS_STREAM_MAX_LENGTH,
+  PROGRESS_CHANNEL_PREFIX,
+  progressChannel,
+} from './queue.js';
 export {
   type CompleteUploadRequest,
   CompleteUploadRequestSchema,

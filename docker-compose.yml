@@ -169,9 +169,13 @@ services:
       start_period: 20s
 
   # ----------------------------------------------------------------- Worker --
-  # The Python half of the pipeline. Until Phase 06 it validates its settings,
-  # reports itself healthy and idles: enough to prove the image builds, the env
-  # contract holds on both runtimes, and Compose ordering is right.
+  # The Python half of the pipeline: it consumes the `konusbitr:jobs` Redis
+  # stream, walks a document through the parse stages and publishes progress
+  # the browser reads over SSE. The parse itself is a stub until Phase 07; the
+  # seam around it is real.
+  #
+  # The port is published so that an operator can curl /health and /ready. It
+  # serves nothing else, and nothing in the app calls it.
   worker:
     build:
       context: .
@@ -195,12 +199,21 @@ services:
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
       OLLAMA_BASE_URL: http://ollama:11434
+      WORKER_PORT: '8081'
+      # Stable across restarts, and distinct per replica: a restarted worker
+      # reclaims its own unacknowledged deliveries by consumer name. Compose
+      # gives each container a stable hostname, which is the default.
+    ports:
+      - '${WORKER_PORT:-8081}:8081'
     healthcheck:
+      # Probes the worker's own /health, which reports both the job loop's
+      # heartbeat and Redis connectivity — so a process that is running but has
+      # stopped consuming is reported unhealthy rather than merely "up".
       test: ['CMD', 'python', '-m', 'konusbitr_worker.health']
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 15s
+      start_period: 20s
 
   # ----------------------------------------------------- Profile: local-llm --
   ollama:

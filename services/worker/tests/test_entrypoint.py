@@ -1,56 +1,19 @@
-"""The placeholder run loop: it must heartbeat, and it must stop when asked."""
+"""The entrypoint, and the promise it makes before it serves anything.
+
+A worker that starts with an unset `REDIS_URL` and only notices when the first
+job arrives has turned a one-line configuration mistake into an incident. So
+the environment is validated before uvicorn is even constructed, and the
+process dies naming the variable.
+"""
 
 from __future__ import annotations
 
-import threading
-import time
-from pathlib import Path
+from typing import Any
 
 import pytest
 
 from konusbitr_worker import __main__ as entrypoint
-from konusbitr_worker import health
-from konusbitr_worker.settings import Settings
-
-VALID = {
-    "app_url": "http://localhost:3000",
-    "database_url": "postgresql://konusbitr:konusbitr@localhost:5432/konusbitr",
-    "redis_url": "redis://localhost:6379",
-    "s3_endpoint": "http://localhost:9000",
-    "s3_bucket": "konusbitr",
-    "s3_access_key_id": "konusbitr",
-    "s3_secret_access_key": "konusbitr-dev-secret",
-}
-
-
-@pytest.fixture(autouse=True)
-def heartbeat_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KONUSBITR_WORKER_HEARTBEAT", str(tmp_path / "worker.heartbeat"))
-
-
-def test_run_heartbeats_then_returns_when_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(entrypoint, "HEARTBEAT_INTERVAL_SECONDS", 0.01)
-    settings = Settings(_env_file=None, **VALID)
-
-    stop = threading.Event()
-    thread = threading.Thread(target=entrypoint.run, args=(settings, stop))
-    thread.start()
-    try:
-        assert health.is_alive() or _wait_for_heartbeat()
-    finally:
-        stop.set()
-        thread.join(timeout=5)
-
-    assert not thread.is_alive()
-
-
-def _wait_for_heartbeat(timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if health.is_alive():
-            return True
-        time.sleep(0.05)
-    return False
+from tests.factories import BASE_ENV
 
 
 def test_main_exits_nonzero_on_a_bad_environment(
@@ -62,3 +25,28 @@ def test_main_exits_nonzero_on_a_bad_environment(
 
     assert entrypoint.main() == 1
     assert "DATABASE_URL: is required but was not set" in capsys.readouterr().err
+
+
+def test_main_serves_on_the_configured_host_and_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one thing worth asserting about the happy path without a server.
+
+    Actually starting uvicorn here would start the job loop, connect to Redis
+    and Postgres, and turn a unit test into the integration test that already
+    exists — so the server is stubbed and only its configuration is checked.
+    """
+    monkeypatch.setenv("KONUSBITR_ENV_FILE", "/nonexistent/.env")
+    for key, value in BASE_ENV.items():
+        monkeypatch.setenv(key.upper(), value)
+    monkeypatch.setenv("WORKER_PORT", "8199")
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(entrypoint, "create_app", lambda settings: settings)
+    monkeypatch.setattr(entrypoint.uvicorn, "run", lambda _app, **kwargs: calls.append(kwargs))
+
+    assert entrypoint.main() == 0
+    assert calls[0]["port"] == 8199
+    assert calls[0]["host"] == "0.0.0.0"
+    # Uvicorn's own log config would put a second shape in a stream that is
+    # otherwise one JSON object per line.
+    assert calls[0]["log_config"] is None
+    assert calls[0]["timeout_graceful_shutdown"] > 0

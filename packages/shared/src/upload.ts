@@ -155,6 +155,8 @@ export const DocumentViewSchema = z.object({
   pageCount: z.number().int().nonnegative().nullable(),
   status: z.string(),
   error: z.string().nullable(),
+  /** A stable code from `JOB_ERROR_CODES`, when the document failed. */
+  errorCode: z.string().nullable(),
   folderId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),

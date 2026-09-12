@@ -96,9 +96,14 @@ though the web image takes minutes.
 virtualenv it copies into the runtime stage is self-contained rather than
 pointing back at a build directory that no longer exists.
 
-Until Phase 06 the worker runs a placeholder loop: it validates its settings,
-keeps a heartbeat for the healthcheck and idles. The image, the non-root user and
-the environment contract are all real from now on; only the job loop is missing.
+The worker serves `/health` and `/ready` on `WORKER_PORT` (8081 by default,
+published so an operator can curl them) and runs the job loop from the FastAPI
+lifespan. Its healthcheck is `python -m konusbitr_worker.health`, which probes
+that `/health` over loopback with Python's own urllib — the slim image ships no
+curl and does not need one. Because `/health` reports the loop's heartbeat as
+well as Redis connectivity, a container that is running but has stopped
+consuming is reported unhealthy rather than merely "up", which is the case a
+bare process check cannot see.
 
 ## Schema
 

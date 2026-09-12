@@ -8,6 +8,7 @@ import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/field';
 import { importDocumentFromUrl, UploadError, uploadDocument } from '@/lib/upload-client';
+import { useDocumentProgress } from '@/lib/use-document-progress';
 import { cn } from '@/lib/utils';
 
 /**
@@ -55,6 +56,11 @@ export function LibraryView({ initialDocuments }: { initialDocuments: DocumentVi
   const [url, setUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string>();
+
+  // Live parse progress for anything still working, over SSE. The server
+  // replays current state on connect, so a refresh mid-parse resumes rather
+  // than restarting at zero.
+  const progress = useDocumentProgress(documents);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const urlFieldId = useId();
@@ -234,35 +240,47 @@ export function LibraryView({ initialDocuments }: { initialDocuments: DocumentVi
           </div>
         ) : (
           <ul className="flex flex-col divide-y divide-border-subtle">
-            {documents.map((document) => (
-              <li key={document.id} className="flex flex-wrap items-center gap-x-6 gap-y-2 py-4">
-                <FileText aria-hidden className="size-4 shrink-0 text-foreground-subtle" />
+            {documents.map((document) => {
+              const live = progress[document.id];
+              return (
+                <li key={document.id} className="flex flex-wrap items-center gap-x-6 gap-y-2 py-4">
+                  <FileText aria-hidden className="size-4 shrink-0 text-foreground-subtle" />
 
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[15px]">{document.filename}</p>
-                  <p className="mt-1 flex flex-wrap items-center gap-x-3 text-[12px] text-foreground-subtle">
-                    <DocumentStatus status={document.status} />
-                    <span>{formatSize(document.byteSize)}</span>
-                    {document.pageCount ? <span>{document.pageCount} pages</span> : null}
-                    <span>{formatDate(document.createdAt)}</span>
-                  </p>
-                  {document.error ? (
-                    <p className="mt-1 text-[12px] text-danger">{document.error}</p>
-                  ) : null}
-                </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px]">{document.filename}</p>
+                    <p className="mt-1 flex flex-wrap items-center gap-x-3 text-[12px] text-foreground-subtle">
+                      <DocumentStatus
+                        status={document.status}
+                        stage={live?.stage}
+                        percent={live?.percent}
+                      />
+                      <span>{formatSize(document.byteSize)}</span>
+                      {document.pageCount ? <span>{document.pageCount} pages</span> : null}
+                      <span>{formatDate(document.createdAt)}</span>
+                    </p>
+                    {document.error ? (
+                      <p className="mt-1 text-[12px] text-danger">{document.error}</p>
+                    ) : null}
+                    {/* One live region per row, so a screen reader is told what
+                      changed rather than having the whole list re-announced. */}
+                    <p aria-live="polite" className="sr-only">
+                      {live?.message ? `${document.filename}: ${live.message}` : ''}
+                    </p>
+                  </div>
 
-                <Button
-                  type="button"
-                  variant="danger"
-                  size="icon"
-                  title={`Delete ${document.filename}`}
-                  aria-label={`Delete ${document.filename}`}
-                  onClick={() => void remove(document)}
-                >
-                  <Trash2 aria-hidden />
-                </Button>
-              </li>
-            ))}
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="icon"
+                    title={`Delete ${document.filename}`}
+                    aria-label={`Delete ${document.filename}`}
+                    onClick={() => void remove(document)}
+                  >
+                    <Trash2 aria-hidden />
+                  </Button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

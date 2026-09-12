@@ -46,6 +46,44 @@ export function scopedDb(db: Database, orgId: string) {
       return db.select().from(schema.jobs).where(eq(schema.jobs.orgId, orgId));
     },
 
+    /**
+     * The most recent job for a document, or `undefined` when it has none.
+     *
+     * This is what the SSE endpoint replays from after a reconnect, so it
+     * wants the *latest* attempt rather than the first: a document that failed
+     * and was retried has two rows, and the older one describes a state the
+     * browser must not be shown.
+     */
+    async latestJobForDocument(documentId: string) {
+      const [row] = await db
+        .select()
+        .from(schema.jobs)
+        .where(and(eq(schema.jobs.orgId, orgId), eq(schema.jobs.documentId, documentId)))
+        .orderBy(desc(schema.jobs.createdAt), desc(schema.jobs.id))
+        .limit(1);
+      return row;
+    },
+
+    /** Every job in this org that ended in a permanent failure, newest first. */
+    listFailedJobs(limit: number) {
+      return db
+        .select({
+          id: schema.jobs.id,
+          documentId: schema.jobs.documentId,
+          type: schema.jobs.type,
+          stage: schema.jobs.stage,
+          error: schema.jobs.error,
+          errorCode: schema.jobs.errorCode,
+          attempts: schema.jobs.attempts,
+          createdAt: schema.jobs.createdAt,
+          updatedAt: schema.jobs.updatedAt,
+        })
+        .from(schema.jobs)
+        .where(and(eq(schema.jobs.orgId, orgId), eq(schema.jobs.status, 'failed')))
+        .orderBy(desc(schema.jobs.updatedAt))
+        .limit(limit);
+    },
+
     /** Query folders belonging to this org. */
     folders() {
       return db.select().from(schema.folders).where(eq(schema.folders.orgId, orgId));

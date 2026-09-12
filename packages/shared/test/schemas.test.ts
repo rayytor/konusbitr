@@ -77,20 +77,26 @@ describe('ParseSettingsSchema', () => {
 });
 
 describe('JobProgressSchema', () => {
+  const base = {
+    jobId: 'job_1',
+    documentId: 'doc_1',
+    stage: 'parsing',
+    at: '2026-01-01T00:00:00Z',
+  };
+
   it('accepts a progress event without a message', () => {
-    const parsed = JobProgressSchema.parse({ jobId: 'job_1', stage: 'parsing', percent: 40 });
+    const parsed = JobProgressSchema.parse({ ...base, percent: 40 });
     expect(parsed.message).toBeUndefined();
   });
 
   it('rejects a percent outside 0-100', () => {
-    const base = { jobId: 'job_1', stage: 'parsing' };
     expect(JobProgressSchema.safeParse({ ...base, percent: -1 }).success).toBe(false);
     expect(JobProgressSchema.safeParse({ ...base, percent: 101 }).success).toBe(false);
   });
 
   it('rejects an unknown stage', () => {
-    expect(
-      JobProgressSchema.safeParse({ jobId: 'job_1', stage: 'thinking', percent: 1 }).success,
-    ).toBe(false);
+    expect(JobProgressSchema.safeParse({ ...base, stage: 'thinking', percent: 1 }).success).toBe(
+      false,
+    );
   });
 });

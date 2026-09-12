@@ -36,13 +36,14 @@ jobs:
       - name: Lint, typecheck, test, build
         run: pnpm turbo run lint typecheck test build
 
-  # Testcontainers-backed tests: the schema against a real Postgres, and a real
-  # Better Auth against Postgres and Redis. Separate from the TypeScript job
-  # because it needs a Docker daemon and takes minutes rather than seconds.
-  integration:
-    name: Integration
+  # The cross-language contract. The Zod schemas in `packages/shared` are the
+  # source of truth and the worker's pydantic models are generated from them;
+  # drift between the two is the main failure mode of a two-runtime
+  # architecture, so regenerating has to be a no-op on a clean tree.
+  contract:
+    name: Contract codegen
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -53,8 +54,59 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/worker/uv.lock
+
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - name: pnpm codegen
+        run: pnpm codegen
+
+      - name: The generated contract is up to date
+        run: |
+          if ! git diff --exit-code; then
+            echo
+            echo "The pydantic models have drifted from the Zod schemas."
+            echo "Run 'pnpm codegen' and commit the result."
+            exit 1
+          fi
+
+  # Testcontainers-backed tests: the schema against a real Postgres, a real
+  # Better Auth against Postgres and Redis, and the Phase 06 seam — which
+  # enqueues from TypeScript and runs the actual Python worker against the same
+  # containers. Separate from the TypeScript job because it needs a Docker
+  # daemon and takes minutes rather than seconds.
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # The worker integration test starts `python -m konusbitr_worker` as a
+      # child process, so this job needs the Python toolchain as well.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/worker/uv.lock
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync the worker environment
+        run: uv sync --locked --project services/worker
 
       - name: Integration tests
         run: pnpm turbo run test:integration
@@ -245,6 +297,73 @@ jobs:
           status=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q worker)")
           echo "worker: $status"
           test "$status" = healthy
+
+      - name: The worker reports itself healthy and ready over HTTP
+        run: |
+          health=$(curl -fsS http://localhost:8081/health)
+          echo "$health"
+          echo "$health" | grep -q '"ok":true'
+
+          ready=$(curl -fsS http://localhost:8081/ready)
+          echo "$ready"
+          echo "$ready" | grep -q '"ok":true'
+
+      # The Phase 06 seam, through the real Compose stack: a job enqueued onto
+      # the Redis stream is consumed by the Python worker and the document it
+      # names reaches `ready`. Everything above this proves the containers
+      # start; this proves they talk to each other.
+      - name: A job enqueued on the stream drives a document to ready
+        run: |
+          set -euo pipefail
+
+          hash=$(printf 'a%.0s' $(seq 64))
+          settings=$(printf 'b%.0s' $(seq 64))
+
+          docker compose exec -T postgres psql -U konusbitr -d konusbitr -v ON_ERROR_STOP=1 <<SQL
+          INSERT INTO organizations (id, name, slug) VALUES ('org_ci', 'CI Worker', 'ci-worker') ON CONFLICT (id) DO NOTHING;
+          INSERT INTO documents (
+            id, org_id, filename, mime, byte_size, page_count,
+            storage_key, content_hash, settings_hash, status
+          ) VALUES (
+            'doc_ci', 'org_ci', 'ci.pdf', 'application/pdf', 1024, 2,
+            'orgs/org_ci/documents/doc_ci/original.pdf',
+            '$hash', '$settings', 'queued'
+          );
+          INSERT INTO jobs (id, org_id, document_id, type, status, stage)
+          VALUES ('job_ci', 'org_ci', 'doc_ci', 'parse', 'pending', 'queued');
+          SQL
+
+          payload=$(printf '%s' \
+            '{"v":1,"jobId":"job_ci","type":"parse","orgId":"org_ci",' \
+            '"documentId":"doc_ci",' \
+            '"storageKey":"orgs/org_ci/documents/doc_ci/original.pdf",' \
+            "\"contentHash\":\"$hash\"," \
+            '"settings":{"quality":"standard","langList":[],"llm":false},' \
+            '"attempt":1,"enqueuedAt":"2026-01-01T00:00:00Z"}')
+
+          docker compose exec -T redis redis-cli XADD konusbitr:jobs '*' payload "$payload"
+
+          status=""
+          for _ in $(seq 1 60); do
+            status=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+              "SELECT status FROM documents WHERE id = 'doc_ci'")
+            echo "document: $status"
+            [ "$status" = "ready" ] && break
+            sleep 2
+          done
+          test "$status" = "ready"
+
+          # Exactly one parse result: the docId cache is a unique constraint,
+          # and a job that ran twice would have tried to write a second.
+          parses=$(docker compose exec -T postgres psql -U konusbitr -d konusbitr -tAc \
+            "SELECT count(*) FROM parse_results WHERE document_id = 'doc_ci'")
+          test "$parses" -eq 1
+
+          # Nothing left in the consumer group: the entry was acknowledged.
+          pending=$(docker compose exec -T redis redis-cli \
+            XPENDING konusbitr:jobs konusbitr:workers | head -1)
+          echo "pending: $pending"
+          test "$pending" -eq 0
 
       - name: A missing variable stops the web container, and says which
         run: |

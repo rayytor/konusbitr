@@ -167,6 +167,9 @@ importers:
       '@konusbitr/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
+      tsx:
+        specifier: ^4.20.3
+        version: 4.23.13
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

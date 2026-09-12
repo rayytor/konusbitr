@@ -30,7 +30,7 @@
     "test:integration": "turbo run test:integration",
     "db:migrate": "pnpm --filter @konusbitr/db db:migrate",
     "db:seed": "pnpm --filter @konusbitr/db db:seed",
-    "codegen": "echo 'TODO: Zod → pydantic codegen'",
+    "codegen": "./scripts/codegen.sh",
     "format": "biome format --write .",
     "check": "biome check .",
     "check:fix": "biome check --write .",

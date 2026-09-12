@@ -9,14 +9,21 @@ starts with an unset ``REDIS_URL`` and only notices when the first job arrives
 has turned a one-line configuration mistake into an incident, so
 :func:`load_settings` raises with every offending variable named.
 
-Unlike the job payload models, which are generated from Zod in Phase 06, this
-module is hand-written: it is configuration rather than a wire format, and it
-must be importable before any code generation has run.
+Unlike the job payload models in :mod:`konusbitr_worker.contracts`, which are
+generated from the Zod schemas, this module is hand-written: it is
+configuration rather than a wire format, and it must be importable before any
+code generation has run.
+
+The ``WORKER_*`` variables at the bottom have no TypeScript counterpart, in the
+same way ``AUTH_SECRET`` has no Python one. The shared half of the contract is
+the part that is genuinely shared; how many jobs this process runs at once is
+nobody else's business.
 """
 
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -114,6 +121,65 @@ class Settings(BaseSettings):
 
     billing_enabled: bool = False
     credits_mode: CreditsMode = "unlimited"
+
+    # ── Worker-only ──────────────────────────────────────────────────────────
+
+    #: Where the health and readiness endpoints listen.
+    #: A container has to bind every interface for Compose to reach it.
+    worker_host: str = "0.0.0.0"
+    worker_port: int = 8081
+
+    #: How many jobs this process runs at once.
+    worker_concurrency: int = 2
+
+    #: A job that has not finished in this long is abandoned and retried.
+    worker_job_timeout_seconds: int = 600
+
+    #: Total deliveries of one job before it is dead-lettered, first included.
+    worker_max_attempts: int = 3
+
+    #: Backoff base: attempt *n* waits ``base * 2 ** (n - 1)`` seconds.
+    worker_retry_base_seconds: float = 5.0
+
+    #: How long the Phase 06 stub pipeline pauses in each stage.
+    #:
+    #: A knob only because the tests turn it down to nothing. Phase 07 deletes
+    #: it along with the stub.
+    worker_stub_stage_seconds: float = 0.4
+
+    #: Identity in the Redis consumer group.
+    #:
+    #: It must be stable across restarts of *this* process and distinct from
+    #: every other replica: a restarted worker reclaims its own half-finished
+    #: deliveries by name, and two replicas sharing a name would each think the
+    #: other's in-flight jobs were their own to recover. The container
+    #: hostname is both, which is why it is the default.
+    worker_name: str | None = None
+
+    @field_validator("worker_concurrency", "worker_job_timeout_seconds", "worker_max_attempts")
+    @classmethod
+    def _check_positive_int(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("must be greater than zero")
+        return value
+
+    @field_validator("worker_retry_base_seconds")
+    @classmethod
+    def _check_positive_float(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("must be greater than zero")
+        return value
+
+    @field_validator("worker_stub_stage_seconds")
+    @classmethod
+    def _check_non_negative_float(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("must be zero or more seconds")
+        return value
+
+    def consumer_name(self) -> str:
+        """This process's name inside the consumer group."""
+        return self.worker_name or socket.gethostname()
 
     @model_validator(mode="before")
     @classmethod

@@ -66,20 +66,27 @@ export async function createOrganization(db: Database, name: string, slug: strin
  */
 export async function recordParseResult(
   db: Database,
-  input: { documentId: string; contentHash: string; settingsHash: string; pageCount?: number },
+  input: {
+    documentId?: string | null;
+    contentHash: string;
+    settingsHash: string;
+    pageCount?: number;
+  },
 ) {
   await db.insert(schema.parseResults).values({
-    documentId: input.documentId,
+    documentId: input.documentId ?? null,
     contentHash: input.contentHash,
     settingsHash: input.settingsHash,
     pageCount: input.pageCount ?? 1,
     markdown: '# parsed',
   });
 
-  await db
-    .update(schema.documents)
-    .set({ status: 'ready', pageCount: input.pageCount ?? 1 })
-    .where(eq(schema.documents.id, input.documentId));
+  if (input.documentId) {
+    await db
+      .update(schema.documents)
+      .set({ status: 'ready', pageCount: input.pageCount ?? 1 })
+      .where(eq(schema.documents.id, input.documentId));
+  }
 }
 
 /** Every job recorded for a document, so a test can assert none was created. */
@@ -94,6 +101,23 @@ export async function creditEntriesOf(db: Database, orgId: string) {
     .from(schema.creditLedger)
     .where(eq(schema.creditLedger.orgId, orgId))
     .orderBy(asc(schema.creditLedger.createdAt));
+}
+
+/** The parse results recorded for a document — one, if the cache is working. */
+export async function parseResultsForDocument(db: Database, documentId: string) {
+  return db
+    .select()
+    .from(schema.parseResults)
+    .where(eq(schema.parseResults.documentId, documentId));
+}
+
+/** A document's page geometry, oldest page first. */
+export async function pagesForDocument(db: Database, documentId: string) {
+  return db
+    .select()
+    .from(schema.pages)
+    .where(eq(schema.pages.documentId, documentId))
+    .orderBy(asc(schema.pages.pageNo));
 }
 
 /** Rows in a table that reference a document, for asserting a cascade. */
