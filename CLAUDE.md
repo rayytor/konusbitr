@@ -11,7 +11,8 @@ complete, and every request into the app resolves to an authenticated
 principal scoped to one organization. What exists:
 
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
-  (bucket and dev access key created automatically), the web image and the
+  (bucket and dev access key created automatically), a `migrate` one-shot that
+  applies the migrations before web and worker start, the web image and the
   worker image, plus the `local-llm` profile for Ollama. `advanced` is declared
   and deliberately empty until Phase 12.
 - `apps/web` — Next.js 15 with the sepia theme tokens. Better Auth on the
@@ -173,10 +174,6 @@ Everything above `pnpm codegen` exists as of Phase 04; the rest are created by
 Phase 08 and later. Implement them with exactly these names, because every later
 phase assumes them.
 
-`pnpm db:migrate` does *not* yet run on container start — Phase 03 promised
-that and it is still outstanding, so a fresh `docker compose up` needs one
-`pnpm db:migrate` against the stack before anyone can sign up.
-
 Node 22.13+ and pnpm 11 are required; `uv` fetches its own Python 3.12.
 
 ```bash
@@ -184,12 +181,13 @@ pnpm install
 pnpm turbo build lint typecheck test     # the standard gate
 pnpm test:integration                    # Testcontainers: schema + auth; needs Docker
 pnpm --filter @konusbitr/web dev
-pnpm dev:infra                           # compose up backing services only (native hot reload)
+pnpm dev:infra                           # compose up backing services only, migrated (native hot reload)
 pnpm dev                                 # infra + native web + native worker
 pnpm infra:down                          # stop containers; infra:reset also drops volumes
 pnpm infra:logs / infra:ps / infra:psql  # same set exists as `make` targets
 pnpm codegen                             # Zod → pydantic; must be a no-op on a clean tree
-pnpm db:migrate                          # idempotent
+pnpm db:migrate                          # idempotent; a `migrate` one-shot runs it on every compose up
+pnpm infra:migrate                       # the same one-shot, without restarting the stack
 pnpm --filter @konusbitr/db db:generate  # regenerate a migration after a schema edit
 pnpm db:seed
 pnpm eval:retrieval                      # recall@8, MRR, context precision

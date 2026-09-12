@@ -8,7 +8,7 @@
 # post-install shell, and no assumptions about the host beyond Docker itself.
 #
 # Profiles:
-#   (default)   postgres, redis, minio, minio-init, web, worker
+#   (default)   postgres, redis, minio, minio-init, migrate, web, worker
 #   local-llm   adds Ollama and pre-pulls a chat + embedding model, which is
 #               what makes OFFLINE_MODE=true a real claim rather than a flag
 #   advanced    reserved for the AGPL / commercially-restricted parser extras
@@ -114,6 +114,22 @@ services:
     volumes:
       - ./docker/minio/init.sh:/init.sh:ro
 
+  # -------------------------------------------------------------- Migrations --
+  # One-shot: bring the schema up to date, then exit 0. Web and worker wait for
+  # it, so a first `docker compose up` on an empty volume produces a database
+  # that can be signed up against rather than one that 500s on the first query.
+  # Idempotent, so every later `up` costs one round trip to Postgres.
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/migrate.Dockerfile
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-konusbitr}:${POSTGRES_PASSWORD:-konusbitr}@postgres:5432/${POSTGRES_DB:-konusbitr}
+
   # -------------------------------------------------------------------- Web --
   web:
     build:
@@ -128,6 +144,8 @@ services:
       minio:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
     env_file:
       - .env
@@ -167,6 +185,8 @@ services:
       minio:
         condition: service_healthy
       minio-init:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
     env_file:
       - .env
