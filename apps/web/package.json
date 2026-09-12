@@ -11,7 +11,8 @@
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "clean": "rm -rf .turbo .next node_modules *.tsbuildinfo"
+    "clean": "rm -rf .turbo .next node_modules *.tsbuildinfo",
+    "test:integration": "vitest run -c vitest.config.integration.ts"
   },
   "dependencies": {
     "@konusbitr/db": "workspace:*",
