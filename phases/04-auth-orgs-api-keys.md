@@ -74,13 +74,13 @@ Billing/Stripe (optional module, Phase 13), SSO/SAML (Phase 15+).
 
 ## Acceptance criteria
 
-- [ ] Signup → verify → login → logout works with email/password, and with Google
+- [x] Signup → verify → login → logout works with email/password, and with Google
       and GitHub when configured.
-- [ ] With no OAuth env vars set, the login page renders and works without errors.
-- [ ] A new signup automatically owns exactly one organization.
-- [ ] A created API key authenticates a request; after revocation the same key 401s.
-- [ ] A key lacking a required scope gets 403 with a message naming the scope.
-- [ ] An `admin` cannot delete the org; an `owner` can.
-- [ ] Automated test: every protected route resolves an `AuthContext`; a route
+- [x] With no OAuth env vars set, the login page renders and works without errors.
+- [x] A new signup automatically owns exactly one organization.
+- [x] A created API key authenticates a request; after revocation the same key 401s.
+- [x] A key lacking a required scope gets 403 with a message naming the scope.
+- [x] An `admin` cannot delete the org; an `owner` can.
+- [x] Automated test: every protected route resolves an `AuthContext`; a route
       added without `withAuth` fails the test.
-- [ ] Brute-forcing login trips the rate limiter.
+- [x] Brute-forcing login trips the rate limiter.

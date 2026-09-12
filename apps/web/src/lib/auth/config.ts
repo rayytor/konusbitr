@@ -12,7 +12,7 @@ import { nextCookies } from 'better-auth/next-js';
 import { magicLink } from 'better-auth/plugins/magic-link';
 import { organization } from 'better-auth/plugins/organization';
 import { db } from '../db';
-import { loadWebEnv, type WebEnv } from '../env';
+import { isSecureOrigin, loadWebEnv, type WebEnv } from '../env';
 import { redis } from '../redis';
 import { mailer } from './email';
 import { createRedisRateLimiter } from './rate-limit';
@@ -198,7 +198,10 @@ export function createAuth({ env, database, rateLimiter, mail }: CreateAuthOptio
     socialProviders: socialProvidersFor(env),
 
     advanced: {
-      useSecureCookies: env.NODE_ENV === 'production',
+      // Follows the origin, not NODE_ENV: the Compose container is a
+      // production build serving plain HTTP on localhost, and a browser drops
+      // a `__Secure-` cookie that did not arrive over HTTPS.
+      useSecureCookies: isSecureOrigin(env.APP_URL),
       database: {
         generateId: ({ model }) => newId(ID_PREFIX_BY_MODEL[model] ?? 'id'),
       },

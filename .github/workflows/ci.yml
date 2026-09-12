@@ -36,6 +36,29 @@ jobs:
       - name: Lint, typecheck, test, build
         run: pnpm turbo run lint typecheck test build
 
+  # Testcontainers-backed tests: the schema against a real Postgres, and a real
+  # Better Auth against Postgres and Redis. Separate from the TypeScript job
+  # because it needs a Docker daemon and takes minutes rather than seconds.
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Integration tests
+        run: pnpm turbo run test:integration
+
   python:
     name: Python worker
     runs-on: ubuntu-latest
