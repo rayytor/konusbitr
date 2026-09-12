@@ -117,7 +117,7 @@ async def test_a_retryable_failure_is_parked_with_exponential_backoff(
 ) -> None:
     database = FakeDatabase(make_document())
     monkeypatch.setattr(
-        "konusbitr_worker.runtime.run_parse",
+        "konusbitr_worker.runtime.run_job",
         _raising(JobFailure(JobErrorCode.storage_unavailable, "MinIO is not answering")),
     )
 
@@ -139,7 +139,7 @@ async def test_the_last_attempt_dead_letters_instead_of_retrying_again(
 ) -> None:
     database = FakeDatabase(make_document())
     monkeypatch.setattr(
-        "konusbitr_worker.runtime.run_parse",
+        "konusbitr_worker.runtime.run_job",
         _raising(JobFailure(JobErrorCode.model_timeout, "the model did not answer")),
     )
 
@@ -155,15 +155,35 @@ async def test_the_last_attempt_dead_letters_instead_of_retrying_again(
 async def test_an_unknown_job_type_is_terminal(settings: Settings, queue: FakeQueue) -> None:
     """Declared in the contract, unimplemented here.
 
-    Retrying three times before dead-lettering would only delay the same
-    answer, so the handler refuses immediately.
+    `split` is still only vocabulary — it is in `JOB_TYPES` so that both
+    runtimes agree the word exists — and retrying three times before
+    dead-lettering would only delay the same answer, so the handler refuses
+    immediately.
     """
     database = FakeDatabase(make_document())
 
-    await runtime(settings, queue, database)._run(delivery(make_payload(type="reindex")))
+    await runtime(settings, queue, database)._run(delivery(make_payload(type="split")))
 
     assert queue.retries == []
     assert queue.dead[0]["error_code"] is JobErrorCode.unknown_job_type
+
+
+async def test_reindex_and_chunk_embed_reach_the_pipeline(
+    settings: Settings, queue: FakeQueue
+) -> None:
+    """Phase 08 gives both a handler, so neither may dead-letter any more.
+
+    They fail here for the *right* reason — the document has no cached parse to
+    index — rather than because the worker does not recognise the word.
+    """
+    for job_type in ("reindex", "chunk_embed"):
+        fresh = FakeQueue()
+        database = FakeDatabase(make_document())
+
+        await runtime(settings, fresh, database)._run(delivery(make_payload(type=job_type)))
+
+        assert fresh.dead[0]["error_code"] is not JobErrorCode.unknown_job_type
+        assert fresh.dead[0]["error_code"] is JobErrorCode.document_missing
 
 
 async def test_a_job_that_overruns_its_timeout_is_retried(
@@ -178,7 +198,7 @@ async def test_a_job_that_overruns_its_timeout_is_retried(
     async def never_finishes(*_args: Any, **_kwargs: Any) -> None:
         await asyncio.sleep(30)
 
-    monkeypatch.setattr("konusbitr_worker.runtime.run_parse", never_finishes)
+    monkeypatch.setattr("konusbitr_worker.runtime.run_job", never_finishes)
 
     database = FakeDatabase(make_document())
     loop = runtime(settings.model_copy(update={"worker_job_timeout_seconds": 1}), queue, database)
@@ -221,7 +241,7 @@ async def test_an_undecodable_entry_is_dead_lettered_and_acknowledged(
 
 
 def _raising(error: BaseException) -> Any:
-    """A `run_parse` stand-in that always fails the same way."""
+    """A `run_job` stand-in that always fails the same way."""
 
     async def raiser(*_args: Any, **_kwargs: Any) -> None:
         raise error

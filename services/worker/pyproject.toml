@@ -11,6 +11,11 @@ dependencies = [
     "docling>=2.55",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
+    # The single interface to every model provider. Konusbitr never imports a
+    # provider SDK: roles (chat, embedding, rerank, vision) are configured
+    # independently and an operator can point any of them at OpenAI or at a
+    # local Ollama with no code change. See `docs/adr/0002-model-router.md`.
+    "litellm>=1.80",
     "pillow>=11",
     "pydantic-settings>=2.12.0",
     "pypdfium2>=4.30",

@@ -3,7 +3,7 @@
  *
  * ```
  * orgs/{orgId}/documents/{docId}/original.{ext}
- * orgs/{orgId}/documents/{docId}/pages/{n}.webp        # thumbnails, Phase 07
+ * orgs/{orgId}/documents/{docId}/thumbnails/{nnnnn}.webp  # thumbnails, Phase 07
  * orgs/{orgId}/documents/{docId}/images/{n}.png        # extracted images, Phase 12
  * ```
  *
@@ -59,9 +59,24 @@ export function originalKey(orgId: string, documentId: string, extension: string
   return `${documentPrefix(orgId, documentId)}original.${assertExtension(extension)}`;
 }
 
-/** A page thumbnail, written by the worker in Phase 07. */
+/**
+ * A page thumbnail, written by the worker.
+ *
+ * The page number is zero-padded to five digits so that a lexical listing of
+ * the prefix is a page-order listing — `00002` sorts before `00010`, where `2`
+ * sorts after `10`. It matters because the viewer's page rail pages through the
+ * prefix rather than querying for each key.
+ *
+ * **This must agree character for character with `thumbnail_key` in
+ * `services/worker/src/konusbitr_worker/parse/thumbnails.py`.** The worker
+ * writes these keys and the web app reads them, and the two runtimes share no
+ * code — so the layout is asserted from both sides
+ * (`packages/storage/test/keys.test.ts` and `tests/test_thumbnails.py`) rather
+ * than trusted. They disagreed once, which is why the tests exist.
+ */
 export function pageThumbnailKey(orgId: string, documentId: string, pageNo: number): string {
-  return `${documentPrefix(orgId, documentId)}pages/${assertIndex('pageNo', pageNo)}.webp`;
+  const page = String(assertIndex('pageNo', pageNo)).padStart(5, '0');
+  return `${documentPrefix(orgId, documentId)}thumbnails/${page}.webp`;
 }
 
 /** An image extracted from the document, written in Phase 12. */

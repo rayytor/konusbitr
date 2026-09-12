@@ -8,6 +8,24 @@
  */
 
 export {
+  CHUNK_KINDS,
+  CHUNKING_DEFAULTS,
+  type ChunkKind,
+  ChunkKindSchema,
+  type ChunkMeta,
+  ChunkMetaSchema,
+  type ChunkPage,
+  ChunkPageSchema,
+  type ChunkTable,
+  ChunkTableSchema,
+  type ChunkView,
+  ChunkViewSchema,
+  formatSectionPath,
+  SECTION_PATH_SEPARATOR,
+  TRUNCATION_MARKER,
+  unionChunkPages,
+} from './chunk.js';
+export {
   type BoundingBox,
   BoundingBoxSchema,
   type Citation,
@@ -25,12 +43,15 @@ export {
   CREDITS_MODES,
   type Env,
   EnvSchema,
+  EnvSchemaChecked,
   EnvValidationError,
-  LLM_PROVIDERS,
+  isRoleConfigured,
   loadEnv,
   NODE_ENVS,
   parseEnv,
   resetEnvCache,
+  roleModel,
+  roleProvider,
 } from './env.js';
 export {
   isRetryableJobError,
@@ -53,6 +74,23 @@ export {
   TERMINAL_JOB_ERROR_CODES,
   TERMINAL_JOB_STAGES,
 } from './job.js';
+export {
+  CLOUD_LLM_PROVIDERS,
+  DEFAULT_CHAT_MODELS,
+  DEFAULT_EMBEDDING_MODELS,
+  EMBEDDING_DIMENSIONS,
+  isLocalProvider,
+  LLM_PROVIDERS,
+  type LlmProvider,
+  LlmProviderSchema,
+  LOCAL_LLM_PROVIDERS,
+  MODEL_ROLES,
+  type ModelRole,
+  ModelRoleSchema,
+  PROVIDERS_WITHOUT_EMBEDDINGS,
+  providerCanEmbed,
+} from './models.js';
+
 export {
   canonicalizeParseSettings,
   DEFAULT_PARSE_SETTINGS,

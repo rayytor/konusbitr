@@ -25,7 +25,14 @@ import asyncpg
 
 from konusbitr_worker.contracts import DocumentStatus, JobStage
 
-__all__ = ["STAGE_TO_STATUS", "Database", "DocumentRecord", "PageRow"]
+__all__ = [
+    "STAGE_TO_STATUS",
+    "ChunkRow",
+    "Database",
+    "DocumentRecord",
+    "PageRow",
+    "ParseArtifactRow",
+]
 
 #: How a pipeline stage is reported as a document status.
 #:
@@ -61,6 +68,46 @@ class PageRow:
     width: int
     height: int
     thumbnail_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkRow:
+    """One row of `chunks`, as the chunker hands it over.
+
+    `pages` is never empty and `ordinal` is never absent: a chunk that cannot
+    say where it came from cannot be cited, and `(document_id, ordinal)` is the
+    key an upsert conflicts on. Both columns are `NOT NULL` for those reasons.
+
+    `embedding` is `None` on a deployment with no embedding model configured.
+    The chunk is still stored and still keyword-searchable; the vector arrives
+    with the `reindex` that follows configuring one.
+    """
+
+    id: str
+    document_id: str
+    org_id: str
+    ordinal: int
+    section_path: str | None
+    text: str
+    token_count: int
+    pages: list[dict[str, Any]]
+    meta: dict[str, Any] | None = None
+    embedding: list[float] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParseArtifactRow:
+    """A cached parse, read back out of the docId cache.
+
+    This is what makes a `reindex` cheap and what makes a cache hit finish the
+    job properly rather than short-circuiting it: the artifact that Docling
+    produced weeks ago is the chunker's input verbatim, so re-chunking a
+    document never re-parses one.
+    """
+
+    markdown: str | None
+    contents: dict[str, Any] | None
+    page_count: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +187,77 @@ class Database:
                 settings_hash,
             )
         )
+
+    async def parse_artifact(
+        self, content_hash: str, settings_hash: str
+    ) -> ParseArtifactRow | None:
+        """The cached parse for these bytes and settings, if there is one.
+
+        Not scoped to an organization, and that is correct: the row is keyed on
+        hashes precisely so a second tenant's identical file can point at the
+        same parse without copying it. Nothing about *who may read a document*
+        is decided here — that is settled by the org-scoped `document` lookup
+        the caller has already done before it gets this far.
+        """
+        row = await self._pool.fetchrow(
+            """
+            SELECT markdown, contents, page_count
+              FROM parse_results
+             WHERE content_hash = $1 AND settings_hash = $2
+            """,
+            content_hash,
+            settings_hash,
+        )
+        if row is None:
+            return None
+        contents = row["contents"]
+        return ParseArtifactRow(
+            markdown=row["markdown"],
+            # asyncpg hands back `jsonb` as text unless a codec is registered,
+            # and registering one globally would change every other query's
+            # shape. Decoding here keeps the surprise local.
+            contents=json.loads(contents) if isinstance(contents, str) else contents,
+            page_count=row["page_count"],
+        )
+
+    async def chunk_count(self, document_id: str) -> int:
+        """How many chunks a document already has.
+
+        Read before chunking so that a re-delivered `parse` job does not redo
+        the embedding it already paid for. A `reindex` ignores it on purpose:
+        its whole reason to exist is that the existing chunks are stale.
+        """
+        return int(
+            await self._pool.fetchval(
+                "SELECT count(*) FROM chunks WHERE document_id = $1", document_id
+            )
+            or 0
+        )
+
+    async def embedding_dimensions(self) -> int | None:
+        """The declared width of `chunks.embedding`, from the catalogue.
+
+        Asked rather than assumed because the number lives in three places —
+        the DDL, `EMBEDDING_DIMENSIONS`, and whatever the model actually
+        returns — and the failure when they disagree is an insert error from
+        deep inside a batch. Read here, the message can name the variable.
+
+        `atttypmod` is how pgvector stores the dimension; `-1` means the column
+        is untyped, which the schema forbids (an HNSW index cannot be built on
+        one) but which a hand-altered database could still present.
+        """
+        value = await self._pool.fetchval(
+            """
+            SELECT atttypmod
+              FROM pg_attribute
+             WHERE attrelid = 'chunks'::regclass
+               AND attname = 'embedding'
+               AND NOT attisdropped
+            """
+        )
+        if value is None or int(value) < 0:
+            return None
+        return int(value)
 
     # ── Job lifecycle ────────────────────────────────────────────────────────
 
@@ -342,6 +460,118 @@ class Database:
             page_count,
         )
 
+    async def upsert_chunks(self, rows: list[ChunkRow]) -> None:
+        """Write a batch of chunks, replacing whatever held those ordinals.
+
+        `ON CONFLICT (document_id, ordinal) DO UPDATE` is the whole idempotency
+        story for this phase. Delivery is at-least-once, so a job killed
+        halfway and redelivered writes ordinals 0..40 a second time — and must
+        leave forty-one rows, not eighty-two. The conflict target is exactly the
+        unique index migration 0005 adds.
+
+        `id` is not updated on conflict: a chunk that already exists keeps the
+        id a citation may already be pointing at. Everything else is replaced,
+        because a reindex is *meant* to change the text and the vector.
+
+        `embedding` is cast rather than passed as a list because asyncpg has no
+        codec for pgvector's type; the literal `[0.1,0.2,…]` form is what the
+        extension parses, and it is the same form Drizzle's custom type emits on
+        the TypeScript side.
+        """
+        if not rows:
+            return
+
+        await self._pool.executemany(
+            """
+            INSERT INTO chunks (
+                id, document_id, org_id, ordinal, section_path,
+                text, token_count, pages, meta, embedding
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::vector)
+            ON CONFLICT (document_id, ordinal)
+            DO UPDATE SET org_id = EXCLUDED.org_id,
+                          section_path = EXCLUDED.section_path,
+                          text = EXCLUDED.text,
+                          token_count = EXCLUDED.token_count,
+                          pages = EXCLUDED.pages,
+                          meta = EXCLUDED.meta,
+                          embedding = EXCLUDED.embedding
+            """,
+            [
+                (
+                    row.id,
+                    row.document_id,
+                    row.org_id,
+                    row.ordinal,
+                    row.section_path,
+                    row.text,
+                    row.token_count,
+                    json.dumps(row.pages),
+                    json.dumps(row.meta) if row.meta is not None else None,
+                    _vector_literal(row.embedding),
+                )
+                for row in rows
+            ],
+        )
+
+    async def prune_chunks(self, *, document_id: str, keep: int) -> None:
+        """Delete chunks past the end of the new chunking.
+
+        The other half of an idempotent re-chunk. Upserting ordinals 0..39 over
+        a document that had fifty chunks leaves ten stale rows behind — with
+        stale text, stale vectors, and ids that retrieval would happily return.
+        A document with no chunks at all is the `keep=0` case, which is a
+        legitimate reindex of a document whose parse turned out to be empty.
+        """
+        await self._pool.execute(
+            "DELETE FROM chunks WHERE document_id = $1 AND ordinal >= $2",
+            document_id,
+            keep,
+        )
+
+    async def set_chunk_counts(self, *, document_id: str, ready: int, total: int) -> None:
+        """Partial readiness, updated as chunks land.
+
+        Written per batch rather than once at the end, because that is what a
+        reader of `chunks_ready` is promised: Phase 10's chat answers over the
+        part of a long document that is ready while the rest is still
+        embedding, and a count that only became true at the end would make the
+        whole idea a lie.
+        """
+        await self._pool.execute(
+            """
+            UPDATE documents
+               SET chunks_ready = $2, chunks_total = $3, updated_at = now()
+             WHERE id = $1
+            """,
+            document_id,
+            ready,
+            total,
+        )
+
+    async def set_document_embedding(
+        self, *, document_id: str, model: str | None, dims: int | None
+    ) -> None:
+        """Record which model produced this document's vectors.
+
+        On the document rather than on each chunk because it is a property of
+        the index: one document is embedded by one model in one pass, and mixing
+        two embedding spaces inside a single similarity search does not fail —
+        it silently returns nonsense. Storing the model is what lets a
+        deployment that has changed `EMBEDDING_MODEL` find the documents that
+        still need a reindex.
+        """
+        await self._pool.execute(
+            """
+            UPDATE documents
+               SET embedding_model = $2, dims = $3, updated_at = now()
+             WHERE id = $1
+            """,
+            document_id,
+            model,
+            dims,
+        )
+
     async def upsert_pages(self, *, document_id: str, pages: list[PageRow]) -> None:
         """Replace this document's page geometry.
 
@@ -371,3 +601,16 @@ class Database:
                 for page in pages
             ],
         )
+
+
+def _vector_literal(embedding: list[float] | None) -> str | None:
+    """pgvector's text form, which is what `$n::vector` parses.
+
+    `None` stays `None`: a chunk with no vector is a chunk on a deployment with
+    no embedding model configured, and `NULL` is the honest column value for it
+    — it is also what makes `count(embedding)` a working measure of how much of
+    a document is densely retrievable.
+    """
+    if embedding is None:
+        return None
+    return f"[{','.join(repr(float(value)) for value in embedding)}]"

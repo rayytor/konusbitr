@@ -180,6 +180,14 @@ export function presentDocument(row: DocumentRow, cached?: boolean): DocumentVie
     folderId: row.folderId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    // How much of the document is retrievable, and by what. On the wire because
+    // a client cannot otherwise tell a document indexed with the current
+    // embedding model from one that needs a reindex — and mixing two embedding
+    // spaces in one search silently returns nonsense rather than failing.
+    chunksReady: row.chunksReady,
+    chunksTotal: row.chunksTotal,
+    embeddingModel: row.embeddingModel,
+    dims: row.dims,
     ...(cached === undefined ? {} : { cached }),
   };
 }

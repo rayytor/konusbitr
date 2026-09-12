@@ -160,6 +160,25 @@ export const DocumentViewSchema = z.object({
   folderId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /**
+   * How much of the document is retrievable yet.
+   *
+   * Chunks are counted as they land rather than at the end, so a 500-page
+   * document can be answered over while the tail of it is still embedding.
+   * Both are `null` until the chunker has run and knows the total.
+   */
+  chunksReady: z.number().int().nonnegative().nullable(),
+  chunksTotal: z.number().int().nonnegative().nullable(),
+  /**
+   * The model the stored vectors were produced by, and their width.
+   *
+   * On the wire because a client cannot otherwise tell a document indexed with
+   * the current embedding model from one that needs a `reindex` after the model
+   * changed — and mixing two embedding spaces in one search silently returns
+   * nonsense rather than failing.
+   */
+  embeddingModel: z.string().nullable(),
+  dims: z.number().int().positive().nullable(),
   /** True when this upload resolved to an existing parse rather than a new job. */
   cached: z.boolean().optional(),
 });

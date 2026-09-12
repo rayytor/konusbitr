@@ -1,11 +1,13 @@
-import { eq, sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type ChunkPage, EMBEDDING_DIMENSIONS } from '@konusbitr/shared';
+import { and, eq, sql } from 'drizzle-orm';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createDb } from '../../src/client.js';
 import { ID_PREFIXES, newId } from '../../src/id.js';
 import { migrate } from '../../src/migrate.js';
 import { globalParseResultByHashes } from '../../src/queries/documents.js';
 import * as schema from '../../src/schema/index.js';
 import { scopedDb } from '../../src/scoped.js';
+import { embeddingColumnDimensions, seedChunk } from '../../src/testing.js';
 
 /**
  * Phase 03 integration tests — run against a real Postgres with pgvector.
@@ -448,6 +450,90 @@ describe('parse results provenance and cross-tenant cascade', () => {
   });
 });
 
+// ─── Chunk shape (Phase 08) ────────────────────────────────────────────────
+
+describe('the chunks table', () => {
+  // Every case here writes chunks for the shared `docId`, and the HNSW block
+  // below writes its own at the same ordinals. Cleaning up in `afterEach`
+  // rather than at the end of each test is deliberate: a failing assertion
+  // would skip a trailing cleanup, and the next describe block would then fail
+  // for a reason that has nothing to do with it.
+  afterEach(async () => {
+    await db.delete(schema.chunks).where(eq(schema.chunks.documentId, docId));
+  });
+
+  it('declares the embedding column at the width the router promises', async () => {
+    // This number lives in three places: the DDL, `EMBEDDING_DIMENSIONS` in
+    // `@konusbitr/shared`, and whatever the configured model actually returns.
+    // A disagreement surfaces as an insert failing from inside a batch, so the
+    // two places this repository controls are pinned to each other here.
+    expect(await embeddingColumnDimensions(db)).toBe(EMBEDDING_DIMENSIONS);
+  });
+
+  it('refuses two chunks at the same ordinal in one document', async () => {
+    // The idempotency key for embedding. Without it a job re-delivered after a
+    // crash would append a second copy of every chunk it had already written.
+    await seedChunk(db, { documentId: docId, orgId, ordinal: 41 });
+
+    // The constraint name is read off the driver error rather than matched
+    // against the message: Drizzle wraps a failure as "Failed query: …" plus
+    // the SQL, so the message says nothing about which constraint refused it.
+    const failure = await seedChunk(db, { documentId: docId, orgId, ordinal: 41 }).catch(
+      (error: unknown) => error,
+    );
+    expect(constraintOf(failure)).toBe('chunks_document_ordinal_idx');
+  });
+
+  it('will not store a chunk with no location', async () => {
+    // A passage that cannot say where it came from cannot be cited, so the
+    // column is NOT NULL rather than conventionally populated.
+    const failure = await db
+      .execute(sql`
+        INSERT INTO chunks (id, document_id, org_id, ordinal, text, token_count)
+        VALUES ('chk_nowhere', ${docId}, ${orgId}, 99, 'nowhere', 3)
+      `)
+      .then(() => undefined)
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeDefined();
+    expect(columnOf(failure)).toBe('pages');
+  });
+
+  it('counts how much of a document is retrievable, and by what', async () => {
+    await seedChunk(db, { documentId: docId, orgId, ordinal: 0 });
+    await seedChunk(db, { documentId: docId, orgId, ordinal: 1 });
+    await db
+      .update(schema.chunks)
+      .set({ embedding: new Array(EMBEDDING_DIMENSIONS).fill(0.01) })
+      .where(and(eq(schema.chunks.documentId, docId), eq(schema.chunks.ordinal, 0)));
+
+    // Two numbers, because they answer different questions: `total` is how much
+    // is keyword-searchable and `embedded` how much is searchable by meaning —
+    // and on a stack with no embedding model the second is legitimately zero.
+    expect(await scopedDb(db, orgId).chunkCounts(docId)).toEqual({ total: 2, embedded: 1 });
+  });
+});
+
+/** The Postgres constraint an error came from, through Drizzle's wrapper. */
+function constraintOf(error: unknown): string | undefined {
+  return driverError(error)?.constraint_name;
+}
+
+/** The column a NOT NULL violation names. */
+function columnOf(error: unknown): string | undefined {
+  return driverError(error)?.column_name;
+}
+
+function driverError(
+  error: unknown,
+): { constraint_name?: string; column_name?: string } | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const cause = error.cause;
+  return cause instanceof Error
+    ? (cause as unknown as { constraint_name?: string; column_name?: string })
+    : undefined;
+}
+
 // ─── Vector search (HNSW) ───────────────────────────────────────────────────
 
 describe('HNSW vector index', () => {
@@ -462,32 +548,21 @@ describe('HNSW vector index', () => {
       return v;
     };
 
-    const values = [
-      {
-        id: newId(ID_PREFIXES.chunk),
-        documentId: docId,
-        orgId,
-        text: 'chunk near',
-        tokenCount: 2,
-        embedding: makeVec(0.1),
-      },
-      {
-        id: newId(ID_PREFIXES.chunk),
-        documentId: docId,
-        orgId,
-        text: 'chunk medium',
-        tokenCount: 2,
-        embedding: makeVec(0.5),
-      },
-      {
-        id: newId(ID_PREFIXES.chunk),
-        documentId: docId,
-        orgId,
-        text: 'chunk far',
-        tokenCount: 2,
-        embedding: makeVec(0.9),
-      },
-    ];
+    const values = ['chunk near', 'chunk medium', 'chunk far'].map((text, ordinal) => ({
+      id: newId(ID_PREFIXES.chunk),
+      documentId: docId,
+      orgId,
+      // A chunk always knows where it came from: `ordinal` is its place in the
+      // document and the key an embed upsert conflicts on, and `pages` is the
+      // location a citation is drawn from. Both are NOT NULL.
+      ordinal,
+      pages: [
+        { page: 1, bbox: [72, 72 + ordinal * 40, 540, 108 + ordinal * 40] as ChunkPage['bbox'] },
+      ],
+      text,
+      tokenCount: 2,
+      embedding: makeVec([0.1, 0.5, 0.9][ordinal] ?? 0.1),
+    }));
 
     for (const v of values) {
       chunkIds.push(v.id);

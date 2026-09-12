@@ -170,9 +170,12 @@ services:
 
   # ----------------------------------------------------------------- Worker --
   # The Python half of the pipeline: it consumes the `konusbitr:jobs` Redis
-  # stream, walks a document through the parse stages and publishes progress
-  # the browser reads over SSE. The parse itself is a stub until Phase 07; the
-  # seam around it is real.
+  # stream, walks a document from `queued` through parsing, chunking and
+  # embedding to `ready`, and publishes progress the browser reads over SSE.
+  #
+  # With no embedding model configured — which is the default `.env` — chunks
+  # are written without vectors and the documents are keyword-searchable; a
+  # `reindex` fills the vectors in once a model is named. See `.env.example`.
   #
   # The port is published so that an operator can curl /health and /ready. It
   # serves nothing else, and nothing in the app calls it.
@@ -243,7 +246,9 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2:3b}
-      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      # 1024-dimensional and multilingual, matching the width
+      # `chunks.embedding` is declared at. See `.env.example`.
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3}
     entrypoint: ['/bin/sh', '/pull-models.sh']
     volumes:
       - ./docker/ollama/pull-models.sh:/pull-models.sh:ro

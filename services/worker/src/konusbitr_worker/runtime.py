@@ -8,11 +8,12 @@ Success, permanent failure, and "parked for a retry" are all conclusions;
 "crashed halfway" is not, which is why the acknowledgement is the last thing
 that happens rather than the first.
 
-**Re-delivery is free.** Every write the pipeline makes is an upsert, and the
-handler short-circuits when the parse it was about to produce already exists.
-So a worker killed mid-job, restarted, and handed the same entry back finishes
-it without doubling anything — which is what "exactly once" can mean on a
-transport that only promises "at least once".
+**Re-delivery is free.** Every write the pipeline makes is an upsert, and each
+expensive stage short-circuits when what it was about to produce already
+exists: the parse when the docId cache holds it, the index when the document
+already has chunks. So a worker killed mid-job, restarted, and handed the same
+entry back finishes it without doubling anything — which is what "exactly once"
+can mean on a transport that only promises "at least once".
 
 **A terminal failure never burns a retry.** The classification, not the number
 of attempts, decides: a corrupt PDF is dead-lettered on attempt one, while a
@@ -30,7 +31,7 @@ from konusbitr_worker.db import Database
 from konusbitr_worker.errors import JobFailure, classify_exception
 from konusbitr_worker.log import get_logger, job_context
 from konusbitr_worker.parse.storage import ObjectStore
-from konusbitr_worker.pipeline import JobOutcome, run_parse
+from konusbitr_worker.pipeline import JobOutcome, run_job
 from konusbitr_worker.progress import ProgressReporter
 from konusbitr_worker.queue import Delivery, JobQueue, UndecodableEntry
 from konusbitr_worker.settings import Settings
@@ -254,7 +255,7 @@ class WorkerRuntime:
             job_id=payload.jobId,
             document_id=payload.documentId,
             page_count=outcome.page_count,
-            result={"reused": outcome.reused, "pages": outcome.page_count},
+            result=outcome.result(),
         )
         await progress.stage(
             JobStage.ready,
@@ -263,9 +264,20 @@ class WorkerRuntime:
         await self._queue.ack(delivery.entry_id)
         logger.info("job finished", extra={"reused": outcome.reused})
 
+    #: Job types the pipeline knows how to run.
+    #:
+    #: All three go to the same handler, which differs only in which
+    #: short-circuits it applies: `parse` does everything that is not already
+    #: done, `chunk_embed` skips the parse, and `reindex` re-chunks and
+    #: re-embeds unconditionally. `split` is still only vocabulary — it is in
+    #: the contract so both runtimes agree the word exists — and an unknown
+    #: type stays terminal rather than retrying three times to reach the same
+    #: dead-letter list.
+    _HANDLED = frozenset({JobType.parse, JobType.chunk_embed, JobType.reindex})
+
     async def _handle(self, payload: JobPayload, progress: ProgressReporter) -> JobOutcome:
-        if payload.type is JobType.parse:
-            return await run_parse(
+        if payload.type in self._HANDLED:
+            return await run_job(
                 payload,
                 database=self._database,
                 progress=progress,
@@ -273,10 +285,6 @@ class WorkerRuntime:
                 store=self._store,
             )
 
-        # `chunk_embed`, `split` and `reindex` are in the contract so that both
-        # runtimes agree on the vocabulary; the handlers arrive with the phases
-        # that need them. Until then an unknown type is terminal rather than a
-        # job that retries three times and then dead-letters anyway.
         raise JobFailure(
             JobErrorCode.unknown_job_type,
             f"This worker has no handler for {payload.type.value!r} jobs.",

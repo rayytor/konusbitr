@@ -23,6 +23,7 @@
     "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
   },
   "dependencies": {
+    "@konusbitr/shared": "workspace:*",
     "@paralleldrive/cuid2": "^2.3.0",
     "drizzle-orm": "^0.44.2",
     "postgres": "^3.4.7"
