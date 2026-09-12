@@ -8,9 +8,9 @@
 # `uv.lock` — the image can never resolve a version the repo has not pinned.
 # Builds on linux/amd64 and linux/arm64.
 #
-# Until Phase 06 this runs a placeholder loop: it validates its settings, keeps
-# a heartbeat for the healthcheck and idles. The image itself is real, so the
-# build, the non-root user and the env contract are all exercised from now on.
+# This runs the real job loop: a FastAPI app serving /health and /ready, with
+# the Redis-stream consumer started from its lifespan. The parse itself is a
+# stub until Phase 07; nothing about the image changes when that lands.
 
 ARG PYTHON_VERSION=3.12
 ARG UV_VERSION=0.12
@@ -49,6 +49,7 @@ RUN --mount=type=cache,id=uv-cache,target=/root/.cache/uv \
 FROM base AS runtime
 ENV PATH=/opt/venv/bin:$PATH \
     VIRTUAL_ENV=/opt/venv \
+    WORKER_PORT=8081 \
     KONUSBITR_WORKER_HEARTBEAT=/var/run/konusbitr/worker.heartbeat
 
 # A dedicated unprivileged user; the slim image has no equivalent of node's.
@@ -61,9 +62,14 @@ COPY --from=deps --chown=konusbitr:konusbitr /opt/venv /opt/venv
 USER konusbitr
 WORKDIR /home/konusbitr
 
-# The heartbeat is written by the run loop and read here, so an image that boots
-# but stops looping is reported unhealthy rather than merely "running".
-HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=6 \
+# Health and readiness only. Nothing in the app calls the worker.
+EXPOSE 8081
+
+# Probes the worker's own /health over loopback, which reports the job loop's
+# heartbeat as well as Redis connectivity — so an image that boots but stops
+# consuming is reported unhealthy rather than merely "running". Python's own
+# urllib does the request; the slim image ships no curl and does not need one.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
   CMD ["python", "-m", "konusbitr_worker.health"]
 
 CMD ["python", "-m", "konusbitr_worker"]
