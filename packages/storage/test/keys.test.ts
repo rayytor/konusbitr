@@ -14,7 +14,16 @@ describe('the key layout', () => {
   it('puts every artifact of a document under one prefix', () => {
     expect(documentPrefix(ORG, DOC)).toBe(`orgs/${ORG}/documents/${DOC}/`);
     expect(originalKey(ORG, DOC, 'pdf')).toBe(`orgs/${ORG}/documents/${DOC}/original.pdf`);
-    expect(pageThumbnailKey(ORG, DOC, 3)).toBe(`orgs/${ORG}/documents/${DOC}/pages/3.webp`);
+    expect(pageThumbnailKey(ORG, DOC, 3)).toBe(
+      `orgs/${ORG}/documents/${DOC}/thumbnails/00003.webp`,
+    );
+    // Zero-padded, so a lexical listing of the prefix is a page-order listing.
+    // The worker writes these keys and this function reads them, across a seam
+    // with no shared code — `services/worker/tests/test_thumbnails.py` asserts
+    // the same string from the other side.
+    expect(pageThumbnailKey(ORG, DOC, 10)).toBe(
+      `orgs/${ORG}/documents/${DOC}/thumbnails/00010.webp`,
+    );
     expect(documentImageKey(ORG, DOC, 1)).toBe(`orgs/${ORG}/documents/${DOC}/images/1.png`);
   });
 
