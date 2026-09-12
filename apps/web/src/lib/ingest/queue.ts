@@ -7,6 +7,7 @@ import {
   JobPayloadSchema,
   type JobProgress,
   JobProgressSchema,
+  type JobType,
 } from '@konusbitr/shared';
 import { redis } from '../redis';
 
@@ -28,20 +29,30 @@ import { redis } from '../redis';
  * acknowledges it, which is the whole of Phase 06's crash-recovery story.
  */
 
-export type EnqueueParseJob = Omit<JobPayload, 'v' | 'attempt' | 'enqueuedAt' | 'type'>;
+export type EnqueueJob = Omit<JobPayload, 'v' | 'attempt' | 'enqueuedAt' | 'type'>;
+
+/** @deprecated Kept as the name Phase 05 introduced; prefer {@link enqueueJob}. */
+export type EnqueueParseJob = EnqueueJob;
 
 /**
- * Append a parse job.
+ * Append a job of a given type.
+ *
+ * The envelope is identical for every type — the same document, the same bytes,
+ * the same settings — and only `type` says what the worker should do with it.
+ * That is deliberate: a `reindex` is not a different message, it is the same
+ * message with the parse short-circuit switched off, which is what makes
+ * "switch the embedding model and reindex" cost embeddings rather than a second
+ * pass over every PDF.
  *
  * Validated on the way out, not merely typed: this is the one place a payload
  * becomes bytes another language will parse, and a runtime check here turns
  * "the worker dead-letters everything and nobody knows why" into a 500 with a
  * stack trace pointing at the caller.
  */
-export async function enqueueParseJob(job: EnqueueParseJob): Promise<string> {
+export async function enqueueJob(type: JobType, job: EnqueueJob): Promise<string> {
   const payload = JobPayloadSchema.parse({
     v: JOB_PAYLOAD_VERSION,
-    type: 'parse',
+    type,
     attempt: 1,
     enqueuedAt: new Date().toISOString(),
     ...job,
@@ -60,6 +71,11 @@ export async function enqueueParseJob(job: EnqueueParseJob): Promise<string> {
     JOBS_STREAM_FIELD,
     JSON.stringify(payload),
   ) as Promise<string>;
+}
+
+/** Append a parse job — the intake path's only use of the queue. */
+export function enqueueParseJob(job: EnqueueJob): Promise<string> {
+  return enqueueJob('parse', job);
 }
 
 /**

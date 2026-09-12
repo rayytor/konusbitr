@@ -7,6 +7,7 @@ import {
   creditEntriesOf,
   ensureExtensions,
   jobsForDocument,
+  parseResultsForDocument,
   recordParseResult,
   seedChunk,
 } from '@konusbitr/db/testing';
@@ -46,6 +47,7 @@ let completeUpload: Handler;
 let documents: { GET: Handler; POST: Handler };
 let document: { GET: Handler; DELETE: Handler };
 let fromUrl: Handler;
+let reindex: Handler;
 
 /** An organization and a key that authenticates as it. */
 type Tenant = { orgId: string; token: string };
@@ -113,6 +115,7 @@ beforeAll(async () => {
     DELETE: Handler;
   };
   fromUrl = (await import('@/app/api/documents/from-url/route')).POST as Handler;
+  reindex = (await import('@/app/api/documents/[documentId]/reindex/route')).POST as Handler;
 
   alpha = await tenant('Alpha', 'alpha');
   beta = await tenant('Beta', 'beta');
@@ -491,6 +494,82 @@ describe('deleting a document', () => {
       params: { documentId: 'doc_clx1neverexisted' },
     });
 
+    expect(response.status).toBe(404);
+  });
+});
+
+// ─── Reindex ─────────────────────────────────────────────────────────────────
+
+describe('reindexing a document', () => {
+  it('queues a reindex job without touching the parse', async () => {
+    // The endpoint behind the criterion that switching EMBEDDING_MODEL between
+    // a cloud and a local model needs only env changes plus a reindex: the
+    // parse artifact is already keyed on the file's bytes and its settings, so
+    // the job the worker picks up skips Docling entirely.
+    const result = await upload(pdfWith('to be reindexed', 2));
+    const uploaded = result.body.document as DocumentView;
+
+    // Stand in for the worker having finished: the parse exists and the
+    // document is ready.
+    await recordParseResult(db, {
+      documentId: uploaded.id,
+      contentHash: (await scopedDb(db, alpha.orgId).documentById(uploaded.id))
+        ?.contentHash as string,
+      settingsHash: (await scopedDb(db, alpha.orgId).documentById(uploaded.id))
+        ?.settingsHash as string,
+      pageCount: 2,
+    });
+
+    const before = await queuedJobs();
+    const response = await call(reindex, {
+      method: 'POST',
+      as: alpha,
+      params: { documentId: uploaded.id },
+    });
+
+    // 202: accepted, not done. The browser follows it on the same SSE stream
+    // an upload uses rather than polling this endpoint.
+    expect(response.status).toBe(202);
+    const body = (await response.json()) as { jobId: string; documentId: string };
+    expect(body.documentId).toBe(uploaded.id);
+
+    expect(await queuedJobs()).toBe(before + 1);
+    const jobs = await jobsForDocument(db, uploaded.id);
+    expect(jobs.some((job) => job.type === 'reindex')).toBe(true);
+
+    // Still one parse result: a reindex is not a re-parse.
+    expect(await parseResultsForDocument(db, uploaded.id)).toHaveLength(1);
+  });
+
+  it('refuses a document that has not finished processing', async () => {
+    // A document with no artifact has nothing to index, and queueing a job
+    // that will fail on a cache miss is worse than saying so now.
+    const result = await upload(pdfWith('still queued'));
+    const pending = result.body.document as DocumentView;
+    expect(pending.status).toBe('queued');
+
+    const response = await call(reindex, {
+      method: 'POST',
+      as: alpha,
+      params: { documentId: pending.id },
+    });
+
+    expect(response.status).toBe(422);
+    expect((await response.json()).error.code).toBe('not_indexable_yet');
+  });
+
+  it('is 404 for another organization, not 403', async () => {
+    const result = await upload(pdfWith('alpha only'), { as: alpha });
+    const mine = result.body.document as DocumentView;
+
+    const response = await call(reindex, {
+      method: 'POST',
+      as: beta,
+      params: { documentId: mine.id },
+    });
+
+    // A 403 would confirm the id exists. An attacker enumerating ids must
+    // learn nothing from the difference.
     expect(response.status).toBe(404);
   });
 });

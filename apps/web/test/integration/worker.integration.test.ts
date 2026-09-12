@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createDb, type Database, migrate, scopedDb } from '@konusbitr/db';
 import {
+  chunksForDocument,
   createOrganization,
   ensureExtensions,
   pagesForDocument,
@@ -68,6 +69,7 @@ let orgId: string;
 let apiKey: string;
 
 let enqueueParseJob: typeof import('@/lib/ingest/queue').enqueueParseJob;
+let enqueueJob: typeof import('@/lib/ingest/queue').enqueueJob;
 let events: (
   request: Request,
   context: { params: Promise<{ documentId: string }> },
@@ -130,6 +132,7 @@ beforeAll(async () => {
   // Imported only now: these modules read the environment as they load, which
   // is the same "fail loudly at boot" behaviour the server has.
   enqueueParseJob = (await import('@/lib/ingest/queue')).enqueueParseJob;
+  enqueueJob = (await import('@/lib/ingest/queue')).enqueueJob;
   events = (await import('@/app/api/documents/[documentId]/events/route')).GET as typeof events;
   failedJobs = (await import('@/app/api/admin/jobs/failed/route')).GET as typeof failedJobs;
 
@@ -522,6 +525,107 @@ describe('a document goes from queued to ready', () => {
       'the pending-entries list to drain',
     );
     expect(await pendingCount()).toBe(0);
+  });
+});
+
+describe('chunking and embedding', () => {
+  it('writes located chunks, and every one of them can be cited', async () => {
+    const fixture = await queuedDocument(3);
+    await enqueue(fixture);
+    await waitForStatus(fixture.document.id, 'ready');
+
+    const chunks = await chunksForDocument(db, fixture.document.id);
+    expect(chunks.length).toBeGreaterThan(0);
+
+    for (const chunk of chunks) {
+      // The load-bearing property of the whole phase: a passage that cannot
+      // say where it came from cannot be cited, and an uncitable answer is the
+      // failure this product exists to prevent.
+      expect(chunk.pages.length).toBeGreaterThan(0);
+      for (const entry of chunk.pages) {
+        expect(entry.page).toBeGreaterThanOrEqual(1);
+        const [x0, y0, x1, y1] = entry.bbox;
+        expect(x0).toBeLessThanOrEqual(x1);
+        expect(y0).toBeLessThanOrEqual(y1);
+      }
+      expect(chunk.tokenCount).toBeGreaterThan(0);
+      expect(chunk.orgId).toBe(orgId);
+    }
+
+    // Ordinals are dense from zero: they are the upsert key, and a gap would
+    // mean a re-run left stale rows behind.
+    expect(chunks.map((chunk) => chunk.ordinal).toSorted((a, b) => a - b)).toEqual(
+      chunks.map((_chunk, index) => index),
+    );
+
+    // No embedding model is configured in this test's environment, which is a
+    // supported state rather than a failure: the passages are stored and
+    // keyword-searchable, and a reindex fills the vectors in.
+    expect(chunks.every((chunk) => chunk.embedding === null)).toBe(true);
+
+    const row = await documentRow(fixture.document.id);
+    expect(row.chunksTotal).toBe(chunks.length);
+    expect(row.chunksReady).toBe(0);
+    expect(row.embeddingModel).toBeNull();
+  });
+
+  it('does not duplicate chunks when the same job is delivered again', async () => {
+    const fixture = await queuedDocument(2);
+    await enqueue(fixture);
+    await waitForStatus(fixture.document.id, 'ready');
+    const first = await chunksForDocument(db, fixture.document.id);
+
+    // The same entry again, exactly as a crash-and-reclaim would deliver it.
+    await enqueue(fixture);
+    await waitFor(
+      async () => (await pendingCount()) === 0,
+      30_000,
+      'the redelivered job to conclude',
+    );
+
+    const second = await chunksForDocument(db, fixture.document.id);
+    expect(second).toHaveLength(first.length);
+    expect(second.map((chunk) => chunk.ordinal).toSorted()).toEqual(
+      first.map((chunk) => chunk.ordinal).toSorted(),
+    );
+  });
+
+  it('reindexes from the cached parse without re-running the parser', async () => {
+    const fixture = await queuedDocument(2);
+    await enqueue(fixture);
+    await waitForStatus(fixture.document.id, 'ready');
+    const before = await chunksForDocument(db, fixture.document.id);
+
+    const scoped = scopedDb(db, orgId);
+    const job = await scoped.createJob({ documentId: fixture.document.id, type: 'reindex' });
+    if (!job) throw new Error('the reindex job row could not be created');
+
+    await enqueueJob('reindex', {
+      jobId: job.id,
+      orgId,
+      documentId: fixture.document.id,
+      storageKey: fixture.document.storageKey,
+      contentHash: fixture.document.contentHash,
+      settings: { quality: 'standard', langList: [], llm: false },
+    });
+
+    await waitFor(
+      async () => {
+        const row = await scoped.jobs();
+        return row.some((entry) => entry.id === job.id && entry.status === 'succeeded');
+      },
+      60_000,
+      'the reindex job to succeed',
+    );
+
+    // Still exactly one parse result, because a reindex never re-parses — that
+    // is the whole reason the docId cache is architecture rather than an
+    // optimisation.
+    expect(await parseResultsForDocument(db, fixture.document.id)).toHaveLength(1);
+
+    // And the index was rebuilt rather than appended to.
+    const after = await chunksForDocument(db, fixture.document.id);
+    expect(after).toHaveLength(before.length);
   });
 });
 
