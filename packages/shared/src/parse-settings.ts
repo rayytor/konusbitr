@@ -45,3 +45,28 @@ export function canonicalizeParseSettings(settings: ParseSettings): ParseSetting
     llm: settings.llm,
   };
 }
+
+/**
+ * The exact string that gets hashed into `settings_hash`.
+ *
+ * Half of the docId cache key is `sha256` of this, so its bytes are a contract:
+ * every runtime that computes a settings hash — the TypeScript intake path
+ * today, the Python worker when it verifies one — must produce this string
+ * character for character. Hence the explicit key order and the absence of any
+ * whitespace, rather than a `JSON.stringify` of whatever shape happened to be
+ * in hand.
+ *
+ * The hashing itself lives with the code that has a crypto implementation;
+ * this package stays free of Node built-ins so it can be imported anywhere.
+ */
+export function parseSettingsHashInput(settings: ParseSettings): string {
+  const canonical = canonicalizeParseSettings(settings);
+  // Keys in lexicographic order, which is what "canonical JSON" means here and
+  // what a Python `json.dumps(..., sort_keys=True, separators=(",", ":"))`
+  // produces for the same object.
+  return JSON.stringify({
+    langList: canonical.langList,
+    llm: canonical.llm,
+    quality: canonical.quality,
+  });
+}

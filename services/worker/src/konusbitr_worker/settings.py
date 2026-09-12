@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     s3_secret_access_key: str
     s3_force_path_style: bool = False
 
+    # Ingest limits. The worker re-checks them because a job payload arrives
+    # from a queue, not from the endpoint that first validated the upload.
+    max_upload_bytes: int = 500 * 1024 * 1024
+    max_pages: int = 0
+    allow_global_parse_cache: bool = False
+
     llm_provider: LlmProvider = "openai"
     llm_api_key: str | None = None
     llm_chat_model: str | None = None
@@ -156,6 +162,20 @@ class Settings(BaseSettings):
         value = value.strip()
         if not value:
             raise ValueError("must not be empty")
+        return value
+
+    @field_validator("max_upload_bytes")
+    @classmethod
+    def _check_positive(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("must be a positive number of bytes")
+        return value
+
+    @field_validator("max_pages")
+    @classmethod
+    def _check_non_negative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("must be zero (unlimited) or a positive page count")
         return value
 
 

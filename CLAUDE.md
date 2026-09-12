@@ -4,11 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–04 are done; Phase 05 is next.** `cp .env.example .env &&
+**Phases 01–05 are done; Phase 06 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole backing stack, and the repo installs,
 builds, lints, typechecks and tests on both runtimes. The database schema is
-complete, and every request into the app resolves to an authenticated
-principal scoped to one organization. What exists:
+complete, every request into the app resolves to an authenticated principal
+scoped to one organization, and documents can be uploaded (direct-to-storage
+presigned PUTs), imported from URLs (with SSRF protection), listed, read, and
+deleted. The docId cache is live: re-uploading the same file returns the same
+document in milliseconds with zero cost and no job. What exists:
 
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
   (bucket and dev access key created automatically), a `migrate` one-shot that
@@ -20,21 +23,38 @@ principal scoped to one organization. What exists:
   Google and GitHub, and the organization plugin. `src/lib/auth/` owns the
   `AuthContext` resolver and the `withAuth` wrapper every protected route goes
   through; `/login`, `/signup`, `/accept-invitation/:id`, `/settings/api-keys`
-  and `/settings/members` are the surfaces built on it. Standalone output for
-  the container; env validated at boot from `src/instrumentation.ts`. No
-  uploads or documents yet (Phase 05).
-- `packages/shared` — the four seed Zod contracts (`Citation`,
-  `DocumentStatus`, `ParseSettings`, `JobProgress`) plus `env.ts`, the
-  TypeScript half of the environment contract.
+  and `/settings/members` are the Phase 04 surfaces. Phase 05 adds the intake
+  API (`/api/uploads/presign`, `/api/uploads/complete`, `/api/documents`,
+  `/api/documents/:id`, `/api/documents/from-url`) and a minimal library page
+  (`/library`) with drag-and-drop upload, URL import, status badges, and
+  deletion. `src/lib/ingest/` owns the intake pipeline: SSRF guard, PDF
+  validation (magic bytes, encryption, bomb detection), streaming SHA-256
+  hashing, and the docId cache resolver. `src/lib/upload-client.ts` is the
+  browser-side uploader (XHR direct-to-storage, multipart above 16MiB,
+  progress events). Standalone output for the container; env validated at boot
+  from `src/instrumentation.ts`. No parsing or chat yet (Phase 06+).
+- `packages/storage` — the S3-compatible object store client (AWS SDK v3).
+  `presignPut`, `presignGet`, `head`, `delete`, `deletePrefix`, `streamGet`,
+  `uploadStream`, `presignMultipart`, `completeMultipart`, `abortMultipart`.
+  Key layout: `orgs/{orgId}/documents/{docId}/original.{ext}` — keys are
+  derived from generated ids, never from user input. Unit and Testcontainers
+  integration-tested against real MinIO.
+- `packages/shared` — the Zod contracts (`Citation`, `DocumentStatus`,
+  `ParseSettings`, `JobProgress`) plus `upload.ts` (intake request/response
+  schemas, MIME allowlist, filename sanitization) and `env.ts`, the TypeScript
+  half of the environment contract.
 - `services/worker` — a Python 3.12 package under uv, pytest and ruff green.
   `settings.py` is the pydantic-settings half of the same contract; `__main__`
   validates it, heartbeats for the container healthcheck and idles. No FastAPI
   or arq yet (Phase 06).
 - `packages/db` — the complete Drizzle schema (17 tables, auth included),
-  migrations, the `scopedDb(orgId)` multi-tenancy helper, `newId(prefix)`,
-  the migration runner (`pnpm db:migrate`) and the seed script
-  (`pnpm db:seed`). Integration-tested with Testcontainers against real
-  Postgres with pgvector.
+  migrations, the `scopedDb(orgId)` multi-tenancy helper with document CRUD
+  queries (`listDocuments`, `documentById`, `documentByHashes`,
+  `createDocument`, `deleteDocument`), `newId(prefix)`, the migration runner
+  (`pnpm db:migrate`) and the seed script (`pnpm db:seed`).
+  `packages/db/src/queries/documents.ts` has the unscoped
+  `globalParseResultByHashes` for `ALLOW_GLOBAL_PARSE_CACHE`. Integration-tested
+  with Testcontainers against real Postgres with pgvector.
 - `packages/sdk`, `apps/extension`, `docs/` — placeholders whose
   READMEs name the phase that fills them in.
 

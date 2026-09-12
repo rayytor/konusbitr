@@ -29,6 +29,8 @@ export const ID_PREFIXES = {
   apiKey: 'key',
   folder: 'fld',
   document: 'doc',
+  /** Not a table: the Redis-backed ticket that links a presigned PUT to a document. */
+  upload: 'up',
   parseResult: 'prs',
   page: 'pag',
   chunk: 'chk',

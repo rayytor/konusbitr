@@ -14,8 +14,11 @@ allowBuilds:
   ssh2: true
   unrs-resolver: true
 
-# New releases are held back for a day as a supply-chain speed bump. These two
-# were wanted before the window elapsed and were reviewed.
+# New releases are held back for a day as a supply-chain speed bump. Everything
+# below was wanted before the window elapsed and was reviewed.
 minimumReleaseAgeExclude:
   - lucide-react@1.45.0
   - zod@4.6.2
+  - '@aws-sdk/client-s3@3.1131.0'
+  - '@aws-sdk/s3-request-presigner@3.1131.0'
+  - '@aws-sdk/lib-storage@3.1131.0'
