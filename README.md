@@ -6,10 +6,17 @@ citations** — then drive the whole thing through a PDF.ai-wire-compatible `/v2
 REST API.
 
 > **Status: early.** This repository is being built phase by phase (see
-> [`phases/`](./phases)). Phases 01–02 lay the monorepo foundation and the
-> one-command local stack; the product itself ships at Phase 11.
+> [`phases/`](./phases)). **Phase 06** (Python worker service and the job contract) is complete. The monorepo foundation, local infrastructure, database schema, auth, ingest, and Python worker service are established. We are currently moving towards Phase 07 (Parse Pipeline v1). The product itself ships at Phase 11.
 
-## Why two runtimes
+## Features
+
+- **Page-Accurate Citations**: Get answers backed by verified, clickable citations pointing to the exact page and location in your document.
+- **REST API**: A `/v2` API compatible with PDF.ai allows seamless integration into your existing workflows.
+- **Fully Offline Mode**: Self-host everything, including the LLMs. Use local models via Ollama to ensure complete data privacy.
+- **Two-Runtime Architecture**: Built with TypeScript for the product surface and Python for the heavy-lifting document processing pipeline.
+- **Robust Ingestion**: Supports complex documents using state-of-the-art Python libraries for parsing and OCR.
+
+## Architecture: Why Two Runtimes?
 
 TypeScript owns the product surface — the web app, the API, auth, billing —
 because the streaming-chat-UI ecosystem lives there. Python owns the document
@@ -112,7 +119,7 @@ cd services/worker && uv sync && uv run pytest
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) first — especially the section on the
 two-runtime boundary, which is the one architectural rule that is not negotiable.
 
-## Licence
+## License
 
 [Apache-2.0](./LICENSE). The default build is kept cleanly Apache-2.0
 compatible; AGPL and commercially restricted dependencies live only behind the
