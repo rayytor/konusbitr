@@ -301,8 +301,9 @@ class Database:
         re-delivered job must be a no-op, which is the point of this phase. And
         the unique key is `(content_hash, settings_hash)` with no organization
         in it — so the row that is already there may belong to a *different*
-        tenant's document, and overwriting its `document_id` would silently
-        take their parse away from them.
+        tenant's document, and overwriting its `document_id` would mutate
+        provenance. `document_id` records initial provenance with ON DELETE
+        SET NULL, decoupling cache longevity from the document that produced it.
         """
         await self._pool.execute(
             """

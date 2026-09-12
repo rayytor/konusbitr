@@ -16,6 +16,11 @@ import { documents } from './documents.js';
  * The `UNIQUE (content_hash, settings_hash)` constraint is the single biggest
  * cost lever in the product: a repeat upload with the same file and parse
  * settings returns `ready` in milliseconds with zero credits and no job.
+ *
+ * `document_id` records initial provenance (which upload first produced the
+ * parse), not ownership. The row is a cache entry keyed on hashes across tenants;
+ * when that first document is deleted, `document_id` is set to NULL rather than
+ * cascading, preserving the cache entry for any other documents that share it.
  */
 export const parseResults = pgTable(
   'parse_results',
@@ -23,9 +28,7 @@ export const parseResults = pgTable(
     id: text('id')
       .primaryKey()
       .$defaultFn(() => newId(ID_PREFIXES.parseResult)),
-    documentId: text('document_id')
-      .notNull()
-      .references(() => documents.id, { onDelete: 'cascade' }),
+    documentId: text('document_id').references(() => documents.id, { onDelete: 'set null' }),
     contentHash: text('content_hash').notNull(),
     settingsHash: text('settings_hash').notNull(),
     quality: text('quality').notNull().default('standard'),

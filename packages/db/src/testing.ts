@@ -66,20 +66,27 @@ export async function createOrganization(db: Database, name: string, slug: strin
  */
 export async function recordParseResult(
   db: Database,
-  input: { documentId: string; contentHash: string; settingsHash: string; pageCount?: number },
+  input: {
+    documentId?: string | null;
+    contentHash: string;
+    settingsHash: string;
+    pageCount?: number;
+  },
 ) {
   await db.insert(schema.parseResults).values({
-    documentId: input.documentId,
+    documentId: input.documentId ?? null,
     contentHash: input.contentHash,
     settingsHash: input.settingsHash,
     pageCount: input.pageCount ?? 1,
     markdown: '# parsed',
   });
 
-  await db
-    .update(schema.documents)
-    .set({ status: 'ready', pageCount: input.pageCount ?? 1 })
-    .where(eq(schema.documents.id, input.documentId));
+  if (input.documentId) {
+    await db
+      .update(schema.documents)
+      .set({ status: 'ready', pageCount: input.pageCount ?? 1 })
+      .where(eq(schema.documents.id, input.documentId));
+  }
 }
 
 /** Every job recorded for a document, so a test can assert none was created. */
