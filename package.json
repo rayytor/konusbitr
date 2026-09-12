@@ -17,6 +17,7 @@
     "dev:infra": "./scripts/infra.sh up",
     "infra:up": "./scripts/infra.sh up",
     "infra:stack": "./scripts/infra.sh stack",
+    "infra:migrate": "./scripts/infra.sh migrate",
     "infra:down": "./scripts/infra.sh down",
     "infra:reset": "./scripts/infra.sh reset",
     "infra:logs": "./scripts/infra.sh logs",

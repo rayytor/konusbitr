@@ -7,6 +7,7 @@ images it builds and the scripts that bootstrap the backing services.
 ```
 web.Dockerfile              Next.js, multi-stage, standalone output, non-root
 worker.Dockerfile           Python 3.12 + uv, non-root
+migrate.Dockerfile          one-shot schema migrator, non-root
 postgres/initdb/            extensions enabled on first boot
 minio/init.sh               bucket + unprivileged access key
 ollama/pull-models.sh       chat + embedding model for the local-llm profile
@@ -20,6 +21,7 @@ ollama/pull-models.sh       chat + embedding model for the local-llm profile
 | `redis` | `redis:7-alpine` | Job queue, progress pub/sub, rate-limit counters. AOF on |
 | `minio` | `minio/minio` | S3-compatible blob storage; console on 9001 |
 | `minio-init` | `minio/mc` | One-shot: creates the bucket and a dev access key, then exits |
+| `migrate` | `docker/migrate.Dockerfile` | One-shot: applies pending Drizzle migrations, then exits |
 | `web` | `docker/web.Dockerfile` | The Next.js app on 3000 |
 | `worker` | `docker/worker.Dockerfile` | The Python pipeline |
 | `ollama` | `ollama/ollama` | Profile `local-llm` only; serves on 11434 |
@@ -27,7 +29,7 @@ ollama/pull-models.sh       chat + embedding model for the local-llm profile
 
 ### Profiles
 
-- **default** — postgres, redis, minio, minio-init, web, worker.
+- **default** — postgres, redis, minio, minio-init, migrate, web, worker.
 - **`local-llm`** — adds Ollama and pulls a chat and an embedding model, which
   is what turns `OFFLINE_MODE=true` into a claim the project can stand behind.
 - **`advanced`** — reserved for the AGPL / commercially-restricted parser extras
@@ -48,7 +50,7 @@ docker compose up
 because hot reload and a debugger both want the process on the host:
 
 ```bash
-pnpm dev:infra   # postgres, redis, minio
+pnpm dev:infra   # postgres, redis, minio, migrated
 pnpm dev         # the same, plus native web and native worker
 ```
 
@@ -80,6 +82,15 @@ a lockfile change, then ships Next.js standalone output: the runtime image has n
 pnpm, no sources and no `node_modules` beyond what Next traced as reachable.
 `outputFileTracingRoot` in `apps/web/next.config.ts` points at the monorepo root,
 which is why the standalone tree is nested under `apps/web/`.
+
+`migrate.Dockerfile` exists so that neither of the other two has to. The web
+runtime carries only standalone output — no sources, no TypeScript loader and no
+SQL files — so migrating from its entrypoint would mean giving it all three; and
+a migration that runs from an app container races the second replica of that app
+container. A one-shot that `web` and `worker` both wait on with
+`service_completed_successfully` has neither problem. It installs only
+`@konusbitr/db` and its production dependencies, so it builds in seconds even
+though the web image takes minutes.
 
 `worker.Dockerfile` installs strictly from `uv.lock` with `--no-editable`, so the
 virtualenv it copies into the runtime stage is self-contained rather than
