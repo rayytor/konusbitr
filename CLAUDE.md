@@ -4,19 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–03 are done; Phase 04 is next.** `cp .env.example .env &&
+**Phases 01–04 are done; Phase 05 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole backing stack, and the repo installs,
 builds, lints, typechecks and tests on both runtimes. The database schema is
-complete with 13 tables, pgvector, full-text search, and the docId cache
-constraint. What exists:
+complete, and every request into the app resolves to an authenticated
+principal scoped to one organization. What exists:
 
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
   (bucket and dev access key created automatically), the web image and the
   worker image, plus the `local-llm` profile for Ollama. `advanced` is declared
   and deliberately empty until Phase 12.
-- `apps/web` — Next.js 15 with the sepia theme tokens, a placeholder `/` and
-  `GET /api/health`. Standalone output for the container; env validated at boot
-  from `src/instrumentation.ts`. No auth, no database.
+- `apps/web` — Next.js 15 with the sepia theme tokens. Better Auth on the
+  Phase 03 tables: email + password with verification, magic links, optional
+  Google and GitHub, and the organization plugin. `src/lib/auth/` owns the
+  `AuthContext` resolver and the `withAuth` wrapper every protected route goes
+  through; `/login`, `/signup`, `/accept-invitation/:id`, `/settings/api-keys`
+  and `/settings/members` are the surfaces built on it. Standalone output for
+  the container; env validated at boot from `src/instrumentation.ts`. No
+  uploads or documents yet (Phase 05).
 - `packages/shared` — the four seed Zod contracts (`Citation`,
   `DocumentStatus`, `ParseSettings`, `JobProgress`) plus `env.ts`, the
   TypeScript half of the environment contract.
@@ -24,10 +29,11 @@ constraint. What exists:
   `settings.py` is the pydantic-settings half of the same contract; `__main__`
   validates it, heartbeats for the container healthcheck and idles. No FastAPI
   or arq yet (Phase 06).
-- `packages/db` — the complete Drizzle schema (13 tables), migrations,
-  `scopedDb(orgId)` multi-tenancy helper, `newId(prefix)` ID generator,
-  migration runner (`pnpm db:migrate`) and seed script (`pnpm db:seed`).
-  Integration-tested with Testcontainers against real Postgres with pgvector.
+- `packages/db` — the complete Drizzle schema (17 tables, auth included),
+  migrations, the `scopedDb(orgId)` multi-tenancy helper, `newId(prefix)`,
+  the migration runner (`pnpm db:migrate`) and the seed script
+  (`pnpm db:seed`). Integration-tested with Testcontainers against real
+  Postgres with pgvector.
 - `packages/sdk`, `apps/extension`, `docs/` — placeholders whose
   READMEs name the phase that fills them in.
 
@@ -126,7 +132,23 @@ These cut across many files; violating one breaks the product rather than one fe
   accuracy ≥ 98% (≥ 95% on scans).
 - **Tenancy:** `org_id` is denormalized onto `chunks` so retrieval never joins to
   filter. Every query path goes through `scopedDb(orgId)`; every route through
-  `withAuth`. Both are backed by tests that fail when a new route or query bypasses them.
+  `withAuth`. Both are backed by tests that fail when a new route or query
+  bypasses them — `apps/web/test/auth/protected-routes.test.ts` walks
+  `src/app/api` on the filesystem, so adding an unwrapped route turns it red.
+  The handful of queries that genuinely cannot be scoped (authenticating an API
+  key discovers the org rather than asserting it) live together in
+  `packages/db/src/queries/`.
+- **Auth is Better Auth, mapped onto our tables, not its own.** `user` →
+  `users`, `member` → `memberships`, the organization plugin's
+  `organizationId` → our `org_id`. The Drizzle adapter resolves those names by
+  *string* at runtime, so a mismatch typechecks cleanly and fails at sign-in —
+  which is why `apps/web/test/integration/auth.integration.test.ts` runs a real
+  instance against real Postgres and Redis.
+- **`NODE_ENV` never decides security behaviour; `APP_URL` does.** Whether
+  cookies get `Secure`, and whether the development `AUTH_SECRET` is tolerated,
+  follow the origin. The Compose web container is a production Next.js build
+  serving plain HTTP on localhost, and a browser silently discards a
+  `__Secure-` cookie that did not arrive over HTTPS.
 - **All model calls go through the LiteLLM router.** Never import a provider SDK
   directly. Roles (`chat`, `embedding`, `rerank`, `vision`) are configured
   independently. `OFFLINE_MODE=true` must make any non-local endpoint raise
@@ -147,22 +169,28 @@ These cut across many files; violating one breaks the product rather than one fe
 
 ## Commands
 
-Everything above `pnpm codegen` exists as of Phase 02; the rest are created by
-Phase 03 and later. Implement them with exactly these names, because every later
+Everything above `pnpm codegen` exists as of Phase 04; the rest are created by
+Phase 08 and later. Implement them with exactly these names, because every later
 phase assumes them.
+
+`pnpm db:migrate` does *not* yet run on container start — Phase 03 promised
+that and it is still outstanding, so a fresh `docker compose up` needs one
+`pnpm db:migrate` against the stack before anyone can sign up.
 
 Node 22.13+ and pnpm 11 are required; `uv` fetches its own Python 3.12.
 
 ```bash
 pnpm install
 pnpm turbo build lint typecheck test     # the standard gate
+pnpm test:integration                    # Testcontainers: schema + auth; needs Docker
 pnpm --filter @konusbitr/web dev
 pnpm dev:infra                           # compose up backing services only (native hot reload)
 pnpm dev                                 # infra + native web + native worker
 pnpm infra:down                          # stop containers; infra:reset also drops volumes
 pnpm infra:logs / infra:ps / infra:psql  # same set exists as `make` targets
 pnpm codegen                             # Zod → pydantic; must be a no-op on a clean tree
-pnpm db:migrate                          # idempotent; runs on container start
+pnpm db:migrate                          # idempotent
+pnpm --filter @konusbitr/db db:generate  # regenerate a migration after a schema edit
 pnpm db:seed
 pnpm eval:retrieval                      # recall@8, MRR, context precision
 pnpm eval:chat                           # Ragas + citation accuracy

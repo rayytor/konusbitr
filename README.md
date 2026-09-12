@@ -29,7 +29,7 @@ generated from them.
 | `apps/extension` | WXT Chrome extension (Phase 15) |
 | `services/worker` | Python 3.12, FastAPI + arq, package `konusbitr_worker` |
 | `packages/shared` | Zod schemas and types — the cross-boundary source of truth |
-| `packages/db` | Drizzle schema, migrations, scoped client (Phase 03) |
+| `packages/db` | Drizzle schema, migrations, scoped client |
 | `packages/sdk` | Generated TypeScript client (Phase 13) |
 | `packages/tsconfig` | Shared strict TypeScript configuration |
 | `docker/` | Dockerfiles and the scripts that bootstrap the stack |
@@ -56,7 +56,25 @@ Add `--profile local-llm` for Ollama on `:11434` with a chat and an embedding
 model pre-pulled — the fully-offline mode that a hosted service cannot offer.
 
 The credentials in `.env.example` are development defaults. Change every one of
-them before exposing Konusbitr to a network.
+them before exposing Konusbitr to a network — `AUTH_SECRET` in particular, which
+the app refuses to start with as soon as `APP_URL` stops being localhost.
+
+### Signing in
+
+Run the migrations once against the running stack, then create an account at
+`http://localhost:3000/signup`:
+
+```bash
+pnpm db:migrate
+```
+
+Email and password and magic links both work with no further configuration;
+Google and GitHub appear on the login page only when you set their client id and
+secret.
+
+Mail is optional. With `SMTP_URL` unset, verification and magic-link messages
+are written to the web server's log with their links intact, so
+`docker compose logs web` is where you confirm your first account.
 
 ### Developing: backing services in Docker, code on the host
 

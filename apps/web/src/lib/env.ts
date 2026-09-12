@@ -17,10 +17,52 @@ import { z } from 'zod';
 
 /**
  * The value `.env.example` ships so that `cp .env.example .env && docker
- * compose up` needs no further edits. It is fine on a laptop and catastrophic
- * on the internet, so production refuses to start with it.
+ * compose up` needs no further edits. Fine on a laptop, catastrophic on the
+ * internet — see {@link isLoopbackOrigin}.
  */
 export const DEVELOPMENT_AUTH_SECRET = 'konusbitr-development-secret-change-me';
+
+/**
+ * Whether the app is served over TLS.
+ *
+ * This decides whether session cookies get the `Secure` attribute and the
+ * `__Secure-` name prefix. It has to follow the *origin*, not `NODE_ENV`: the
+ * Compose web container runs with `NODE_ENV=production` and serves plain HTTP
+ * on localhost, and a browser silently discards a `__Secure-` cookie that did
+ * not arrive over HTTPS — which would make `docker compose up` produce a login
+ * page nobody can log in to.
+ */
+
+/**
+ * Whether the app is only reachable from the machine it runs on.
+ *
+ * This, rather than `NODE_ENV`, is what decides whether the shipped
+ * development secret is acceptable. The Compose stack runs the web container
+ * with `NODE_ENV=production` — that is how Next.js is meant to be served, and
+ * it says nothing about who can reach the app. `APP_URL` does: a self-hoster
+ * who has pointed a domain at Konusbitr has told us so by setting it.
+ */
+export function isSecureOrigin(appUrl: string): boolean {
+  try {
+    return new URL(appUrl).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function isLoopbackOrigin(appUrl: string): boolean {
+  try {
+    const { hostname } = new URL(appUrl);
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '[::1]' ||
+      hostname === '::1'
+    );
+  } catch {
+    return false;
+  }
+}
 
 const nonEmpty = z.string().trim().min(1);
 
@@ -58,12 +100,12 @@ export const WebEnvSchema = EnvSchema.extend({
   SMTP_URL: nonEmpty.optional(),
   EMAIL_FROM: z.string().trim().min(3).default('Konusbitr <no-reply@localhost>'),
 }).superRefine((value, ctx) => {
-  if (value.NODE_ENV === 'production' && value.AUTH_SECRET === DEVELOPMENT_AUTH_SECRET) {
+  if (value.AUTH_SECRET === DEVELOPMENT_AUTH_SECRET && !isLoopbackOrigin(value.APP_URL)) {
     ctx.addIssue({
       code: 'custom',
       path: ['AUTH_SECRET'],
       message:
-        'is still the development value from .env.example — generate a real one with `openssl rand -base64 32`',
+        'is still the development value from .env.example, and APP_URL is not localhost — generate a real one with `openssl rand -base64 32`',
     });
   }
 
