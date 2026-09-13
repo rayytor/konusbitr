@@ -15,10 +15,14 @@
     "test:integration": "vitest run -c vitest.config.integration.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.127",
+    "@konusbitr/ai": "workspace:*",
     "@konusbitr/db": "workspace:*",
+    "@konusbitr/retrieval": "workspace:*",
     "@konusbitr/shared": "workspace:*",
     "@konusbitr/storage": "workspace:*",
     "@radix-ui/react-slot": "^1.3.3",
+    "ai": "^5.0.257",
     "better-auth": "^1.7.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
