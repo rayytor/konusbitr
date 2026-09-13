@@ -9,11 +9,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "eval:retrieval": "tsx src/eval-retrieval.ts",
+    "eval:chat": "tsx src/eval-chat.ts",
     "benchmark:retrieval": "tsx src/benchmark-latency.ts",
     "golden:generate": "tsx generate-golden.ts",
     "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
   },
   "dependencies": {
+    "@konusbitr/ai": "workspace:*",
     "@konusbitr/db": "workspace:*",
     "@konusbitr/retrieval": "workspace:*",
     "@konusbitr/shared": "workspace:*"

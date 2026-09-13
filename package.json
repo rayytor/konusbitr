@@ -29,7 +29,9 @@
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "eval:retrieval": "pnpm --filter @konusbitr/evals eval:retrieval",
+    "eval:chat": "pnpm --filter @konusbitr/evals eval:chat",
     "benchmark:retrieval": "pnpm --filter @konusbitr/evals benchmark:retrieval",
+
     "db:migrate": "pnpm --filter @konusbitr/db db:migrate",
     "db:seed": "pnpm --filter @konusbitr/db db:seed",
     "codegen": "./scripts/codegen.sh",

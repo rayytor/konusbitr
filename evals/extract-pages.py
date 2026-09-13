@@ -33,7 +33,9 @@ DOCUMENTS = (
     "tables-financial",
     "two-column-paper",
     "rotated-a4",
+    "adversarial-injection",
 )
+
 
 
 def extract(name: str) -> list[dict[str, object]]:
