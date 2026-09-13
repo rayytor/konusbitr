@@ -111,6 +111,29 @@ jobs:
       - name: Integration tests
         run: pnpm turbo run test:integration
 
+      # The retrieval gate. It starts its own Postgres through Testcontainers,
+      # indexes the fixture corpus and runs the real `retrieve()`, so it belongs
+      # with the other Docker-dependent jobs rather than in the fast lane.
+      #
+      # No `--write`: the recorded baseline in `evals/RESULTS.md` is a reviewed
+      # artefact, and a CI run that rewrote it would both dirty the tree and
+      # quietly re-baseline the very regression it exists to catch.
+      - name: Retrieval evaluation regression gate
+        run: pnpm eval:retrieval
+
+      # The gate has to be able to fail. `--broken-chunker` re-indexes the same
+      # corpus with fixed-width windows and smeared page provenance — a real
+      # chunking change, not a counter — and recall drops far past the 2-point
+      # margin. If this step *succeeds*, the gate above is not measuring
+      # anything and the build should go red.
+      - name: The regression gate catches a broken chunker
+        run: |
+          if pnpm eval:retrieval -- --broken-chunker; then
+            echo "::error::a deliberately broken chunker passed the regression gate"
+            exit 1
+          fi
+          echo "the regression gate rejected the broken chunker, as it should"
+
   python:
     name: Python worker
     runs-on: ubuntu-latest

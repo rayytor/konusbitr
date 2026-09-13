@@ -101,7 +101,7 @@ describe('parseEnv', () => {
   });
 
   it('rejects an unknown LLM provider by name', () => {
-    expect(() => parseEnv({ ...valid, LLM_PROVIDER: 'cohere' })).toThrow(/LLM_PROVIDER/);
+    expect(() => parseEnv({ ...valid, LLM_PROVIDER: 'replicate' })).toThrow(/LLM_PROVIDER/);
   });
 
   it('reads booleans written the way a .env writes them', () => {

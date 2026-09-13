@@ -39,6 +39,7 @@ export const ID_PREFIXES = {
   extraction: 'ext',
   job: 'job',
   creditLedger: 'crl',
+  documentEmbedding: 'demb',
 } as const;
 
 export type IdPrefix = (typeof ID_PREFIXES)[keyof typeof ID_PREFIXES];

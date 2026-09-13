@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–08 are done; Phase 09 is next.** `cp .env.example .env &&
+**Phases 01–09 are done; Phase 10 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -21,7 +21,11 @@ WebP thumbnail in storage. A scan is refused with `needs_ocr` rather than parsed
 into silence. **Phase 08 makes it retrievable**: a parse artifact becomes chunks
 that each carry their page and bounding box, no table is ever split, and every
 model call — cloud or local — goes through one router whose four roles are
-configured independently. Nothing is retrieved or answered yet (Phase 09+).
+configured independently. **Phase 09 retrieves**: `retrieve()` runs a dense
+pgvector search and a Postgres full-text search, fuses the two ranked lists with
+RRF, reranks, and returns eight chunks with their page and bounding box intact —
+in document or corpus scope, always org-filtered, never more than three chunks
+from one document. Nothing is *answered* yet; Phase 10 is the chat layer.
 
 One thing to know before touching the pipeline: **with no embedding model
 configured — which is the default `.env` — chunks are written without vectors.**
@@ -63,7 +67,7 @@ What exists:
   what an operator runs after changing `EMBEDDING_MODEL` — and puts
   `chunksReady`/`chunksTotal`/`embeddingModel` on `DocumentView`. Standalone
   output for the container; env validated at boot from `src/instrumentation.ts`.
-  No retrieval or chat yet (Phase 09+).
+  No chat yet (Phase 10+); retrieval lives in `packages/retrieval`.
 - `packages/storage` — the S3-compatible object store client (AWS SDK v3).
   `presignPut`, `presignGet`, `head`, `delete`, `deletePrefix`, `streamGet`,
   `uploadStream`, `presignMultipart`, `completeMultipart`, `abortMultipart`.
@@ -119,10 +123,31 @@ What exists:
 - `docs/adr/0002-model-router.md` — why every model call goes through LiteLLM in
   the worker and `packages/ai` on the product surface, why the four roles are
   configured independently, and why the embedding width is fixed at 1024.
+- `docs/adr/0003-retrieval.md` — why fusion is RRF over ranks rather than
+  normalized scores, why the sparse leg ORs its terms and drops function words
+  first, why `hnsw.ef_search` has to be set with `SET LOCAL` inside the query's
+  own transaction, and what the eval is allowed to claim.
 - `packages/ai` — the TypeScript half of the model router: role resolution,
   offline enforcement at the call site, retry with full jitter, a per-role
   circuit breaker, usage accounting, and embeddings over the OpenAI-compatible
   route. `prompts/` is where every prompt will live, as a versioned file.
+- `packages/retrieval` — the retrieval service. `retrieve()` is the entrypoint;
+  `dense.ts` and `sparse.ts` are the two legs, `fusion.ts` is RRF at k=60,
+  `rerank.ts` the cross-encoder stage (a pass-through when no rerank model
+  resolves, which is a supported state), `diversity.ts` the three-per-document
+  cap, `two-stage.ts` the summary-first path for corpora past
+  `CORPUS_TWO_STAGE_THRESHOLD`, and `stopwords.ts` the query-side function-word
+  list without which the sparse leg matches the entire corpus. `testing.ts`
+  exports a deterministic hashing embedder so the SQL can be exercised with no
+  provider key. `docs/adr/0003-retrieval.md` records the decisions, including the
+  two bugs that only real SQL could have caught.
+- `evals/` — the golden set and the harness. `extract-pages.py` dumps the fixture
+  PDFs' real per-page text; `generate-golden.ts` builds 205 questions from it and
+  **refuses to write a question whose evidence appears in no page of its
+  document**; `src/eval-retrieval.ts` starts a Postgres, indexes the corpus and
+  scores the real `retrieve()`; `src/benchmark-latency.ts` measures p95 over
+  100k chunks. `RESULTS.md` is the recorded baseline and says plainly what the
+  numbers do and do not cover.
 - `packages/sdk`, `apps/extension` — placeholders whose READMEs name the phase
   that fills them in.
 
@@ -276,6 +301,28 @@ These cut across many files; violating one breaks the product rather than one fe
   follow the origin. The Compose web container is a production Next.js build
   serving plain HTTP on localhost, and a browser silently discards a
   `__Secure-` cookie that did not arrive over HTTPS.
+- **A retrieval leg that fails is reported; two that fail raise.** A leg
+  returning nothing is ordinary — a corpus with no vectors yet is a supported
+  state. A leg *throwing* is a bug, and `.catch(() => [])` around one is how a
+  dense query that could not run became silently keyword-only retrieval that
+  still looked healthy for an entire phase. Failures reach the caller through
+  `onLegError`, and when every leg fails `retrieve()` raises rather than
+  returning `[]`, which would read as "no matches".
+- **The sparse leg's stop words are applied to the query and never to the
+  index.** `chunks.tsv` uses the `simple` configuration precisely so that no
+  token is stripped and an exact search for a rare string still works. The query
+  is the opposite case: it is mostly function words, the leg ORs its terms, and
+  a query containing "the" matches the whole corpus — measured at 98,485 of
+  100,000 chunks and 1269ms p95, against a 400ms budget. See
+  `packages/retrieval/src/stopwords.ts`.
+- **The eval runs the real `retrieve()` against a real Postgres.** It is allowed
+  to measure the retrieval machinery and is not allowed to claim anything about
+  embedding quality, because it embeds with a deterministic hashing vectorizer so
+  that CI needs no provider key. A harness that simulates its own retrieval
+  measures the simulator; an earlier version of this one did exactly that and
+  reported 98.10% recall from arithmetic on a fabricated ranking. Every golden
+  question is grounded in text that is actually in its document, enforced by the
+  generator.
 - **All model calls go through the router.** LiteLLM in the worker
   (`konusbitr_worker.ai`), `@konusbitr/ai` on the product surface. Never import a
   provider SDK directly. Roles (`chat`, `embedding`, `rerank`, `vision`) are
@@ -339,7 +386,10 @@ pnpm db:migrate                          # idempotent; a `migrate` one-shot runs
 pnpm infra:migrate                       # the same one-shot, without restarting the stack
 pnpm --filter @konusbitr/db db:generate  # regenerate a migration after a schema edit
 pnpm db:seed
-pnpm eval:retrieval                      # recall@8, MRR, context precision
+pnpm eval:retrieval                      # recall@8, MRR, context precision; needs Docker
+pnpm eval:retrieval -- --write           # re-record evals/RESULTS.md (never in CI)
+pnpm eval:retrieval -- --broken-chunker  # must fail: proves the gate can
+pnpm benchmark:retrieval                 # p95 over 100k chunks, ef_search sweep
 pnpm eval:chat                           # Ragas + citation accuracy
 ```
 

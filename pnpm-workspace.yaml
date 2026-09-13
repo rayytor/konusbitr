@@ -1,6 +1,8 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # The eval harness is a workspace package so lint and typecheck see it too.
+  - "evals"
 
 # Postinstall scripts are denied by default. Anything listed here has been
 # looked at and needs to run — all four fetch or link a platform-specific

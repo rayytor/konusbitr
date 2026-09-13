@@ -26,3 +26,12 @@ export function createDb(url: string, options: DbOptions = {}) {
 }
 
 export type Database = ReturnType<typeof createDb>;
+
+/**
+ * The handle a `db.transaction(…)` callback receives.
+ *
+ * Anything that has to run several statements against one connection takes this
+ * or a `Database` — `SET LOCAL` is the reason it exists: a GUC set outside a
+ * transaction block does not apply to the query that follows it.
+ */
+export type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];

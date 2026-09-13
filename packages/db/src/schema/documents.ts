@@ -77,6 +77,8 @@ export const documents = pgTable(
      */
     chunksReady: integer('chunks_ready'),
     chunksTotal: integer('chunks_total'),
+    /** ~200-token abstract generated at ingest for two-stage retrieval. */
+    summary: text('summary'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

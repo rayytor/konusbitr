@@ -78,6 +78,8 @@ function baseUrlFor(env: Env, provider: LlmProvider): string {
       return 'https://api.anthropic.com/v1';
     case 'google':
       return 'https://generativelanguage.googleapis.com/v1beta/openai';
+    case 'cohere':
+      return 'https://api.cohere.com/v1';
   }
 }
 
@@ -108,6 +110,7 @@ const PROVIDER_PREFIXES = new Set([
   'ollama_chat',
   'hosted_vllm',
   'vllm',
+  'cohere',
 ]);
 
 export function stripProviderPrefix(model: string): string {

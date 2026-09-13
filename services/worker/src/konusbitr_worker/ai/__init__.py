@@ -21,6 +21,7 @@ inside a container health probe that has no business loading a model registry.
 
 from __future__ import annotations
 
+from konusbitr_worker.ai.chat import ChatModel, ChatRouter, resolve_chat_model
 from konusbitr_worker.ai.embeddings import (
     EmbeddingDimensionError,
     EmbeddingRouter,
@@ -32,6 +33,8 @@ from konusbitr_worker.ai.tokens import Tokenizer
 from konusbitr_worker.ai.usage import UsageRecord
 
 __all__ = [
+    "ChatModel",
+    "ChatRouter",
     "CircuitBreaker",
     "CircuitOpenError",
     "EmbeddingDimensionError",
@@ -42,4 +45,5 @@ __all__ = [
     "Tokenizer",
     "UsageRecord",
     "is_local_endpoint",
+    "resolve_chat_model",
 ]

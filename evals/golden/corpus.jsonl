@@ -1,0 +1,205 @@
+{"question":"What was Subscriptions revenue in 2023?","documentId":"tables-financial","expectedPages":[1],"answer":"4,120"}
+{"question":"What was Subscriptions revenue in 2024?","documentId":"tables-financial","expectedPages":[1],"answer":"5,860"}
+{"question":"What was the year-over-year change for Subscriptions?","documentId":"tables-financial","expectedPages":[1],"answer":"+42%"}
+{"question":"Which row of the revenue table reports Subscriptions?","documentId":"tables-financial","expectedPages":[1],"answer":"Subscriptions: 4,120 → 5,860 (+42%)"}
+{"question":"What was Services revenue in 2023?","documentId":"tables-financial","expectedPages":[1],"answer":"1,905"}
+{"question":"What was Services revenue in 2024?","documentId":"tables-financial","expectedPages":[1],"answer":"2,110"}
+{"question":"What was the year-over-year change for Services?","documentId":"tables-financial","expectedPages":[1],"answer":"+11%"}
+{"question":"Which row of the revenue table reports Services?","documentId":"tables-financial","expectedPages":[1],"answer":"Services: 1,905 → 2,110 (+11%)"}
+{"question":"What was Licensing revenue in 2023?","documentId":"tables-financial","expectedPages":[1],"answer":"742"}
+{"question":"What was Licensing revenue in 2024?","documentId":"tables-financial","expectedPages":[1],"answer":"689"}
+{"question":"What was the year-over-year change for Licensing?","documentId":"tables-financial","expectedPages":[1],"answer":"-7%"}
+{"question":"Which row of the revenue table reports Licensing?","documentId":"tables-financial","expectedPages":[1],"answer":"Licensing: 742 → 689 (-7%)"}
+{"question":"What was Total revenue in 2023?","documentId":"tables-financial","expectedPages":[1],"answer":"6,767"}
+{"question":"What was Total revenue in 2024?","documentId":"tables-financial","expectedPages":[1],"answer":"8,659"}
+{"question":"What was the year-over-year change for Total?","documentId":"tables-financial","expectedPages":[1],"answer":"+28%"}
+{"question":"Which row of the revenue table reports Total?","documentId":"tables-financial","expectedPages":[1],"answer":"Total: 6,767 → 8,659 (+28%)"}
+{"question":"How many engineers are in the Europe region?","documentId":"tables-financial","expectedPages":[1],"answer":"84"}
+{"question":"How many sales staff are in the Europe region?","documentId":"tables-financial","expectedPages":[1],"answer":"31"}
+{"question":"How many support staff are in the Europe region?","documentId":"tables-financial","expectedPages":[1],"answer":"22"}
+{"question":"What is the headcount breakdown for Europe?","documentId":"tables-financial","expectedPages":[1],"answer":"Engineering 84, Sales 31, Support 22"}
+{"question":"How many engineers are in the Americas region?","documentId":"tables-financial","expectedPages":[1],"answer":"126"}
+{"question":"How many sales staff are in the Americas region?","documentId":"tables-financial","expectedPages":[1],"answer":"58"}
+{"question":"How many support staff are in the Americas region?","documentId":"tables-financial","expectedPages":[1],"answer":"40"}
+{"question":"What is the headcount breakdown for Americas?","documentId":"tables-financial","expectedPages":[1],"answer":"Engineering 126, Sales 58, Support 40"}
+{"question":"How many engineers are in the Asia Pacific region?","documentId":"tables-financial","expectedPages":[1],"answer":"47"}
+{"question":"How many sales staff are in the Asia Pacific region?","documentId":"tables-financial","expectedPages":[1],"answer":"19"}
+{"question":"How many support staff are in the Asia Pacific region?","documentId":"tables-financial","expectedPages":[1],"answer":"15"}
+{"question":"What is the headcount breakdown for Asia Pacific?","documentId":"tables-financial","expectedPages":[1],"answer":"Engineering 47, Sales 19, Support 15"}
+{"question":"What is the title of the financial report?","documentId":"tables-financial","expectedPages":[1],"answer":"Annual Financial Summary"}
+{"question":"What are the column headers of the revenue table?","documentId":"tables-financial","expectedPages":[1],"answer":"Segment, 2023, 2024, Change"}
+{"question":"What are the column headers of the headcount table?","documentId":"tables-financial","expectedPages":[1],"answer":"Region, Engineering, Sales, Support"}
+{"question":"Which segments are reported under Revenue?","documentId":"tables-financial","expectedPages":[1],"answer":"Subscriptions, Services and Licensing"}
+{"question":"What does the report say about segment revenue growth?","documentId":"tables-financial","expectedPages":[1],"answer":"Revenue grew across every reported segment."}
+{"question":"Which section of the report covers staffing?","documentId":"tables-financial","expectedPages":[1],"answer":"The Headcount section"}
+{"question":"What is the heading of section 1?","documentId":"clean-text-10p","expectedPages":[1,10],"answer":"Clean Text Fixture — Section 1"}
+{"question":"Where does Clean Text Fixture section 1 begin?","documentId":"clean-text-10p","expectedPages":[1,10],"answer":"On the page headed \"Clean Text Fixture — Section 1\""}
+{"question":"Which page of the clean text fixture is section 1 on?","documentId":"clean-text-10p","expectedPages":[1,10],"answer":"The page headed \"Clean Text Fixture — Section 1\""}
+{"question":"What is the heading of section 2?","documentId":"clean-text-10p","expectedPages":[2],"answer":"Clean Text Fixture — Section 2"}
+{"question":"Where does Clean Text Fixture section 2 begin?","documentId":"clean-text-10p","expectedPages":[2],"answer":"On the page headed \"Clean Text Fixture — Section 2\""}
+{"question":"Which page of the clean text fixture is section 2 on?","documentId":"clean-text-10p","expectedPages":[2],"answer":"The page headed \"Clean Text Fixture — Section 2\""}
+{"question":"What is the heading of section 3?","documentId":"clean-text-10p","expectedPages":[3],"answer":"Clean Text Fixture — Section 3"}
+{"question":"Where does Clean Text Fixture section 3 begin?","documentId":"clean-text-10p","expectedPages":[3],"answer":"On the page headed \"Clean Text Fixture — Section 3\""}
+{"question":"Which page of the clean text fixture is section 3 on?","documentId":"clean-text-10p","expectedPages":[3],"answer":"The page headed \"Clean Text Fixture — Section 3\""}
+{"question":"What is the heading of section 4?","documentId":"clean-text-10p","expectedPages":[4],"answer":"Clean Text Fixture — Section 4"}
+{"question":"Where does Clean Text Fixture section 4 begin?","documentId":"clean-text-10p","expectedPages":[4],"answer":"On the page headed \"Clean Text Fixture — Section 4\""}
+{"question":"Which page of the clean text fixture is section 4 on?","documentId":"clean-text-10p","expectedPages":[4],"answer":"The page headed \"Clean Text Fixture — Section 4\""}
+{"question":"What is the heading of section 5?","documentId":"clean-text-10p","expectedPages":[5],"answer":"Clean Text Fixture — Section 5"}
+{"question":"Where does Clean Text Fixture section 5 begin?","documentId":"clean-text-10p","expectedPages":[5],"answer":"On the page headed \"Clean Text Fixture — Section 5\""}
+{"question":"Which page of the clean text fixture is section 5 on?","documentId":"clean-text-10p","expectedPages":[5],"answer":"The page headed \"Clean Text Fixture — Section 5\""}
+{"question":"What is the heading of section 6?","documentId":"clean-text-10p","expectedPages":[6],"answer":"Clean Text Fixture — Section 6"}
+{"question":"Where does Clean Text Fixture section 6 begin?","documentId":"clean-text-10p","expectedPages":[6],"answer":"On the page headed \"Clean Text Fixture — Section 6\""}
+{"question":"Which page of the clean text fixture is section 6 on?","documentId":"clean-text-10p","expectedPages":[6],"answer":"The page headed \"Clean Text Fixture — Section 6\""}
+{"question":"What is the heading of section 7?","documentId":"clean-text-10p","expectedPages":[7],"answer":"Clean Text Fixture — Section 7"}
+{"question":"Where does Clean Text Fixture section 7 begin?","documentId":"clean-text-10p","expectedPages":[7],"answer":"On the page headed \"Clean Text Fixture — Section 7\""}
+{"question":"Which page of the clean text fixture is section 7 on?","documentId":"clean-text-10p","expectedPages":[7],"answer":"The page headed \"Clean Text Fixture — Section 7\""}
+{"question":"What is the heading of section 8?","documentId":"clean-text-10p","expectedPages":[8],"answer":"Clean Text Fixture — Section 8"}
+{"question":"Where does Clean Text Fixture section 8 begin?","documentId":"clean-text-10p","expectedPages":[8],"answer":"On the page headed \"Clean Text Fixture — Section 8\""}
+{"question":"Which page of the clean text fixture is section 8 on?","documentId":"clean-text-10p","expectedPages":[8],"answer":"The page headed \"Clean Text Fixture — Section 8\""}
+{"question":"What is the heading of section 9?","documentId":"clean-text-10p","expectedPages":[9],"answer":"Clean Text Fixture — Section 9"}
+{"question":"Where does Clean Text Fixture section 9 begin?","documentId":"clean-text-10p","expectedPages":[9],"answer":"On the page headed \"Clean Text Fixture — Section 9\""}
+{"question":"Which page of the clean text fixture is section 9 on?","documentId":"clean-text-10p","expectedPages":[9],"answer":"The page headed \"Clean Text Fixture — Section 9\""}
+{"question":"What is the heading of section 10?","documentId":"clean-text-10p","expectedPages":[10],"answer":"Clean Text Fixture — Section 10"}
+{"question":"Where does Clean Text Fixture section 10 begin?","documentId":"clean-text-10p","expectedPages":[10],"answer":"On the page headed \"Clean Text Fixture — Section 10\""}
+{"question":"Which page of the clean text fixture is section 10 on?","documentId":"clean-text-10p","expectedPages":[10],"answer":"The page headed \"Clean Text Fixture — Section 10\""}
+{"question":"What is the heading of section 1?","documentId":"text-50p","expectedPages":[1,10,11,12,13,14,15,16,17,18,19],"answer":"Performance Budget Fixture — Section 1"}
+{"question":"Where does Performance Budget Fixture section 1 begin?","documentId":"text-50p","expectedPages":[1,10,11,12,13,14,15,16,17,18,19],"answer":"On the page headed \"Performance Budget Fixture — Section 1\""}
+{"question":"What is the heading of section 2?","documentId":"text-50p","expectedPages":[2,20,21,22,23,24,25,26,27,28,29],"answer":"Performance Budget Fixture — Section 2"}
+{"question":"Where does Performance Budget Fixture section 2 begin?","documentId":"text-50p","expectedPages":[2,20,21,22,23,24,25,26,27,28,29],"answer":"On the page headed \"Performance Budget Fixture — Section 2\""}
+{"question":"What is the heading of section 3?","documentId":"text-50p","expectedPages":[3,30,31,32,33,34,35,36,37,38,39],"answer":"Performance Budget Fixture — Section 3"}
+{"question":"Where does Performance Budget Fixture section 3 begin?","documentId":"text-50p","expectedPages":[3,30,31,32,33,34,35,36,37,38,39],"answer":"On the page headed \"Performance Budget Fixture — Section 3\""}
+{"question":"What is the heading of section 4?","documentId":"text-50p","expectedPages":[4,40,41,42,43,44,45,46,47,48,49],"answer":"Performance Budget Fixture — Section 4"}
+{"question":"Where does Performance Budget Fixture section 4 begin?","documentId":"text-50p","expectedPages":[4,40,41,42,43,44,45,46,47,48,49],"answer":"On the page headed \"Performance Budget Fixture — Section 4\""}
+{"question":"What is the heading of section 5?","documentId":"text-50p","expectedPages":[5,50],"answer":"Performance Budget Fixture — Section 5"}
+{"question":"Where does Performance Budget Fixture section 5 begin?","documentId":"text-50p","expectedPages":[5,50],"answer":"On the page headed \"Performance Budget Fixture — Section 5\""}
+{"question":"What is the heading of section 6?","documentId":"text-50p","expectedPages":[6],"answer":"Performance Budget Fixture — Section 6"}
+{"question":"Where does Performance Budget Fixture section 6 begin?","documentId":"text-50p","expectedPages":[6],"answer":"On the page headed \"Performance Budget Fixture — Section 6\""}
+{"question":"What is the heading of section 7?","documentId":"text-50p","expectedPages":[7],"answer":"Performance Budget Fixture — Section 7"}
+{"question":"Where does Performance Budget Fixture section 7 begin?","documentId":"text-50p","expectedPages":[7],"answer":"On the page headed \"Performance Budget Fixture — Section 7\""}
+{"question":"What is the heading of section 8?","documentId":"text-50p","expectedPages":[8],"answer":"Performance Budget Fixture — Section 8"}
+{"question":"Where does Performance Budget Fixture section 8 begin?","documentId":"text-50p","expectedPages":[8],"answer":"On the page headed \"Performance Budget Fixture — Section 8\""}
+{"question":"What is the heading of section 9?","documentId":"text-50p","expectedPages":[9],"answer":"Performance Budget Fixture — Section 9"}
+{"question":"Where does Performance Budget Fixture section 9 begin?","documentId":"text-50p","expectedPages":[9],"answer":"On the page headed \"Performance Budget Fixture — Section 9\""}
+{"question":"What is the heading of section 10?","documentId":"text-50p","expectedPages":[10],"answer":"Performance Budget Fixture — Section 10"}
+{"question":"Where does Performance Budget Fixture section 10 begin?","documentId":"text-50p","expectedPages":[10],"answer":"On the page headed \"Performance Budget Fixture — Section 10\""}
+{"question":"What is the heading of section 11?","documentId":"text-50p","expectedPages":[11],"answer":"Performance Budget Fixture — Section 11"}
+{"question":"Where does Performance Budget Fixture section 11 begin?","documentId":"text-50p","expectedPages":[11],"answer":"On the page headed \"Performance Budget Fixture — Section 11\""}
+{"question":"What is the heading of section 12?","documentId":"text-50p","expectedPages":[12],"answer":"Performance Budget Fixture — Section 12"}
+{"question":"Where does Performance Budget Fixture section 12 begin?","documentId":"text-50p","expectedPages":[12],"answer":"On the page headed \"Performance Budget Fixture — Section 12\""}
+{"question":"What is the heading of section 13?","documentId":"text-50p","expectedPages":[13],"answer":"Performance Budget Fixture — Section 13"}
+{"question":"Where does Performance Budget Fixture section 13 begin?","documentId":"text-50p","expectedPages":[13],"answer":"On the page headed \"Performance Budget Fixture — Section 13\""}
+{"question":"What is the heading of section 14?","documentId":"text-50p","expectedPages":[14],"answer":"Performance Budget Fixture — Section 14"}
+{"question":"Where does Performance Budget Fixture section 14 begin?","documentId":"text-50p","expectedPages":[14],"answer":"On the page headed \"Performance Budget Fixture — Section 14\""}
+{"question":"What is the heading of section 15?","documentId":"text-50p","expectedPages":[15],"answer":"Performance Budget Fixture — Section 15"}
+{"question":"Where does Performance Budget Fixture section 15 begin?","documentId":"text-50p","expectedPages":[15],"answer":"On the page headed \"Performance Budget Fixture — Section 15\""}
+{"question":"What is the heading of section 16?","documentId":"text-50p","expectedPages":[16],"answer":"Performance Budget Fixture — Section 16"}
+{"question":"Where does Performance Budget Fixture section 16 begin?","documentId":"text-50p","expectedPages":[16],"answer":"On the page headed \"Performance Budget Fixture — Section 16\""}
+{"question":"What is the heading of section 17?","documentId":"text-50p","expectedPages":[17],"answer":"Performance Budget Fixture — Section 17"}
+{"question":"Where does Performance Budget Fixture section 17 begin?","documentId":"text-50p","expectedPages":[17],"answer":"On the page headed \"Performance Budget Fixture — Section 17\""}
+{"question":"What is the heading of section 18?","documentId":"text-50p","expectedPages":[18],"answer":"Performance Budget Fixture — Section 18"}
+{"question":"Where does Performance Budget Fixture section 18 begin?","documentId":"text-50p","expectedPages":[18],"answer":"On the page headed \"Performance Budget Fixture — Section 18\""}
+{"question":"What is the heading of section 19?","documentId":"text-50p","expectedPages":[19],"answer":"Performance Budget Fixture — Section 19"}
+{"question":"Where does Performance Budget Fixture section 19 begin?","documentId":"text-50p","expectedPages":[19],"answer":"On the page headed \"Performance Budget Fixture — Section 19\""}
+{"question":"What is the heading of section 20?","documentId":"text-50p","expectedPages":[20],"answer":"Performance Budget Fixture — Section 20"}
+{"question":"Where does Performance Budget Fixture section 20 begin?","documentId":"text-50p","expectedPages":[20],"answer":"On the page headed \"Performance Budget Fixture — Section 20\""}
+{"question":"What is the heading of section 21?","documentId":"text-50p","expectedPages":[21],"answer":"Performance Budget Fixture — Section 21"}
+{"question":"Where does Performance Budget Fixture section 21 begin?","documentId":"text-50p","expectedPages":[21],"answer":"On the page headed \"Performance Budget Fixture — Section 21\""}
+{"question":"What is the heading of section 22?","documentId":"text-50p","expectedPages":[22],"answer":"Performance Budget Fixture — Section 22"}
+{"question":"Where does Performance Budget Fixture section 22 begin?","documentId":"text-50p","expectedPages":[22],"answer":"On the page headed \"Performance Budget Fixture — Section 22\""}
+{"question":"What is the heading of section 23?","documentId":"text-50p","expectedPages":[23],"answer":"Performance Budget Fixture — Section 23"}
+{"question":"Where does Performance Budget Fixture section 23 begin?","documentId":"text-50p","expectedPages":[23],"answer":"On the page headed \"Performance Budget Fixture — Section 23\""}
+{"question":"What is the heading of section 24?","documentId":"text-50p","expectedPages":[24],"answer":"Performance Budget Fixture — Section 24"}
+{"question":"Where does Performance Budget Fixture section 24 begin?","documentId":"text-50p","expectedPages":[24],"answer":"On the page headed \"Performance Budget Fixture — Section 24\""}
+{"question":"What is the heading of section 25?","documentId":"text-50p","expectedPages":[25],"answer":"Performance Budget Fixture — Section 25"}
+{"question":"Where does Performance Budget Fixture section 25 begin?","documentId":"text-50p","expectedPages":[25],"answer":"On the page headed \"Performance Budget Fixture — Section 25\""}
+{"question":"What is the heading of section 26?","documentId":"text-50p","expectedPages":[26],"answer":"Performance Budget Fixture — Section 26"}
+{"question":"Where does Performance Budget Fixture section 26 begin?","documentId":"text-50p","expectedPages":[26],"answer":"On the page headed \"Performance Budget Fixture — Section 26\""}
+{"question":"What is the heading of section 27?","documentId":"text-50p","expectedPages":[27],"answer":"Performance Budget Fixture — Section 27"}
+{"question":"Where does Performance Budget Fixture section 27 begin?","documentId":"text-50p","expectedPages":[27],"answer":"On the page headed \"Performance Budget Fixture — Section 27\""}
+{"question":"What is the heading of section 28?","documentId":"text-50p","expectedPages":[28],"answer":"Performance Budget Fixture — Section 28"}
+{"question":"Where does Performance Budget Fixture section 28 begin?","documentId":"text-50p","expectedPages":[28],"answer":"On the page headed \"Performance Budget Fixture — Section 28\""}
+{"question":"What is the heading of section 29?","documentId":"text-50p","expectedPages":[29],"answer":"Performance Budget Fixture — Section 29"}
+{"question":"Where does Performance Budget Fixture section 29 begin?","documentId":"text-50p","expectedPages":[29],"answer":"On the page headed \"Performance Budget Fixture — Section 29\""}
+{"question":"What is the heading of section 30?","documentId":"text-50p","expectedPages":[30],"answer":"Performance Budget Fixture — Section 30"}
+{"question":"Where does Performance Budget Fixture section 30 begin?","documentId":"text-50p","expectedPages":[30],"answer":"On the page headed \"Performance Budget Fixture — Section 30\""}
+{"question":"What is the heading of section 31?","documentId":"text-50p","expectedPages":[31],"answer":"Performance Budget Fixture — Section 31"}
+{"question":"Where does Performance Budget Fixture section 31 begin?","documentId":"text-50p","expectedPages":[31],"answer":"On the page headed \"Performance Budget Fixture — Section 31\""}
+{"question":"What is the heading of section 32?","documentId":"text-50p","expectedPages":[32],"answer":"Performance Budget Fixture — Section 32"}
+{"question":"Where does Performance Budget Fixture section 32 begin?","documentId":"text-50p","expectedPages":[32],"answer":"On the page headed \"Performance Budget Fixture — Section 32\""}
+{"question":"What is the heading of section 33?","documentId":"text-50p","expectedPages":[33],"answer":"Performance Budget Fixture — Section 33"}
+{"question":"Where does Performance Budget Fixture section 33 begin?","documentId":"text-50p","expectedPages":[33],"answer":"On the page headed \"Performance Budget Fixture — Section 33\""}
+{"question":"What is the heading of section 34?","documentId":"text-50p","expectedPages":[34],"answer":"Performance Budget Fixture — Section 34"}
+{"question":"Where does Performance Budget Fixture section 34 begin?","documentId":"text-50p","expectedPages":[34],"answer":"On the page headed \"Performance Budget Fixture — Section 34\""}
+{"question":"What is the heading of section 35?","documentId":"text-50p","expectedPages":[35],"answer":"Performance Budget Fixture — Section 35"}
+{"question":"Where does Performance Budget Fixture section 35 begin?","documentId":"text-50p","expectedPages":[35],"answer":"On the page headed \"Performance Budget Fixture — Section 35\""}
+{"question":"What is the heading of section 36?","documentId":"text-50p","expectedPages":[36],"answer":"Performance Budget Fixture — Section 36"}
+{"question":"Where does Performance Budget Fixture section 36 begin?","documentId":"text-50p","expectedPages":[36],"answer":"On the page headed \"Performance Budget Fixture — Section 36\""}
+{"question":"What is the heading of section 37?","documentId":"text-50p","expectedPages":[37],"answer":"Performance Budget Fixture — Section 37"}
+{"question":"Where does Performance Budget Fixture section 37 begin?","documentId":"text-50p","expectedPages":[37],"answer":"On the page headed \"Performance Budget Fixture — Section 37\""}
+{"question":"What is the heading of section 38?","documentId":"text-50p","expectedPages":[38],"answer":"Performance Budget Fixture — Section 38"}
+{"question":"Where does Performance Budget Fixture section 38 begin?","documentId":"text-50p","expectedPages":[38],"answer":"On the page headed \"Performance Budget Fixture — Section 38\""}
+{"question":"What is the heading of section 39?","documentId":"text-50p","expectedPages":[39],"answer":"Performance Budget Fixture — Section 39"}
+{"question":"Where does Performance Budget Fixture section 39 begin?","documentId":"text-50p","expectedPages":[39],"answer":"On the page headed \"Performance Budget Fixture — Section 39\""}
+{"question":"What is the heading of section 40?","documentId":"text-50p","expectedPages":[40],"answer":"Performance Budget Fixture — Section 40"}
+{"question":"Where does Performance Budget Fixture section 40 begin?","documentId":"text-50p","expectedPages":[40],"answer":"On the page headed \"Performance Budget Fixture — Section 40\""}
+{"question":"What is the heading of section 41?","documentId":"text-50p","expectedPages":[41],"answer":"Performance Budget Fixture — Section 41"}
+{"question":"Where does Performance Budget Fixture section 41 begin?","documentId":"text-50p","expectedPages":[41],"answer":"On the page headed \"Performance Budget Fixture — Section 41\""}
+{"question":"What is the heading of section 42?","documentId":"text-50p","expectedPages":[42],"answer":"Performance Budget Fixture — Section 42"}
+{"question":"Where does Performance Budget Fixture section 42 begin?","documentId":"text-50p","expectedPages":[42],"answer":"On the page headed \"Performance Budget Fixture — Section 42\""}
+{"question":"What is the heading of section 43?","documentId":"text-50p","expectedPages":[43],"answer":"Performance Budget Fixture — Section 43"}
+{"question":"Where does Performance Budget Fixture section 43 begin?","documentId":"text-50p","expectedPages":[43],"answer":"On the page headed \"Performance Budget Fixture — Section 43\""}
+{"question":"What is the heading of section 44?","documentId":"text-50p","expectedPages":[44],"answer":"Performance Budget Fixture — Section 44"}
+{"question":"Where does Performance Budget Fixture section 44 begin?","documentId":"text-50p","expectedPages":[44],"answer":"On the page headed \"Performance Budget Fixture — Section 44\""}
+{"question":"What is the heading of section 45?","documentId":"text-50p","expectedPages":[45],"answer":"Performance Budget Fixture — Section 45"}
+{"question":"Where does Performance Budget Fixture section 45 begin?","documentId":"text-50p","expectedPages":[45],"answer":"On the page headed \"Performance Budget Fixture — Section 45\""}
+{"question":"What is the heading of section 46?","documentId":"text-50p","expectedPages":[46],"answer":"Performance Budget Fixture — Section 46"}
+{"question":"Where does Performance Budget Fixture section 46 begin?","documentId":"text-50p","expectedPages":[46],"answer":"On the page headed \"Performance Budget Fixture — Section 46\""}
+{"question":"What is the heading of section 47?","documentId":"text-50p","expectedPages":[47],"answer":"Performance Budget Fixture — Section 47"}
+{"question":"Where does Performance Budget Fixture section 47 begin?","documentId":"text-50p","expectedPages":[47],"answer":"On the page headed \"Performance Budget Fixture — Section 47\""}
+{"question":"What is the heading of section 48?","documentId":"text-50p","expectedPages":[48],"answer":"Performance Budget Fixture — Section 48"}
+{"question":"Where does Performance Budget Fixture section 48 begin?","documentId":"text-50p","expectedPages":[48],"answer":"On the page headed \"Performance Budget Fixture — Section 48\""}
+{"question":"What is the heading of section 49?","documentId":"text-50p","expectedPages":[49],"answer":"Performance Budget Fixture — Section 49"}
+{"question":"Where does Performance Budget Fixture section 49 begin?","documentId":"text-50p","expectedPages":[49],"answer":"On the page headed \"Performance Budget Fixture — Section 49\""}
+{"question":"What is the heading of section 50?","documentId":"text-50p","expectedPages":[50],"answer":"Performance Budget Fixture — Section 50"}
+{"question":"Where does Performance Budget Fixture section 50 begin?","documentId":"text-50p","expectedPages":[50],"answer":"On the page headed \"Performance Budget Fixture — Section 50\""}
+{"question":"What is the title of the paper?","documentId":"two-column-paper","expectedPages":[1],"answer":"Layout-Aware Parsing of Multi-Column Documents"}
+{"question":"What is the first numbered section?","documentId":"two-column-paper","expectedPages":[1],"answer":"1. Introduction"}
+{"question":"What is the second numbered section?","documentId":"two-column-paper","expectedPages":[1],"answer":"2. Method"}
+{"question":"Where does paragraph 1 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 1 of the introduction"}
+{"question":"Which column and section is paragraph 1 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 1"}
+{"question":"Where does paragraph 2 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 2 of the introduction"}
+{"question":"Which column and section is paragraph 2 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 2"}
+{"question":"Where does paragraph 3 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 3 of the introduction"}
+{"question":"Which column and section is paragraph 3 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 3"}
+{"question":"Where does paragraph 4 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 4 of the introduction"}
+{"question":"Which column and section is paragraph 4 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 4"}
+{"question":"Where does paragraph 5 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 5 of the introduction"}
+{"question":"Which column and section is paragraph 5 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 5"}
+{"question":"Where does paragraph 6 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 6 of the introduction"}
+{"question":"Which column and section is paragraph 6 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 6"}
+{"question":"Where does paragraph 7 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 7 of the introduction"}
+{"question":"Which column and section is paragraph 7 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 7"}
+{"question":"Where does paragraph 8 of the introduction appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 8 of the introduction"}
+{"question":"Which column and section is paragraph 8 of the introduction in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The introduction, paragraph 8"}
+{"question":"Where does paragraph 1 of the method appear?","documentId":"two-column-paper","expectedPages":[1],"answer":"Paragraph 1 of the method"}
+{"question":"Which column and section is paragraph 1 of the method in?","documentId":"two-column-paper","expectedPages":[1],"answer":"The method, paragraph 1"}
+{"question":"Where does paragraph 2 of the method appear?","documentId":"two-column-paper","expectedPages":[2],"answer":"Paragraph 2 of the method"}
+{"question":"Which column and section is paragraph 2 of the method in?","documentId":"two-column-paper","expectedPages":[2],"answer":"The method, paragraph 2"}
+{"question":"Where does paragraph 3 of the method appear?","documentId":"two-column-paper","expectedPages":[2],"answer":"Paragraph 3 of the method"}
+{"question":"Which column and section is paragraph 3 of the method in?","documentId":"two-column-paper","expectedPages":[2],"answer":"The method, paragraph 3"}
+{"question":"Where does paragraph 4 of the method appear?","documentId":"two-column-paper","expectedPages":[2],"answer":"Paragraph 4 of the method"}
+{"question":"Which column and section is paragraph 4 of the method in?","documentId":"two-column-paper","expectedPages":[2],"answer":"The method, paragraph 4"}
+{"question":"Where does paragraph 5 of the method appear?","documentId":"two-column-paper","expectedPages":[2],"answer":"Paragraph 5 of the method"}
+{"question":"Which column and section is paragraph 5 of the method in?","documentId":"two-column-paper","expectedPages":[2],"answer":"The method, paragraph 5"}
+{"question":"Where does paragraph 6 of the method appear?","documentId":"two-column-paper","expectedPages":[2],"answer":"Paragraph 6 of the method"}
+{"question":"Which column and section is paragraph 6 of the method in?","documentId":"two-column-paper","expectedPages":[2],"answer":"The method, paragraph 6"}
+{"question":"What is the heading of the first page?","documentId":"rotated-a4","expectedPages":[1],"answer":"Upright A4 Page"}
+{"question":"Which page states its own dimensions?","documentId":"rotated-a4","expectedPages":[1],"answer":"The upright A4 page: 595 by 842 points"}
+{"question":"What are the dimensions of the unrotated A4 page?","documentId":"rotated-a4","expectedPages":[1],"answer":"595 by 842 points"}
+{"question":"Which page is the rotated landscape one?","documentId":"rotated-a4","expectedPages":[2],"answer":"Rotated Landscape Page"}
+{"question":"What is the heading of the last page?","documentId":"rotated-a4","expectedPages":[3],"answer":"Upright Again"}
+{"question":"Where does the document return to an upright orientation?","documentId":"rotated-a4","expectedPages":[3],"answer":"On the page headed \"Upright Again\""}
+{"question":"What coordinate convention does the rotated page describe?","documentId":"rotated-a4","expectedPages":[2,3],"answer":"PDF user-space points with the origin at the top left of the unrotated page"}
+{"question":"What does the fixture say happens to a box in the wrong frame?","documentId":"rotated-a4","expectedPages":[2,3],"answer":"It is wrong everywhere downstream."}
+{"question":"How does the fixture describe a highlight drawn too low?","documentId":"rotated-a4","expectedPages":[2,3],"answer":"It reads as a bug rather than as an answer worth checking."}
+{"question":"Which convention do the parser, database and viewer all agree on?","documentId":"rotated-a4","expectedPages":[3],"answer":"Top-left origin PDF user-space points on the unrotated page"}

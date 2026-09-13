@@ -224,6 +224,18 @@ export const EnvSchema = z.object({
   CHUNK_MAX_TOKENS: z.coerce.number().int().positive().default(CHUNKING_DEFAULTS.maxTokens),
   CHUNK_OVERLAP_RATIO: z.coerce.number().min(0).max(0.5).default(CHUNKING_DEFAULTS.overlapRatio),
 
+  // ── Phase 09 — Retrieval ──────────────────────────────────────────────────
+  /** Whether cross-encoder reranking is enabled after RRF fusion. */
+  RERANK_ENABLED: z.stringbool().default(true),
+  /** Corpus document count threshold above which two-stage summary retrieval is used. */
+  CORPUS_TWO_STAGE_THRESHOLD: z.coerce.number().int().positive().default(200),
+  /** Hypothetical Document Embeddings (HyDE) enabled for retrieval. */
+  HYDE_ENABLED: z.stringbool().default(false),
+  /** Multi-query expansion for corpus retrieval. */
+  MULTI_QUERY_ENABLED: z.stringbool().default(false),
+  /** HNSW search exploration factor for pgvector cosine queries. */
+  HNSW_EF_SEARCH: z.coerce.number().int().positive().default(40),
+
   // Billing.
   BILLING_ENABLED: z.stringbool().default(false),
   CREDITS_MODE: z.enum(CREDITS_MODES).default('unlimited'),

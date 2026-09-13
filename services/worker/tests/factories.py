@@ -91,6 +91,8 @@ class FakeDatabase:
         self.failures: list[dict[str, Any]] = []
         self.chunk_counts: list[tuple[int, int]] = []
         self.embedding_recorded: list[tuple[str | None, int | None]] = []
+        self.summaries: dict[str, str | None] = {}
+        self.document_embeddings: dict[str, list[float]] = {}
         #: What `chunks.embedding` is declared as. `None` stands in for an
         #: untyped column, which the schema forbids but a hand-altered database
         #: could still present.
@@ -177,6 +179,20 @@ class FakeDatabase:
         by_page = {page.page_no: page for page in self.pages}
         by_page.update({page.page_no: page for page in pages})
         self.pages = [by_page[page_no] for page_no in sorted(by_page)]
+
+    async def upsert_document_summary(self, *, document_id: str, summary: str | None) -> None:
+        self.summaries[document_id] = summary
+
+    async def upsert_document_embedding(
+        self,
+        *,
+        embedding_id: str,
+        document_id: str,
+        org_id: str,
+        embedding: list[float] | None,
+    ) -> None:
+        if embedding is not None:
+            self.document_embeddings[document_id] = embedding
 
 
 class FakeObjectStore:

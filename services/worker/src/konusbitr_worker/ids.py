@@ -35,6 +35,7 @@ ID_PREFIXES = {
     "page": "pag",
     "chunk": "chk",
     "job": "job",
+    "document_embedding": "demb",
 }
 
 _LENGTH = 24

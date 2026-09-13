@@ -20,6 +20,8 @@ cd "$ROOT"
 
 WORKER="services/worker"
 OUTPUT="$WORKER/src/konusbitr_worker/contracts.py"
+PROMPTS_SOURCE="packages/ai/prompts"
+PROMPTS_OUTPUT="$WORKER/src/konusbitr_worker/prompts"
 
 die() {
   echo "codegen: $*" >&2
@@ -82,3 +84,28 @@ uv run --project "$WORKER" --quiet ruff format --quiet "$OUTPUT"
 uv run --project "$WORKER" --quiet ruff check --quiet --fix-only "$OUTPUT"
 
 echo "codegen: wrote $OUTPUT"
+
+# ── Prompts ──────────────────────────────────────────────────────────────────
+#
+# Prompts live in `packages/ai/prompts/` as versioned files, and both runtimes
+# send them. The worker image ships only `services/worker/`, so it needs its own
+# copy — and a copy maintained by hand is a second source of truth that drifts,
+# which is the one thing the prompt-versioning rule exists to prevent. So the
+# copy is generated here and CI's `git diff --exit-code` holds it honest, the
+# same way it holds `contracts.py` honest.
+echo "codegen: syncing prompts into the worker package"
+rm -rf "$PROMPTS_OUTPUT"
+mkdir -p "$PROMPTS_OUTPUT"
+cat > "$PROMPTS_OUTPUT/README.md" << 'PROMPTS_README'
+# Generated — do not edit
+
+Copied from `packages/ai/prompts/` by `pnpm codegen`, because the worker image
+ships only `services/worker/` and still has to send the same prompts the product
+surface does. Edit the originals and regenerate; CI fails on drift.
+PROMPTS_README
+for prompt in "$PROMPTS_SOURCE"/*.md; do
+  name="$(basename "$prompt")"
+  [ "$name" = "README.md" ] && continue
+  cp "$prompt" "$PROMPTS_OUTPUT/$name"
+done
+echo "codegen: wrote $PROMPTS_OUTPUT"

@@ -36,6 +36,14 @@ export function scopedDb(db: Database, orgId: string) {
       return db.select().from(schema.chunks).where(eq(schema.chunks.orgId, orgId));
     },
 
+    /** Query document embeddings belonging to this org. */
+    documentEmbeddings() {
+      return db
+        .select()
+        .from(schema.documentEmbeddings)
+        .where(eq(schema.documentEmbeddings.orgId, orgId));
+    },
+
     /**
      * How many chunks a document has, and how many of them carry a vector.
      *

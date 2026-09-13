@@ -50,6 +50,13 @@
       "when": 1789233258355,
       "tag": "0006_drop_legacy_chunk_location",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789238822586,
+      "tag": "0007_aspiring_husk",
+      "breakpoints": true
     }
   ]
 }

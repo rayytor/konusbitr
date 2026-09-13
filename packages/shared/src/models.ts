@@ -39,6 +39,7 @@ export const LLM_PROVIDERS = [
   'mistral',
   'ollama',
   'vllm',
+  'cohere',
 ] as const;
 
 export const LlmProviderSchema = z.enum(LLM_PROVIDERS);
@@ -61,6 +62,7 @@ export const CLOUD_LLM_PROVIDERS = [
   'anthropic',
   'google',
   'mistral',
+  'cohere',
 ] as const satisfies readonly LlmProvider[];
 
 export function isLocalProvider(provider: LlmProvider): boolean {
@@ -108,16 +110,24 @@ export const DEFAULT_CHAT_MODELS: Readonly<Partial<Record<LlmProvider, string>>>
   ollama: 'ollama/llama3.2:3b',
 });
 
+/** Default rerank model for providers that support reranking. */
+export const DEFAULT_RERANK_MODELS: Readonly<Partial<Record<LlmProvider, string>>> = Object.freeze({
+  cohere: 'rerank-v3.5',
+  ollama: 'BAAI/bge-reranker-v2-m3',
+  vllm: 'BAAI/bge-reranker-v2-m3',
+});
+
 /**
  * Providers with no embedding endpoint at all.
  *
  * Anthropic and Google Vertex both serve chat and vision and neither exposes
- * an embedding API this router can address, so naming one for the `embedding`
- * role is a configuration mistake rather than a call that fails later.
+ * an embedding API this router can address. Cohere is used specifically for
+ * reranking in Konusbitr.
  */
 export const PROVIDERS_WITHOUT_EMBEDDINGS = [
   'anthropic',
   'google',
+  'cohere',
 ] as const satisfies readonly LlmProvider[];
 
 export function providerCanEmbed(provider: LlmProvider): boolean {
