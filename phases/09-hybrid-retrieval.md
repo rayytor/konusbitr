@@ -76,15 +76,25 @@ the recall/latency tradeoff.
 
 ## Acceptance criteria
 
-- [ ] `retrieve()` works in both document and corpus scope, org-filtered, with
+- [x] `retrieve()` works in both document and corpus scope, org-filtered, with
       page and bbox metadata preserved through every stage.
-- [ ] The golden set exists with ≥200 items and `pnpm eval:retrieval` reports
+- [x] The golden set exists with ≥200 items and `pnpm eval:retrieval` reports
       recall@8, MRR, and context precision.
-- [ ] Hybrid+rerank beats dense-only on the golden set — record both numbers in
-      `evals/RESULTS.md` as the baseline.
-- [ ] A query containing a rare exact token (an invoice number) retrieves the right
+- [x] Hybrid+rerank beats dense-only on the golden set — record both numbers in
+      `evals/RESULTS.md` as the baseline. *Hybrid wins every metric that moves:
+      +9.27 points of corpus-scope recall@8 and +0.12 document-scope MRR over
+      dense alone. Document-scope recall@8 saturates at 100% for every
+      configuration on this corpus and is gated as a smoke alarm rather than
+      read as a quality signal. The rerank stage itself is a pass-through in CI
+      because no rerank model is configured there, which `RESULTS.md` states
+      where the numbers are.*
+- [x] A query containing a rare exact token (an invoice number) retrieves the right
       chunk, demonstrating the sparse leg is doing real work.
-- [ ] Corpus mode never returns more than 3 chunks from one document.
-- [ ] `RERANK_ENABLED=false` still returns sensible results.
-- [ ] p95 retrieval latency under 400ms on the 100k-chunk benchmark.
-- [ ] CI fails on a deliberately-broken chunker that drops recall by 5 points.
+- [x] Corpus mode never returns more than 3 chunks from one document.
+- [x] `RERANK_ENABLED=false` still returns sensible results.
+- [x] p95 retrieval latency under 400ms on the 100k-chunk benchmark. *332.9ms at
+      the default `ef_search=40`. The first measurement was 771ms — the sparse
+      leg's OR-rewritten query matched 98,485 of 100,000 chunks and `ts_rank_cd`
+      had to rank all of them. Dropping query-side function words brought p50
+      from 517ms to 16.5ms.*
+- [x] CI fails on a deliberately-broken chunker that drops recall by 5 points.
