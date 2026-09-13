@@ -43,6 +43,7 @@ export {
   membershipRoleEnum,
   memberships,
   messages,
+  type OrganizationRow,
   organizations,
   pages,
   parseResults,

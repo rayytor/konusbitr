@@ -118,6 +118,25 @@ export function scopedDb(db: Database, orgId: string) {
       return db.select().from(schema.folders).where(eq(schema.folders.orgId, orgId));
     },
 
+    /** The organization this scope is bound to. */
+    async organization() {
+      const [row] = await db
+        .select()
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, orgId));
+      return row;
+    },
+
+    /** Update organization settings JSONB. */
+    async updateOrganizationSettings(settings: Record<string, unknown>) {
+      const [row] = await db
+        .update(schema.organizations)
+        .set({ settings })
+        .where(eq(schema.organizations.id, orgId))
+        .returning();
+      return row;
+    },
+
     /** Query API keys belonging to this org. */
     apiKeys() {
       return db.select().from(schema.apiKeys).where(eq(schema.apiKeys.orgId, orgId));

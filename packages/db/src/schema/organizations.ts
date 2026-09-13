@@ -23,3 +23,5 @@ export const organizations = pgTable(
   },
   (table) => [uniqueIndex('organizations_slug_idx').on(table.slug)],
 );
+
+export type OrganizationRow = typeof organizations.$inferSelect;

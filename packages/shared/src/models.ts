@@ -69,6 +69,24 @@ export function isLocalProvider(provider: LlmProvider): boolean {
   return (LOCAL_LLM_PROVIDERS as readonly LlmProvider[]).includes(provider);
 }
 
+export type ProviderMeta = {
+  id: string;
+  name: string;
+  placeholder: string;
+  defaultBaseUrl?: string;
+  requiresKey: boolean;
+};
+
+export const SUPPORTED_EXTERNAL_PROVIDERS: readonly ProviderMeta[] = Object.freeze([
+  { id: 'openai', name: 'OpenAI', placeholder: 'sk-proj-...', requiresKey: true },
+  { id: 'anthropic', name: 'Anthropic', placeholder: 'sk-ant-...', requiresKey: true },
+  { id: 'google', name: 'Google Gemini', placeholder: 'AIzaSy...', requiresKey: true },
+  { id: 'mistral', name: 'Mistral AI', placeholder: '...', requiresKey: true },
+  { id: 'cohere', name: 'Cohere', placeholder: '...', requiresKey: true },
+  { id: 'groq', name: 'Groq', placeholder: 'gsk_...', requiresKey: true },
+  { id: 'custom', name: 'Custom (OpenAI-compatible)', placeholder: '...', requiresKey: false },
+]);
+
 /**
  * The embedding width the `chunks.embedding` column is declared at.
  *

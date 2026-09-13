@@ -107,7 +107,9 @@ export {
   type ModelRole,
   ModelRoleSchema,
   PROVIDERS_WITHOUT_EMBEDDINGS,
+  type ProviderMeta,
   providerCanEmbed,
+  SUPPORTED_EXTERNAL_PROVIDERS,
 } from './models.js';
 
 export {

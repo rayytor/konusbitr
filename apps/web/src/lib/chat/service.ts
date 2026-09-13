@@ -1,5 +1,6 @@
 import {
   buildContext,
+  describeStreamError,
   loadPrompt,
   streamChat,
   verifyCitations,
@@ -7,8 +8,9 @@ import {
 } from '@konusbitr/ai';
 import { scopedDb } from '@konusbitr/db';
 import { retrieve } from '@konusbitr/retrieval';
-import type { ChatRequest } from '@konusbitr/shared';
+import { type ChatRequest, roleProvider } from '@konusbitr/shared';
 import type { AuthContext } from '@/lib/auth/context';
+import { resolveProviderKeySecret } from '@/lib/auth/provider-keys';
 import { db } from '@/lib/db';
 import { loadWebEnv } from '@/lib/env';
 import { autoTitleConversation } from './title';
@@ -155,12 +157,25 @@ export async function handleChatStream(
         ];
 
         // 7. Stream text through LiteLLM/OpenAI-compatible router
+        // A provider failure arrives here rather than as a throw from
+        // `textStream` — see `onError` in `@konusbitr/ai`'s StreamChatOptions.
+        let streamError: unknown;
+
+        const org = await scoped.organization();
+        const chatProvider = roleProvider(env, 'chat');
+        const orgApiKey =
+          resolveProviderKeySecret(org?.settings, chatProvider, env.AUTH_SECRET) ?? undefined;
+
         const streamResult = streamChat({
           env,
           system: systemPrompt,
           messages: promptMessages,
           temperature: 0.1,
           abortSignal: request.signal,
+          apiKey: orgApiKey,
+          onError: (error) => {
+            streamError = error;
+          },
         });
 
         let fullRawText = '';
@@ -168,6 +183,14 @@ export async function handleChatStream(
         for await (const delta of streamResult.textStream) {
           fullRawText += delta;
           send('text', { text: delta });
+        }
+
+        // Rethrow into the catch below, which turns it into an SSE `error`
+        // frame. Falling through instead would persist an empty assistant
+        // message and send `done`, so the browser would render a blank answer
+        // and nothing anywhere would say the model had refused the request.
+        if (streamError !== undefined) {
+          throw describeStreamError(streamError);
         }
 
         // 8. Citation post-processing and mechanical verification

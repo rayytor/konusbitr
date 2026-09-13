@@ -66,6 +66,7 @@ export {
   stripProviderPrefix,
 } from './roles.js';
 export {
+  describeStreamError,
   getChatLanguageModel,
   type StreamChatOptions,
   streamChat,
