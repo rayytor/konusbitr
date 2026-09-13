@@ -5,7 +5,7 @@
 # what a command does.
 
 .DEFAULT_GOAL := help
-.PHONY: help up migrate stack down reset logs ps psql redis dev dev-infra install check
+.PHONY: help up migrate stack down reset logs ps psql redis dev dev-infra install check launch
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -46,6 +46,10 @@ dev-infra: up ## Alias for `up`
 
 dev: ## Backing services in Docker, web and worker native
 	pnpm dev
+
+launch: ## Launch desktop app window and handle all services
+	./launch.sh
+
 
 check: ## The standard gate: lint, typecheck, test, build, plus the Python side
 	pnpm turbo run lint typecheck test build

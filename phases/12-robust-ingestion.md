@@ -1,99 +1,78 @@
 # Phase 12 — Robust Ingestion: OCR, Languages, VLM, Images, Scale
 
-**Goal:** make Konusbitr handle the documents people actually have — scans,
-photos, multilingual contracts, image-heavy reports, and 900-page monsters —
-instead of only the clean digital PDFs of Phase 07.
+**Goal:** make Konusbitr handle the documents people actually have — scans, photos, multilingual contracts, image-heavy reports, and 900-page monsters — instead of only the clean digital PDFs of Phase 07.
 
-## Context
+## Architecture & Sub-Phase Decomposition
 
-Phase 07 deliberately failed with `needs_ocr` on scanned input. That covers a
-large share of real-world documents: signed contracts, government forms,
-historical records, phone photos of receipts. This phase closes that gap with a
-**tiered strategy** — always use the cheapest path that is good enough, and
-surface confidence rather than silently returning garbage.
+Due to the breadth of real-world ingestion requirements (spanning optical recognition, layout heuristics, multimodal LLM routing, distributed job persistence, and UI streaming), **Phase 12 is decomposed into 4 manageable, sequential sub-phases**:
 
-## Scope
+```
+Phase 12 Ingestion Architecture
+│
+├──► Phase 12.1/4: Scanned Page OCR Pipeline, Preprocessing & Coordinate Alignment
+│      └── Per-page tiering, RapidOCR/Tesseract CPU stack, OpenCV cleanup, [x0, y0, x1, y1] coordinates
+│
+├──► Phase 12.2/4: Multilingual Routing, Table Extraction & Figure/Image Extraction
+│      └── Language auto-detection, CJK/Arabic dictionaries, tableJson, S3 figure extraction & captioning
+│
+├──► Phase 12.3/4: Vision-Language Model (VLM) Advanced Pipeline & Licensing Isolation
+│      └── Tier 3 VLM path, hybrid text reconciliation, cost guardrails, Apache-2.0 vs AGPL profile isolation
+│
+└──► Phase 12.4/4: Resumable Scale, Checkpointing, Streamed Partial Readiness & Progress UI
+       └── Checkpointed page batches, 2GB disk-spill memory cap, instant chat over partial docs, Ingestion UI
+```
 
-### 1. The quality tiers
+---
 
-| Tier | Path | When |
-|---|---|---|
-| 1 | Native text layer (Docling, Phase 07) | Coverage above threshold |
-| 2 | **OCR** — PaddleOCR primary, Tesseract fallback, Surya for hard layouts | Low text coverage |
-| 3 | **VLM** — page images → structured markdown via the vision role | `quality: "advanced"`, or OCR confidence below threshold |
+## Sub-Phase Overview
 
-Tiering is **per page**, not per document: a mostly-digital PDF with three scanned
-inserts OCRs only those three pages.
+### [Phase 12.1/4 — Scanned Page OCR Pipeline, Preprocessing & Coordinate Alignment](./12.1-4-ocr-pipeline.md)
+- **Problem:** Phase 07 fails on any document without native text (`error_code: "needs_ocr"`).
+- **Solution:**
+  - Per-page tiering (native digital text vs. OCR raster scan).
+  - High-performance, Apache-2.0 permissive CPU OCR: RapidOCR (`rapidocr-onnxruntime`) primary, Tesseract 5 fallback.
+  - Image preprocessing: OpenCV deskewing, adaptive binarization, and denoising.
+  - Strict coordinate mapping: converts pixel coordinates at 300 DPI to PDF user points (`[x0, y0, x1, y1]`) respecting page rotation.
+  - Schema additions: `pages.tier` and `pages.ocr_confidence`.
+- **Reference Document:** [`phases/12.1-4-ocr-pipeline.md`](./12.1-4-ocr-pipeline.md)
 
-### 2. OCR
+### [Phase 12.2/4 — Multilingual Routing, Table Extraction & Figure/Image Extraction](./12.2-4-multilingual-tables-and-images.md)
+- **Problem:** Non-Latin languages fail under English OCR; scanned tables lose row/column associations; figures/charts are invisible to retrieval.
+- **Solution:**
+  - Script detection (`fast-langdetect`) and dynamic language pack dispatch (CJK, Arabic, Turkish, Cyrillic).
+  - Scanned table structure recognition emitting dual representations: GitHub Flavored Markdown and `tableJson`. Tables are never split across chunk boundaries.
+  - PDF image extraction to S3 (`orgs/{orgId}/documents/{docId}/images/{n}.png`).
+  - Semantic figure captioning via LiteLLM vision router when `settings.llm == true`, indexed directly as searchable chunk text.
+- **Reference Document:** [`phases/12.2-4-multilingual-tables-and-images.md`](./12.2-4-multilingual-tables-and-images.md)
 
-- PaddleOCR with `lang_list` from the parse settings; auto-detect language when
-  the list is empty.
-- Preprocessing: deskew, denoise, adaptive threshold, upscale low-DPI pages.
-- OCR output must carry **word-level bounding boxes**, mapped into the Phase 07
-  top-left coordinate convention. Citations must highlight just as precisely on a
-  scanned page as on a digital one — this is the hard part; test it.
-- Per-page confidence stored on `pages` and surfaced in the UI as a badge
-  ("this page was read by OCR, confidence 0.72") so users know when to double-check.
+### [Phase 12.3/4 — Vision-Language Model (VLM) Advanced Pipeline & Licensing Isolation](./12.3-4-vlm-advanced-and-licensing.md)
+- **Problem:** Highly complex layouts (magazines, brochures, academic papers) confound OCR; VLMs can hallucinate; copyleft tools (PyMuPDF, Surya, Marker) threaten Apache-2.0 distribution.
+- **Solution:**
+  - Tier 3 advanced VLM path via LiteLLM: Claude 3.5/3.7 Sonnet, GPT-4o, Gemini 2.0/2.5 Flash, or local `Qwen2.5-VL`.
+  - Hybrid reconciliation: uses VLM for structural layout and reading order, but cross-checks exact tokens against native text / high-confidence OCR to prevent hallucinations.
+  - Cost controls: `POST /api/documents/estimate-cost`, per-org caps, and `MAX_VLM_PAGES_PER_JOB = 50`.
+  - Licensing quarantine: clean Apache-2.0 core image; AGPL/GPL packages isolated behind Compose `advanced` profile (`docker compose --profile advanced up`).
+- **Reference Document:** [`phases/12.3-4-vlm-advanced-and-licensing.md`](./12.3-4-vlm-advanced-and-licensing.md)
 
-### 3. The VLM `advanced` path
+### [Phase 12.4/4 — Resumable Scale, Checkpointing, Streamed Partial Readiness & Progress UI](./12.4-4-resilient-scale-and-progress-ui.md)
+- **Problem:** 900-page scanned documents cause worker OOMs, restart from scratch if interrupted, force long user wait times, and provide poor UI feedback.
+- **Solution:**
+  - Resumable job checkpoints: processes documents in 10–20 page batches, committing checkpoints to `jobs.payload.checkpoint`. Crashes resume from the last completed batch.
+  - Memory ceiling: strict 2GB RAM cap with on-demand rasterization and ephemeral disk-spill caching (`/tmp/konusbitr_scratch/{jobId}/`).
+  - Streamed partial readiness: unlocks document status to `partially_ready` after initial batches, allowing chat while remaining pages index.
+  - Production Ingestion UI: page counters, rolling ETA, job cancellation, and actionable error dialogs.
+- **Reference Document:** [`phases/12.4-4-resilient-scale-and-progress-ui.md`](./12.4-4-resilient-scale-and-progress-ui.md)
 
-- Rasterize pages at a configurable DPI, send to the vision model through the
-  router (GPT-4.1-class, Claude, Gemini, or local **Qwen2.5-VL**), request
-  structured markdown plus element boxes.
-- Reconcile VLM output with any available text layer; prefer the text layer for
-  exact strings and the VLM for structure and reading order.
-- Cost guardrails: page cap per request, an operator-configurable per-org limit,
-  and a cost estimate shown in the UI before an `advanced` parse is launched.
+---
 
-### 4. Images and figures
+## Combined Phase 12 Acceptance Criteria
 
-- Extract embedded images; store under the Phase 05 key layout; populate the
-  `images[]` array of the parse artifact (base64 for the API response, keys in the DB).
-- With `llm: true`, caption figures via the vision model and index the captions as
-  chunk text — so "the chart showing Q3 churn" becomes findable.
-
-### 5. Scale and large documents
-
-- Per-page parallelism with a bounded worker pool; chunked, resumable jobs so a
-  900-page scan survives a worker restart.
-- **Streamed partial readiness**: chat becomes available once the first N pages are
-  embedded, with the UI stating that ingestion is still running.
-- Memory ceilings per job; spill page images to disk rather than holding them.
-- Budget: a 50-page scanned PDF reaches `ready` in **under 2 minutes on CPU OCR**.
-
-### 6. Licensing discipline
-
-**PyMuPDF is AGPL and Marker's license restricts commercial hosting.** Both go
-behind the Compose `advanced` profile and a build flag. The default Konusbitr image
-uses `pypdf` + `pdfplumber` + Docling + PaddleOCR + Tesseract, all permissive, so
-the out-of-the-box stack stays cleanly Apache-compatible. Document this prominently
-in `docs/licensing.md` and in the README — license surprises kill adoption.
-
-### 7. Job progress UI
-
-Replace the Phase 06 placeholder with a real progress panel: current stage,
-per-page progress for OCR, estimated remaining time, cancel, and a retry button on
-failure with the error explained in user language (not a stack trace).
-
-### 8. Fixtures and tests
-
-Add to the corpus: a clean scan, a poor-quality phone photo of a page, a
-handwritten-annotation page, a Turkish/Arabic/Chinese multilingual document, a
-mixed digital+scanned PDF, and a 900-page scan. Assert tier selection per page,
-bbox accuracy on scans, and confidence reporting.
-
-## Acceptance criteria
-
-- [ ] A scanned PDF that failed in Phase 07 now ingests, answers questions, and
-      highlights citations on the correct region of the correct page.
-- [ ] A mixed document OCRs only its scanned pages, verified by per-page tier logs.
-- [ ] `lang_list` measurably improves accuracy on the multilingual fixture.
-- [ ] `quality: "advanced"` produces better structure on the hard-layout fixture
-      than `standard`, and the difference is visible in the eval numbers.
-- [ ] OCR confidence is stored and shown in the UI.
-- [ ] The 50-page scanned fixture reaches `ready` in under 2 minutes on CPU.
-- [ ] The 900-page fixture completes and survives a mid-job worker restart.
-- [ ] The default image contains no AGPL or non-commercial dependency; a CI
-      license-audit job asserts this.
-- [ ] Citation accuracy on scanned documents stays ≥ 95%.
+- [ ] **Scanned Documents:** A scanned PDF that failed in Phase 07 ingests cleanly, answers queries, and highlights citations on the exact text rectangle of the scanned page ($\ge 95\%$ citation accuracy).
+- [ ] **Per-Page Tiering:** Mixed documents run native text extraction on digital pages and OCR exclusively on scanned pages.
+- [ ] **Multilingual Support:** Auto-detection and explicit `lang_list` produce accurate text across Turkish, Arabic, and CJK fixtures.
+- [ ] **Tables & Figures:** Scanned tables generate structured `tableJson`; figures are extracted to storage, captioned when `llm: true`, and retrievable via chat search.
+- [ ] **Advanced VLM Tier:** `quality: "advanced"` resolves complex layouts accurately; hybrid reconciliation prevents number/date hallucination.
+- [ ] **Licensing Discipline:** Default build contains zero AGPL/GPL dependencies, verified by automated CI license checks.
+- [ ] **Scale & Resilience:** A 900-page scan completes within a 2GB RAM budget and seamlessly resumes from checkpoint following simulated `kill -9` worker termination.
+- [ ] **Streamed Partial Readiness:** Chat answers over early pages become available while remaining batches continue processing.
+- [ ] **Performance Budget:** A 50-page scanned PDF reaches `ready` in under 2 minutes on a standard 4-core CPU.

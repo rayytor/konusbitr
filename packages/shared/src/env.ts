@@ -101,6 +101,21 @@ export const EnvSchema = z.object({
   S3_SECRET_ACCESS_KEY: nonEmpty,
   /** MinIO and most non-AWS endpoints need path-style addressing. */
   S3_FORCE_PATH_STYLE: z.stringbool().default(false),
+  /**
+   * The storage endpoint a **browser** can reach, when it differs from the one
+   * the server reaches.
+   *
+   * Compose is the case this exists for: the web container resolves
+   * `http://minio:9000` on the Docker network, and a browser on the host does
+   * not. Presigned URLs are handed to the browser — the direct upload PUT, and
+   * the GET the Phase 11 viewer streams the PDF from — so they have to be
+   * signed against the origin the browser will actually use. SigV4 covers the
+   * `Host` header, so this cannot be fixed by rewriting the URL afterwards.
+   *
+   * Unset means "the same endpoint", which is the truth for S3, R2, B2 and for
+   * a natively-run development stack.
+   */
+  S3_PUBLIC_ENDPOINT: httpUrl.optional(),
 
   // Ingest limits. Both are ceilings an operator raises or lowers; neither is a
   // product decision, which is why they are configuration rather than constants.

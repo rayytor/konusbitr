@@ -12,6 +12,12 @@ build/
 out/
 *.tsbuildinfo
 
+# PDF.js runtime data (cMaps, standard fonts, WASM decoders), copied out of the
+# installed package by `scripts/copy-pdfjs-assets.mjs` before dev and build so
+# that they are served from our own origin rather than a CDN. Version-locked to
+# the lockfile, so committing them would only be a second copy to keep in step.
+apps/web/public/pdfjs/
+
 # Caches
 .turbo/
 .cache/
@@ -43,3 +49,16 @@ Thumbs.db
 # Compose merges this automatically and it is nobody else's business.
 docker-compose.override.yml
 docker-compose.override.yaml
+
+# Playwright
+apps/web/e2e/.results/
+apps/web/playwright-report/
+apps/web/test-results/
+apps/web/e2e/.auth/
+
+# Personal desktop-launcher integration (machine-specific absolute paths).
+/launch.sh
+/konusbitr.desktop
+/icon.svg
+/icon_DARK.svg
+/icon_LIGHT.svg

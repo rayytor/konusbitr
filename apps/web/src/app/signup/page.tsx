@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { AuthShell } from '@/components/auth/auth-shell';
 import { SignupForm } from '@/components/auth/signup-form';
+import { SkipButton } from '@/components/auth/skip-button';
 import { SocialButtons } from '@/components/auth/social-buttons';
 import { enabledSocialProviders } from '@/lib/auth/config';
 import { safeRedirect, withRedirect } from '@/lib/auth/redirect';
@@ -26,6 +27,7 @@ export default async function SignupPage({
     <AuthShell
       title="Create an account"
       description="You will get a workspace of your own to start with."
+      headerAction={<SkipButton redirectTo={redirectTo} />}
       footer={
         <>
           Already have an account?{' '}

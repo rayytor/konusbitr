@@ -204,6 +204,32 @@ describe('sign-in', () => {
     const session = await auth.api.getSession({ headers: headersWith(cookie) });
     expect(session?.user.email).toBe(email);
   });
+
+  it('signs in as a guest, creates an organization and sets the session cookie', async () => {
+    const response = await auth.handler(
+      new Request(`${APP_URL}/api/auth/sign-in/guest`, {
+        method: 'POST',
+        headers: new Headers({ origin: APP_URL }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.get('set-cookie');
+    expect(setCookie).toBeTruthy();
+
+    const cookie = setCookie?.split(';')[0] ?? '';
+    const session = await auth.api.getSession({ headers: headersWith(cookie) });
+
+    expect(session).toBeDefined();
+    if (!session) throw new Error('no session returned');
+    expect(session.user.email).toMatch(/^guest-[a-f0-9]+@konusbitr\.local$/);
+    expect(session.user.emailVerified).toBe(true);
+
+    const orgs = await organizationsOf(db, session.user.id);
+    expect(orgs).toHaveLength(1);
+    expect(orgs[0]?.role).toBe('owner');
+    expect(session.session.activeOrganizationId).toBe(orgs[0]?.id);
+  });
 });
 
 // ─── API keys ────────────────────────────────────────────────────────────────

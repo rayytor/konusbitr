@@ -33,6 +33,19 @@ export async function userByEmail(db: Database, email: string) {
   return row;
 }
 
+/**
+ * Mark an address verified, the way clicking the emailed link would.
+ *
+ * The end-to-end run signs up through the real form and then needs a verified
+ * account. The alternative is scraping the verification link out of the
+ * server's log, which couples a test to a log format and stops working the
+ * moment SMTP is configured — so the test does to the column what the link
+ * would have done, and everything else about sign-in stays real.
+ */
+export async function markEmailVerified(db: Database, email: string): Promise<void> {
+  await db.update(schema.users).set({ emailVerified: true }).where(eq(schema.users.email, email));
+}
+
 /** Whether an organization still exists. */
 export async function organizationExists(db: Database, orgId: string): Promise<boolean> {
   const rows = await db

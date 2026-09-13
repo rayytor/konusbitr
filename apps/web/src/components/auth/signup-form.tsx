@@ -26,8 +26,31 @@ export function SignupForm({ redirectTo }: { redirectTo: string }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState(false);
+
+  async function handleSkip() {
+    setSkipping(true);
+    setError(undefined);
+
+    try {
+      const response = await fetch('/api/auth/sign-in/guest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        throw new Error('Guest sign-in failed');
+      }
+
+      window.location.assign(redirectTo);
+    } catch {
+      setError('We could not set up a guest workspace. Try again in a moment.');
+      setSkipping(false);
+    }
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -113,9 +136,19 @@ export function SignupForm({ redirectTo }: { redirectTo: string }) {
         )}
       </Field>
 
-      <Button type="submit" disabled={pending}>
-        {pending ? 'Creating your workspace…' : 'Create account'}
-      </Button>
+      <div className="flex flex-col gap-2.5">
+        <Button type="submit" disabled={pending || skipping}>
+          {pending ? 'Creating your workspace…' : 'Create account'}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={pending || skipping}
+          onClick={handleSkip}
+        >
+          {skipping ? 'Entering workspace…' : 'Skip for now'}
+        </Button>
+      </div>
     </form>
   );
 }

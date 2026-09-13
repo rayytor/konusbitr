@@ -13,8 +13,15 @@
  * Better Auth's `callbackURL` would both happily follow an absolute URL.
  */
 
-/** Where a sign-in that asked for nothing in particular ends up. */
-export const DEFAULT_REDIRECT = '/settings/api-keys';
+/**
+ * Where a sign-in that asked for nothing in particular ends up.
+ *
+ * The library, as of Phase 11. Before there was a product to land in, this was
+ * the API keys page — which was the only surface worth arriving at. It is not
+ * any more, and the first screen after signing in should be the one the product
+ * is for.
+ */
+export const DEFAULT_REDIRECT = '/documents';
 
 /**
  * Narrow a `?redirect=` query parameter to a same-origin path.
@@ -38,7 +45,6 @@ export function safeRedirect(
   // Control characters, including the tab, newline and carriage return that a
   // browser strips before parsing a URL — which is how `/\t/evil.example` gets
   // past a check that only looks at the first two characters.
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point
   if (/[\u0000-\u001f\u007f]/.test(value)) return fallback;
 
   return value;

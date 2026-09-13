@@ -36,7 +36,6 @@ export default async function ApiKeysPage() {
   return (
     <SettingsShell
       session={session}
-      active="/settings/api-keys"
       title="API keys"
       description="Keys authenticate requests to the Konusbitr API. Each one carries the scopes you give it and nothing more."
     >

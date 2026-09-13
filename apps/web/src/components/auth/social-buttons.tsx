@@ -46,7 +46,7 @@ export function SocialButtons({
         ))}
       </div>
 
-      <div className="flex items-center gap-3 text-[12px] text-foreground-subtle">
+      <div className="flex items-center gap-3 text-[13px] text-foreground-subtle">
         <span className="h-px flex-1 bg-border-subtle" />
         or
         <span className="h-px flex-1 bg-border-subtle" />

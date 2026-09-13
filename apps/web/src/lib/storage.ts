@@ -19,6 +19,7 @@ export function storage(): Storage {
     accessKeyId: env.S3_ACCESS_KEY_ID,
     secretAccessKey: env.S3_SECRET_ACCESS_KEY,
     forcePathStyle: env.S3_FORCE_PATH_STYLE,
+    publicEndpoint: env.S3_PUBLIC_ENDPOINT,
   });
   return globalForStorage.konusbitrStorage;
 }

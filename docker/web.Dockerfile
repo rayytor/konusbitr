@@ -40,6 +40,7 @@ COPY . .
 # the build context.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --prefer-offline --ignore-scripts
+ENV STANDALONE=true
 RUN pnpm --filter @konusbitr/web build
 
 # ------------------------------------------------------------------ runtime --

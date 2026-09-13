@@ -24,7 +24,7 @@ export function getChatLanguageModel(env: Env, options?: { fetchImpl?: typeof fe
   });
 
   return {
-    model: provider(resolved.model) as LanguageModel,
+    model: provider.chat(resolved.model) as LanguageModel,
     resolved,
   };
 }

@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
   // Self-contained server output for docker/web.Dockerfile: Next traces exactly
   // the files the server can reach and copies them into .next/standalone, so
   // the runtime image needs neither pnpm nor node_modules.
-  output: 'standalone',
+  output: process.env.STANDALONE === 'true' ? 'standalone' : undefined,
   // Tracing has to start at the monorepo root, otherwise workspace packages
   // resolved through the root node_modules are missed and the container fails
   // at first request instead of at build.

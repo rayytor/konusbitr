@@ -42,13 +42,13 @@ export function Field({ id, label, hint, error, children }: FieldProps) {
   const describedBy = `${id}-description`;
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-[13px] text-foreground-muted">
+      <label htmlFor={id} className="text-[15px] text-foreground-muted">
         {label}
       </label>
       {children({ id, 'aria-describedby': describedBy, 'aria-invalid': Boolean(error) })}
       <p
         id={describedBy}
-        className={cn('text-[12px]', error ? 'text-danger' : 'text-foreground-subtle')}
+        className={cn('text-[13px]', error ? 'text-danger' : 'text-foreground-subtle')}
       >
         {/* One node for both states so a screen reader reading the description
             hears the error in the same place it heard the hint. */}

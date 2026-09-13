@@ -17,6 +17,20 @@ cd "$ROOT"
 
 "$ROOT/scripts/infra.sh" up
 
+# The environment lives in one `.env` at the repository root, because both
+# halves of the stack read it and `docker-compose.yml` points `env_file` at it.
+# Next.js and uv each look only in their own directory, so it is exported here
+# rather than duplicated into two more files that would drift.
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+else
+  echo "dev: no .env found. Run: cp .env.example .env" >&2
+  exit 1
+fi
+
 pids=()
 
 cleanup() {

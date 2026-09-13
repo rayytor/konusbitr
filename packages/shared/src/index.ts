@@ -144,6 +144,8 @@ export {
   PresignRequestSchema,
   type PresignResponse,
   PresignResponseSchema,
+  type RenameDocumentRequest,
+  RenameDocumentRequestSchema,
   SUPPORTED_UPLOAD_MIMES,
   sanitizeFilename,
   UPLOAD_ACCEPT_ATTRIBUTE,

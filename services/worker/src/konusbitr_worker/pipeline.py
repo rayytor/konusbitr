@@ -125,6 +125,11 @@ async def run_job(
         artifact_contents = cached.contents
         page_count = cached.page_count or document.page_count
         reused = True
+        await _upsert_cached_pages(
+            database,
+            document_id=document.id,
+            artifact_contents=artifact_contents,
+        )
     elif payload.type is JobType.parse:
         artifact = await parse_document(
             store=store or ObjectStore.from_settings(settings),
@@ -326,6 +331,33 @@ async def _persist_parse(
                 thumbnail_key=page.thumbnail_key,
             )
             for page in artifact.pages
+        ],
+    )
+
+
+async def _upsert_cached_pages(
+    database: Database,
+    *,
+    document_id: str,
+    artifact_contents: dict[str, Any] | list[Any],
+) -> None:
+    if not isinstance(artifact_contents, dict):
+        return
+    pages_data = artifact_contents.get("pages")
+    if not isinstance(pages_data, list) or not pages_data:
+        return
+    await database.upsert_pages(
+        document_id=document_id,
+        pages=[
+            PageRow(
+                id=new_id(ID_PREFIXES["page"]),
+                page_no=p.get("pageNo", p.get("page_no")),
+                width=round(p.get("width", 0)),
+                height=round(p.get("height", 0)),
+                thumbnail_key=p.get("thumbnailKey", p.get("thumbnail_key")),
+            )
+            for p in pages_data
+            if isinstance(p, dict) and ("pageNo" in p or "page_no" in p)
         ],
     )
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, ChevronsUpDown } from 'lucide-react';
+import { Check, ChevronsUpDown, User } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { authClient } from '@/lib/auth/client';
@@ -22,9 +22,11 @@ type Organization = { id: string; name: string; slug: string; role: string };
 export function OrgSwitcher({
   organizations,
   activeOrgId,
+  isGuest,
 }: {
   organizations: Organization[];
   activeOrgId: string;
+  isGuest?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -66,7 +68,14 @@ export function OrgSwitcher({
   // One organization is the common case and a switcher with nothing to switch
   // to is clutter, so it renders as plain text.
   if (organizations.length <= 1) {
-    return <span className="text-sm text-foreground">{active?.name ?? 'Workspace'}</span>;
+    return (
+      <span className="flex items-center gap-1.5 text-[15px] text-foreground">
+        {isGuest ? (
+          <User aria-label="Guest user" className="size-3.5 shrink-0 text-foreground-muted" />
+        ) : null}
+        <span className="truncate">{active?.name ?? 'Workspace'}</span>
+      </span>
+    );
   }
 
   return (
@@ -78,12 +87,15 @@ export function OrgSwitcher({
         disabled={pending}
         onClick={() => setOpen((value) => !value)}
         className={cn(
-          'flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 text-sm',
+          'flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 text-[15px]',
           'hover:bg-surface-muted',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
         )}
       >
-        {active?.name ?? 'Workspace'}
+        {isGuest ? (
+          <User aria-label="Guest user" className="size-3.5 shrink-0 text-foreground-muted" />
+        ) : null}
+        <span className="truncate">{active?.name ?? 'Workspace'}</span>
         <ChevronsUpDown aria-hidden className="size-3.5 text-foreground-subtle" />
       </button>
 
@@ -104,11 +116,11 @@ export function OrgSwitcher({
                   type="button"
                   aria-current={current ? 'true' : undefined}
                   onClick={() => void choose(org.id)}
-                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-surface-muted focus-visible:outline-none focus-visible:bg-surface-muted"
+                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-2 text-left text-[15px] hover:bg-surface-muted focus-visible:outline-none focus-visible:bg-surface-muted"
                 >
                   <span className="truncate">{org.name}</span>
                   <span className="flex items-center gap-2">
-                    <span className="text-[12px] text-foreground-subtle">{org.role}</span>
+                    <span className="text-[13px] text-foreground-subtle">{org.role}</span>
                     {current ? <Check aria-hidden className="size-3.5" /> : null}
                   </span>
                 </button>

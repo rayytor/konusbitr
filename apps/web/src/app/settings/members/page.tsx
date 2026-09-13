@@ -39,7 +39,6 @@ export default async function MembersPage() {
   return (
     <SettingsShell
       session={session}
-      active="/settings/members"
       title="Members"
       description="Who can reach this workspace, and what they can do in it."
     >

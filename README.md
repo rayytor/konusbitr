@@ -5,9 +5,11 @@ documents, chat with them, and get answers with **clickable, page-accurate
 citations** — then drive the whole thing through a PDF.ai-wire-compatible `/v2`
 REST API.
 
-> **Status: early.** This repository is being built phase by phase (see
-> [`phases/`](./phases)). Phases 01–02 lay the monorepo foundation and the
-> one-command local stack; the product itself ships at Phase 11.
+> **Status: `v0.1.0` — the product works end to end.** Upload a PDF, ask a
+> question, and every sentence of the answer carries the page it came from.
+> Click a page reference and the viewer scrolls there and highlights the exact
+> region on the page. Phases 12–15 add breadth (OCR, the public API, billing,
+> distribution); see [`phases/`](./phases).
 
 ## Why two runtimes
 
@@ -27,11 +29,15 @@ records why the transport is a plain stream rather than a job library.
 
 | Path | What lives there |
 |---|---|
-| `apps/web` | Next.js 15 App Router, React 19, Tailwind v4, shadcn/ui |
+| `apps/web` | Next.js 15 App Router, React 19, Tailwind v4, the viewer and the chat UI |
 | `apps/extension` | WXT Chrome extension (Phase 15) |
 | `services/worker` | Python 3.12, FastAPI + a Redis-stream consumer, package `konusbitr_worker` |
 | `packages/shared` | Zod schemas and types — the cross-boundary source of truth |
 | `packages/db` | Drizzle schema, migrations, scoped client |
+| `packages/ai` | Model router and versioned prompt files |
+| `packages/retrieval` | Hybrid search, RRF fusion, rerank |
+| `packages/storage` | S3-compatible object store client |
+| `evals/` | The golden set, the retrieval and chat harnesses, recorded results |
 | `packages/sdk` | Generated TypeScript client (Phase 13) |
 | `packages/tsconfig` | Shared strict TypeScript configuration |
 | `docker/` | Dockerfiles and the scripts that bootstrap the stack |
@@ -61,6 +67,54 @@ model pre-pulled — the fully-offline mode that a hosted service cannot offer.
 The credentials in `.env.example` are development defaults. Change every one of
 them before exposing Konusbitr to a network — `AUTH_SECRET` in particular, which
 the app refuses to start with as soon as `APP_URL` stops being localhost.
+
+### From zero to a cited answer
+
+With the stack up:
+
+1. Create an account at `http://localhost:3000/signup`.
+2. `SMTP_URL` is unset by default, so the verification link is printed to the
+   web server's log instead of emailed. Find it with
+   `docker compose logs web | grep -A3 "Verify your Konusbitr email"` and open
+   it.
+3. You land in the library. Drop a PDF on the upload strip — or use
+   `fixtures/pdf/text-50p.pdf` from this repository. The status badge walks from
+   *Queued* to *Ready* over a live stream; nothing needs reloading.
+4. Open it. The document is on the left and the chat is on the right; drag the
+   divider, or press `⌘K` for everything the workspace can do.
+5. Ask a question. The answer streams, and each claim ends in a page reference
+   like `p. 42`. **Click it.** The viewer scrolls to that page and highlights
+   the exact passage the claim came from.
+
+Step 5 is the product. Every citation is checked against the text of the page it
+names before it reaches the browser, and any that cannot be verified is dropped
+rather than shown.
+
+**No API key is required for steps 1 to 4.** Step 5 needs a chat model. The
+fastest way to one that costs nothing and sends nothing anywhere:
+
+```bash
+docker compose --profile local-llm up
+```
+
+That adds Ollama with a chat and an embedding model pre-pulled. Set
+`OFFLINE_MODE=true` in `.env` and Konusbitr will refuse to start if any role is
+still pointed at a cloud provider — the offline claim is enforced at boot and
+again at every call, not documented and hoped for.
+
+Alternatively, name a hosted model:
+
+```bash
+LLM_PROVIDER=openai
+LLM_API_KEY=sk-…
+LLM_CHAT_MODEL=gpt-4o-mini
+EMBEDDING_MODEL=openai/text-embedding-3-large
+```
+
+With no embedding model configured — the default — passages are stored without
+vectors and retrieval is keyword-only. That is a supported state, not a broken
+one; `POST /api/documents/:id/reindex` fills the vectors in once a model is
+named.
 
 ### Signing in
 
@@ -103,6 +157,23 @@ The standard gate, which is also what CI runs:
 pnpm turbo build lint typecheck test
 cd services/worker && uv sync && uv run pytest
 ```
+
+The end-to-end suite drives a real browser against a production build, a real
+Postgres, a real MinIO and the real worker. Only the chat model is substituted,
+by a stub that quotes the first retrieved passage back verbatim — so the
+citation the test clicks is deterministic while retrieval, verification, the
+parse geometry and the viewer are all the real thing:
+
+```bash
+pnpm dev:infra && pnpm dev:worker   # in one terminal
+pnpm test:e2e                        # in another
+```
+
+The assertion that matters is in `apps/web/e2e/citation.spec.ts`: after clicking
+a citation, the highlight rectangle must land within two pixels of where the
+stored bounding box says it belongs. A viewer that draws highlights in roughly
+the right place looks fine in a screenshot and means the coordinate convention
+has drifted.
 
 `make help` lists the container shortcuts (`up`, `migrate`, `down`, `reset`,
 `logs`, `psql`); each one also exists as a `pnpm infra:*` script.

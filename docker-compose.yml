@@ -156,6 +156,11 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-konusbitr}:${POSTGRES_PASSWORD:-konusbitr}@postgres:5432/${POSTGRES_DB:-konusbitr}
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
+      # The browser is not on the Docker network. Presigned URLs — the direct
+      # upload PUT and the GET the viewer streams the PDF from — are signed
+      # against this origin instead, because SigV4 covers the Host header and a
+      # URL signed for `minio:9000` cannot be rewritten after the fact.
+      S3_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
       OLLAMA_BASE_URL: http://ollama:11434
       HOSTNAME: 0.0.0.0
       PORT: '3000'

@@ -146,6 +146,20 @@ export const CreateFromUrlRequestSchema = CreateDocumentRequestSchema.omit({
 
 export type CreateFromUrlRequest = z.infer<typeof CreateFromUrlRequestSchema>;
 
+/**
+ * `PATCH /api/documents/:id` — change the label, nothing else.
+ *
+ * A rename cannot invalidate the docId cache and cannot move an object: the
+ * cache key is the file's bytes plus its parse settings, and the storage key is
+ * derived from the generated document id. The filename has only ever been a
+ * display string, which is what makes this the one-column update it looks like.
+ */
+export const RenameDocumentRequestSchema = z.object({
+  filename: z.string().trim().min(1).max(512),
+});
+
+export type RenameDocumentRequest = z.infer<typeof RenameDocumentRequestSchema>;
+
 /** A document as every read endpoint presents it. */
 export const DocumentViewSchema = z.object({
   id: z.string(),

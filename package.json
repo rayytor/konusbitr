@@ -12,6 +12,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "./scripts/dev.sh",
+    "launch": "./launch.sh",
     "dev:web": "turbo run dev --filter @konusbitr/web",
     "dev:worker": "cd services/worker && uv run python -m konusbitr_worker",
     "dev:infra": "./scripts/infra.sh up",
@@ -28,10 +29,10 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
+    "test:e2e": "pnpm --filter @konusbitr/web test:e2e",
     "eval:retrieval": "pnpm --filter @konusbitr/evals eval:retrieval",
     "eval:chat": "pnpm --filter @konusbitr/evals eval:chat",
     "benchmark:retrieval": "pnpm --filter @konusbitr/evals benchmark:retrieval",
-
     "db:migrate": "pnpm --filter @konusbitr/db db:migrate",
     "db:seed": "pnpm --filter @konusbitr/db db:seed",
     "codegen": "./scripts/codegen.sh",

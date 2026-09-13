@@ -49,12 +49,14 @@ export function DocumentStatus({
   status,
   stage,
   percent,
+  showProgressBar = false,
   className,
 }: {
   status: string;
   /** A live stage from SSE, which wins over the row's status when present. */
   stage?: string;
   percent?: number;
+  showProgressBar?: boolean;
   className?: string;
 }) {
   const fromStage = stage === undefined ? undefined : STAGE_LABELS[stage];
@@ -64,16 +66,24 @@ export function DocumentStatus({
 
   // Shown only while something is actually happening: "Ready 100%" is noise,
   // and a percentage next to "Failed" reads as a bug.
-  const showPercent =
-    percent !== undefined && resolved !== 'ready' && resolved !== 'failed' && percent > 0;
+  const isWorking = resolved !== 'ready' && resolved !== 'failed';
+  const showPercent = percent !== undefined && isWorking && percent > 0;
 
   return (
     <span
-      className={cn('inline-flex items-center gap-1.5 text-[12px]', entry.className, className)}
+      className={cn('inline-flex items-center gap-1.5 text-[13px]', entry.className, className)}
     >
       <Icon aria-hidden className="size-3.5 shrink-0" />
       {entry.label}
       {showPercent ? <span className="tabular-nums">{Math.round(percent)}%</span> : null}
+      {showProgressBar && isWorking ? (
+        <progress
+          max={100}
+          value={percent !== undefined && percent > 0 ? percent : undefined}
+          aria-label={`${entry.label} progress: ${percent !== undefined ? Math.round(percent) : 0}%`}
+          className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-muted [&::-webkit-progress-bar]:bg-surface-muted [&::-webkit-progress-value]:bg-accent [&::-moz-progress-bar]:bg-accent"
+        />
+      ) : null}
     </span>
   );
 }

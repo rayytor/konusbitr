@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { db } from '../db';
 import { auth } from './config';
 import type { MembershipRole } from './context';
+import { isGuestEmail } from './guest';
 
 /**
  * Server-component helpers for the pages behind a login.
@@ -21,6 +22,7 @@ export type PageSession = {
   orgId: string;
   role: MembershipRole;
   organizations: { id: string; name: string; slug: string; role: MembershipRole }[];
+  isGuest?: boolean;
 };
 
 /** The signed-in user and their active organization, or `null`. */
@@ -41,6 +43,7 @@ export async function currentSession(): Promise<PageSession | null> {
     orgId,
     role: membership.role,
     organizations: await organizationsOf(db(), session.user.id),
+    isGuest: isGuestEmail(session.user.email),
   };
 }
 

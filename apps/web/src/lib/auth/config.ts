@@ -15,6 +15,7 @@ import { db } from '../db';
 import { isSecureOrigin, loadWebEnv, type WebEnv } from '../env';
 import { redis } from '../redis';
 import { mailer } from './email';
+import { guestPlugin } from './guest';
 import { createRedisRateLimiter } from './rate-limit';
 import * as tables from './tables';
 
@@ -225,6 +226,7 @@ export function createAuth({ env, database, rateLimiter, mail }: CreateAuthOptio
         '/sign-in/email': { window: 60, max: 10 },
         '/sign-up/email': { window: 60 * 60, max: 10 },
         '/sign-in/magic-link': { window: 60 * 10, max: 5 },
+        '/sign-in/guest': { window: 60, max: 15 },
         '/organization/accept-invitation': { window: 60 * 10, max: 10 },
       },
     },
@@ -287,6 +289,8 @@ export function createAuth({ env, database, rateLimiter, mail }: CreateAuthOptio
           });
         },
       }),
+
+      guestPlugin(),
 
       // Must stay last: it wraps the handlers that came before so that
       // `Set-Cookie` survives a server action.

@@ -205,6 +205,7 @@ export async function handleChatStream(
           conversationId: conv.id,
           messageId: assistantMsg.id,
           citationsCount: verified.length,
+          cleanAnswer,
         });
       } catch (streamError) {
         const message = streamError instanceof Error ? streamError.message : String(streamError);

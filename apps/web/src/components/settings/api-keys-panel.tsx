@@ -93,8 +93,8 @@ export function ApiKeysPanel({ initialKeys }: { initialKeys: ApiKeyView[] }) {
     <div className="flex flex-col gap-10">
       {created ? (
         <section className="rounded-[var(--radius-md)] border border-accent-muted bg-surface p-4">
-          <h2 className="font-serif text-[22px] leading-tight">Copy your key now</h2>
-          <p className="mt-1 text-[13px] leading-relaxed text-foreground-muted">
+          <h2 className="font-serif text-[18px] leading-tight">Copy your key now</h2>
+          <p className="mt-1 text-[15px] leading-relaxed text-foreground-muted">
             This is the only time “{created.name}” is shown in full. Konusbitr stores a hash of it,
             so it cannot be shown again — if you lose it, create another.
           </p>
@@ -142,10 +142,10 @@ export function ApiKeysPanel({ initialKeys }: { initialKeys: ApiKeyView[] }) {
         </Field>
 
         <fieldset className="flex flex-col gap-2">
-          <legend className="text-[13px] text-foreground-muted">Scopes</legend>
+          <legend className="text-[15px] text-foreground-muted">Scopes</legend>
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             {API_SCOPES.map((scope) => (
-              <label key={scope} className="flex cursor-pointer items-center gap-2 text-sm">
+              <label key={scope} className="flex cursor-pointer items-center gap-2 text-[15px]">
                 <input
                   type="checkbox"
                   className="size-4 accent-[var(--accent)]"
@@ -189,15 +189,15 @@ export function ApiKeysPanel({ initialKeys }: { initialKeys: ApiKeyView[] }) {
                   <p className="flex items-center gap-2 text-[15px]">
                     <span className="truncate">{key.name}</span>
                     {key.revokedAt ? (
-                      <span className="shrink-0 rounded-[var(--radius-sm)] bg-surface-muted px-1.5 py-0.5 text-[12px] text-foreground-muted">
+                      <span className="shrink-0 rounded-[var(--radius-sm)] bg-surface-muted px-1.5 py-0.5 text-[13px] text-foreground-muted">
                         Revoked
                       </span>
                     ) : null}
                   </p>
-                  <p className="mt-1 font-mono text-[12px] text-foreground-subtle">{key.prefix}…</p>
+                  <p className="mt-1 font-mono text-[13px] text-foreground-subtle">{key.prefix}…</p>
                 </div>
 
-                <dl className="flex gap-6 text-[12px] text-foreground-muted">
+                <dl className="flex gap-6 text-[13px] text-foreground-muted">
                   <div>
                     <dt className="text-foreground-subtle">Last used</dt>
                     <dd>{formatDate(key.lastUsedAt)}</dd>

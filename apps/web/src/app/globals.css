@@ -1,34 +1,77 @@
 @import "tailwindcss";
 
 /*
- * Sepia light — the default theme. Warm archival paper, never pure white.
- * Token values come from design.md §3 (colour), §13 (radius) and §19 (motion).
- * A dark theme is an alternative, not a default; it arrives with the settings
- * surface in a later phase.
+ * The Konusbitr palette.
+ *
+ * Sepia light is the default — warm archival paper, never pure white — and its
+ * values come from `design.md` §3. Everything below the first block is either
+ * an addition the specification implies but does not enumerate (the highlight
+ * colours a citation is drawn in, the page-shadow the viewer needs so a page
+ * reads as paper on paper) or the dark theme, which §3 permits as an
+ * alternative and never as a default.
+ *
+ * Three theme states, in one order that must not change:
+ *   :root                                   — light, always fully defined
+ *   :root:not([data-theme='light']) @media  — the system preference
+ *   :root[data-theme='dark']                — an explicit choice, which wins
+ * A colour whose only definition lives inside a media query is a colour that
+ * disappears when someone toggles the theme by hand.
  */
 :root {
   --background: #f5f0e6;
   --surface: #fbf8f0;
   --surface-muted: #eee7d9;
+  /* Behind the pages in the viewer: a shade deeper than the app, so a sheet of
+     paper reads as a sheet of paper rather than as a panel. */
+  --surface-sunken: #e9e2d3;
 
   --foreground: #29251f;
   --foreground-muted: #70695d;
-  --foreground-subtle: #958d80;
+  --foreground-subtle: #6c6559;
 
   --border: #d8d0c2;
   --border-subtle: #e5ded1;
 
   --primary: #29251f;
   --primary-foreground: #fbf8f0;
+  /* The one hover value a solid button is allowed: an immediate surface change,
+     never a transition. See `design.md` §20. */
+  --primary-hover: #3a352d;
 
   --accent: #8a6545;
   --accent-muted: #e7d9c7;
+  --accent-contrast: #6f4f34;
 
   --success: #5f7058;
   --warning: #9a7443;
   --danger: #9a5149;
 
   --selection: #e5d5b9;
+
+  /*
+   * Citation highlighting.
+   *
+   * Drawn *under* the text layer and composited with `multiply`, so the words
+   * stay black on amber rather than being covered by a floating rectangle —
+   * `design.md` §7 asks for exactly that, and it is also the only way a reader
+   * can check the quote they clicked.
+   */
+  --highlight: #f2d79a;
+  --highlight-active: #e8b962;
+  --highlight-ring: #b98230;
+
+  /* The viewer's own surfaces: a page, and the shadow that separates it. */
+  --page: #ffffff;
+  --page-shadow: 0 1px 2px rgb(41 37 31 / 0.1), 0 6px 18px -8px rgb(41 37 31 / 0.18);
+  /*
+   * Dark mode dims the page; it never inverts it.
+   *
+   * An inverted scan is unreadable and an inverted photograph is a lie about
+   * the document. Brightness and a trace of warmth take the glare off a white
+   * page on a dark ground and leave every pixel in its right relationship to
+   * every other one.
+   */
+  --page-filter: none;
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -37,12 +80,98 @@
   --motion-fast: 120ms;
   --motion-normal: 180ms;
   --motion-slow: 280ms;
+
+  color-scheme: light;
+}
+
+/*
+ * Warm dark — ink and lamplight, not a cold grey dashboard. Hues are carried
+ * over from the light theme so the product reads as the same product: the
+ * accent is still a warm brown, the highlight is still amber.
+ */
+:root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) {
+    --background: #17150f;
+    --surface: #1e1b15;
+    --surface-muted: #272219;
+    --surface-sunken: #100e0a;
+
+    --foreground: #ede7db;
+    --foreground-muted: #a9a091;
+    --foreground-subtle: #9c9486;
+
+    --border: #383225;
+    --border-subtle: #2a251b;
+
+    --primary: #ede7db;
+    --primary-foreground: #17150f;
+    --primary-hover: #d8d1c4;
+
+    --accent: #c79a6d;
+    --accent-muted: #3a2e21;
+    --accent-contrast: #dbb082;
+
+    --success: #8aa37f;
+    --warning: #cfa568;
+    --danger: #d08279;
+
+    --selection: #453a26;
+
+    --highlight: #8a6a2c;
+    --highlight-active: #c99843;
+    --highlight-ring: #e0b96a;
+
+    --page: #ffffff;
+    --page-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 8px 24px -10px rgb(0 0 0 / 0.6);
+    --page-filter: brightness(0.84) contrast(1.03) sepia(0.05);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: #17150f;
+  --surface: #1e1b15;
+  --surface-muted: #272219;
+  --surface-sunken: #100e0a;
+
+  --foreground: #ede7db;
+  --foreground-muted: #a9a091;
+  --foreground-subtle: #9c9486;
+
+  --border: #383225;
+  --border-subtle: #2a251b;
+
+  --primary: #ede7db;
+  --primary-foreground: #17150f;
+  --primary-hover: #d8d1c4;
+
+  --accent: #c79a6d;
+  --accent-muted: #3a2e21;
+  --accent-contrast: #dbb082;
+
+  --success: #8aa37f;
+  --warning: #cfa568;
+  --danger: #d08279;
+
+  --selection: #453a26;
+
+  --highlight: #8a6a2c;
+  --highlight-active: #c99843;
+  --highlight-ring: #e0b96a;
+
+  --page: #ffffff;
+  --page-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 8px 24px -10px rgb(0 0 0 / 0.6);
+  --page-filter: brightness(0.84) contrast(1.03) sepia(0.05);
+
+  color-scheme: dark;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
+  --color-surface-sunken: var(--surface-sunken);
 
   --color-foreground: var(--foreground);
   --color-foreground-muted: var(--foreground-muted);
@@ -56,10 +185,15 @@
 
   --color-accent: var(--accent);
   --color-accent-muted: var(--accent-muted);
+  --color-accent-contrast: var(--accent-contrast);
 
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
+
+  --color-highlight: var(--highlight);
+  --color-highlight-active: var(--highlight-active);
+  --color-page: var(--page);
 
   --font-sans: var(--font-line-seed-jp), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
@@ -74,6 +208,12 @@
     background-color: var(--selection);
   }
 
+  html {
+    /* The workspace owns its own scrolling; the document behind it must not
+       bounce when a pane hits its end. */
+    overscroll-behavior-y: none;
+  }
+
   body {
     background-color: var(--background);
     color: var(--foreground);
@@ -82,10 +222,34 @@
   }
 
   /*
-   * Menus and dialogs are one of the few things design.md §19 does animate.
-   * The reduced-motion reset below collapses it to nothing.
+   * One focus ring, everywhere.
+   *
+   * `design.md` §22 makes keyboard focus non-negotiable, and the cheapest way
+   * to break it is a component that forgets to declare one. Declaring it here
+   * means a new component is accessible by default and has to opt *out*.
    */
-  @keyframes kb-menu-enter {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Quiet, warm scrollbars — the viewer has three scroll areas on screen at
+     once and the platform default draws more attention than the document. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+}
+
+@layer components {
+  /*
+   * Motion, and only where `design.md` §19 allows it: menus, dialogs, the
+   * sidebar, citation focus, streaming state. Nothing here is triggered by
+   * hover — §20 forbids that outright, and these classes are applied on mount
+   * or on a state change, never on `:hover`.
+   */
+  @keyframes kb-fade-in {
     from {
       opacity: 0;
     }
@@ -94,10 +258,185 @@
     }
   }
 
+  @keyframes kb-menu-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes kb-dialog-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.99);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /*
+   * A citation arriving. Two pulses of the ring, then it settles into the
+   * persistent highlight and stays there until it is dismissed — §7 asks for
+   * the highlight to remain long enough to establish context, and "long
+   * enough" in a reading tool means "until you say otherwise".
+   */
+  @keyframes kb-citation-flash {
+    0% {
+      box-shadow: 0 0 0 0 var(--highlight-ring);
+    }
+    35% {
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--highlight-ring) 55%, transparent);
+    }
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--highlight-ring) 0%, transparent);
+    }
+  }
+
+  /* The streaming caret: the one continuously-running animation in the
+     product, and it stops the moment the stream does. */
+  @keyframes kb-caret {
+    0%,
+    45% {
+      opacity: 1;
+    }
+    55%,
+    100% {
+      opacity: 0.15;
+    }
+  }
+
+  .kb-fade-in {
+    animation: kb-fade-in var(--motion-fast) ease-out;
+  }
+
+  /* Overlong single-line text ends by fading into the background rather than
+     with an ellipsis: a truncation mark is a glyph the reader has to decode,
+     where a fade simply reads as "there is more". Used by the sidebar identity
+     line, whose width the reader controls. */
+  .kb-fade-edge {
+    overflow: hidden;
+    white-space: nowrap;
+    mask-image: linear-gradient(to right, black calc(100% - 1.75rem), transparent 100%);
+  }
+
   .kb-menu-enter {
     animation: kb-menu-enter var(--motion-fast) ease-out;
   }
 
+  .kb-dialog-enter {
+    animation: kb-dialog-enter var(--motion-normal) cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+
+  .kb-citation-flash {
+    animation: kb-citation-flash var(--motion-slow) ease-out 2;
+  }
+
+  .kb-caret {
+    animation: kb-caret 1s steps(1, end) infinite;
+  }
+
+  /*
+   * The PDF.js text layer.
+   *
+   * Transparent glyphs positioned over the canvas: invisible, selectable, and
+   * findable with the browser's own Ctrl+F. The rules below are the minimum
+   * subset of `pdfjs-dist/web/pdf_viewer.css` that the layer needs to lay
+   * itself out — PDF.js writes `--font-height`, `--scale-x` and `--rotate` onto
+   * each span and expects the stylesheet to turn them into a font size and a
+   * transform. Vendoring the subset rather than importing the whole viewer
+   * stylesheet keeps the default toolbar, sidebar and annotation chrome — none
+   * of which this product uses, and all of which would fight the sepia theme —
+   * out of the bundle.
+   *
+   * The glyphs are `color: transparent` rather than `opacity: 0` because a
+   * zero-opacity layer is skipped by some find-in-page implementations, and
+   * find-in-page is the whole point of having a text layer at all.
+   */
+  .kb-page {
+    --user-unit: 1;
+    --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+    --scale-round-x: 1px;
+    --scale-round-y: 1px;
+  }
+
+  .kb-text-layer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    line-height: 1;
+    text-align: initial;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    caret-color: var(--foreground);
+    z-index: 3;
+
+    --min-font-size: 1;
+    --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+    --min-font-size-inv: calc(1 / var(--min-font-size));
+  }
+
+  .kb-text-layer :is(span, br) {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+    user-select: text;
+  }
+
+  .kb-text-layer > :not(.markedContent),
+  .kb-text-layer .markedContent span:not(.markedContent) {
+    z-index: 1;
+    --font-height: 0;
+    font-size: calc(var(--text-scale-factor) * var(--font-height));
+    --scale-x: 1;
+    --rotate: 0deg;
+    transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+  }
+
+  .kb-text-layer .markedContent {
+    display: contents;
+  }
+
+  .kb-text-layer span[role="img"] {
+    user-select: none;
+    cursor: default;
+  }
+
+  /* Selecting text on the page tints it with the same amber a citation uses,
+     so a selection and a citation read as the same kind of mark. */
+  .kb-text-layer ::selection {
+    background: color-mix(in srgb, var(--highlight-active) 55%, transparent);
+    color: transparent;
+  }
+
+  /*
+   * PDF.js's own trick for making a drag-select reach the bottom of the page:
+   * a zero-height element pinned below the text that grows to cover the page
+   * while a selection is in progress.
+   */
+  .kb-text-layer .endOfContent {
+    position: absolute;
+    inset: 100% 0 0;
+    z-index: 2;
+    cursor: default;
+    user-select: none;
+    display: block;
+  }
+
+  .kb-text-layer.kb-selecting .endOfContent {
+    top: 0;
+  }
+}
+
+@layer base {
   /*
    * Motion is reserved for purposeful transitions, and never runs at all for
    * readers who have asked for less of it.

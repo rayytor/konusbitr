@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 const buttonVariants = cva(
   cn(
     'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-sm)]',
-    'text-sm font-normal cursor-pointer select-none',
+    'text-[15px] font-normal cursor-pointer select-none',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',
     'disabled:pointer-events-none disabled:opacity-50',
     '[&_svg]:size-4 [&_svg]:shrink-0',
@@ -31,7 +31,7 @@ const buttonVariants = cva(
         danger: 'bg-transparent text-danger border border-border hover:bg-surface-muted',
       },
       size: {
-        sm: 'h-8 px-3 text-[13px]',
+        sm: 'h-8 px-3',
         md: 'h-10 px-4',
         icon: 'h-9 w-9 p-0',
       },

@@ -37,6 +37,22 @@ export type StorageConfig = {
   secretAccessKey: string;
   /** MinIO and most non-AWS endpoints address buckets by path, not subdomain. */
   forcePathStyle: boolean;
+  /**
+   * The endpoint a **browser** can reach, when that differs from the one this
+   * process reaches.
+   *
+   * In Compose the web container talks to `http://minio:9000`, a hostname that
+   * resolves on the Docker network and nowhere else. A presigned URL signed
+   * against it is useless to the browser it is handed to, and the failure is
+   * silent from the app's side: the upload or the viewer simply never connects.
+   * SigV4 signs the `Host` header, so the URL cannot be rewritten after the
+   * fact — it has to be *signed* against the public origin, which is why this
+   * is a second client rather than a string replace.
+   *
+   * Unset (the ordinary S3/R2/B2 case, and a natively-run dev stack) means the
+   * two are the same endpoint.
+   */
+  publicEndpoint?: string | undefined;
 };
 
 /** How long a presigned URL stays valid. Long enough for a slow 500MB upload. */
@@ -91,6 +107,25 @@ export function createStorage(config: StorageConfig) {
     },
   });
 
+  /**
+   * The client every *presigned* URL is signed with.
+   *
+   * Identical to `client` unless `publicEndpoint` says otherwise; see the note
+   * on that field for why a second client is the only correct implementation.
+   */
+  const signer =
+    config.publicEndpoint && config.publicEndpoint !== config.endpoint
+      ? new S3Client({
+          endpoint: config.publicEndpoint,
+          region: config.region,
+          forcePathStyle: config.forcePathStyle,
+          credentials: {
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey,
+          },
+        })
+      : client;
+
   const bucket = config.bucket;
 
   return {
@@ -104,7 +139,7 @@ export function createStorage(config: StorageConfig) {
       options: { contentType?: string; expiresIn?: number } = {},
     ): Promise<string> {
       return getSignedUrl(
-        client,
+        signer,
         new PutObjectCommand({
           Bucket: bucket,
           Key: key,
@@ -122,23 +157,21 @@ export function createStorage(config: StorageConfig) {
      */
     presignGet(
       key: string,
-      options: { expiresIn?: number; downloadAs?: string } = {},
+      options: { expiresIn?: number; downloadAs?: string; inlineAs?: string } = {},
     ): Promise<string> {
+      const disposition = options.downloadAs
+        ? `attachment; filename="${options.downloadAs.replace(/["\\]/g, '_')}"`
+        : options.inlineAs
+          ? `inline; filename="${options.inlineAs.replace(/["\\]/g, '_')}"`
+          : undefined;
       return getSignedUrl(
-        client,
+        signer,
         new GetObjectCommand({
           Bucket: bucket,
           Key: key,
           // Quoted and with quotes/backslashes escaped: the value is a filename
           // that originally came from a user, and it must stay data.
-          ...(options.downloadAs
-            ? {
-                ResponseContentDisposition: `attachment; filename="${options.downloadAs.replace(
-                  /["\\]/g,
-                  '_',
-                )}"`,
-              }
-            : {}),
+          ...(disposition ? { ResponseContentDisposition: disposition } : {}),
         }),
         { expiresIn: options.expiresIn ?? DEFAULT_PRESIGN_TTL_SECONDS },
       );
@@ -287,7 +320,7 @@ export function createStorage(config: StorageConfig) {
         Array.from({ length: partCount }, async (_unused, index) => {
           const partNumber = index + 1;
           const url = await getSignedUrl(
-            client,
+            signer,
             new UploadPartCommand({
               Bucket: bucket,
               Key: key,

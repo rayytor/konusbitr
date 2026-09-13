@@ -168,7 +168,7 @@ export function MembersPanel({
             <li key={member.id} className="flex flex-wrap items-center gap-x-6 gap-y-2 py-4">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[15px]">{member.name ?? member.email}</p>
-                <p className="truncate text-[12px] text-foreground-subtle">{member.email}</p>
+                <p className="truncate text-[13px] text-foreground-subtle">{member.email}</p>
               </div>
 
               {canManage && member.userId !== viewerUserId ? (
@@ -182,7 +182,7 @@ export function MembersPanel({
                     onChange={(event) =>
                       void changeRole(member, event.target.value as MembershipRole)
                     }
-                    className="h-8 cursor-pointer rounded-[var(--radius-sm)] border border-border bg-surface px-2 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    className="h-8 cursor-pointer rounded-[var(--radius-sm)] border border-border bg-surface px-2 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                   >
                     {ROLES.filter((value) => viewerRole === 'owner' || value !== 'owner').map(
                       (value) => (
@@ -221,7 +221,7 @@ export function MembersPanel({
                 className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 py-3"
               >
                 <span className="text-[15px]">{invitation.email}</span>
-                <span className="text-[12px] text-foreground-muted">
+                <span className="text-[13px] text-foreground-muted">
                   {invitation.role ?? 'member'} · expires{' '}
                   {new Date(invitation.expiresAt).toLocaleDateString()}
                 </span>

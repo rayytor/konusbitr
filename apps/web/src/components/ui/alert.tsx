@@ -30,7 +30,7 @@ export function Alert({
     <p
       role={role}
       aria-live={role === 'alert' ? 'assertive' : 'polite'}
-      className={cn('flex items-start gap-2 text-[13px] leading-relaxed', toneClass, className)}
+      className={cn('flex items-start gap-2 text-[15px] leading-relaxed', toneClass, className)}
     >
       <Icon aria-hidden className="mt-0.5 size-4 shrink-0" />
       <span>{children}</span>

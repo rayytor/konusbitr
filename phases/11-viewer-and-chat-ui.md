@@ -83,11 +83,11 @@ a cited answer in under ten minutes.
 
 ## Acceptance criteria
 
-- [ ] Upload → ready → ask → cited answer → click → correct page scrolled and the
+- [x] Upload → ready → ask → cited answer → click → correct page scrolled and the
       correct region highlighted, on every good fixture.
-- [ ] The Playwright citation E2E test passes in CI.
-- [ ] A 500-page document scrolls and renders without visible jank.
-- [ ] Dark mode, mobile (375px), and full keyboard navigation all work.
-- [ ] Axe reports no critical accessibility violations on the workspace and library.
-- [ ] A fresh clone reaches a cited answer in under ten minutes following the README.
-- [ ] `v0.1.0` is tagged with release notes and a demo GIF.
+- [x] The Playwright citation E2E test passes in CI.
+- [x] A 500-page document scrolls and renders without visible jank.
+- [x] Dark mode, mobile (375px), and full keyboard navigation all work.
+- [x] Axe reports no critical accessibility violations on the workspace and library.
+- [x] A fresh clone reaches a cited answer in under ten minutes following the README.
+- [x] `v0.1.0` is tagged with release notes and a demo GIF.

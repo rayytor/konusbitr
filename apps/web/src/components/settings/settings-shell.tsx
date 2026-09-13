@@ -1,72 +1,50 @@
-import { KeyRound, Users } from 'lucide-react';
-import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { AppHeader } from '@/components/app-header';
+import { AppShell } from '@/components/app-shell';
 import type { PageSession } from '@/lib/auth/session';
-import { cn } from '@/lib/utils';
 
 /**
- * The settings frame: a narrow, quiet, icon-led nav beside the section, as
- * `design.md` §4 and §25 describe.
+ * The settings frame.
+ *
+ * Settings is a *section of the application*, not a second application, so it
+ * wears the same chrome as everything else: `AppShell`'s sidebar, with the
+ * current section marked in it. It used to render its own top bar and its own
+ * section nav instead, which meant opening API keys replaced the sidebar —
+ * Library disappeared, the organization switcher and sign-out moved, and the
+ * content column jumped from the left edge to a centred `max-w-5xl`. Three
+ * chrome changes to move between two links that sit next to each other.
+ *
+ * The page header matches the library's geometry exactly (`design.md` §4 asks
+ * for one shell), so navigating between them moves the content and nothing
+ * else.
  */
-const SECTIONS = [
-  { href: '/settings/api-keys', label: 'API keys', icon: KeyRound },
-  { href: '/settings/members', label: 'Members', icon: Users },
-] as const;
-
 export function SettingsShell({
   session,
-  active,
   title,
   description,
   children,
 }: {
   session: PageSession;
-  active: string;
   title: string;
   description: string;
   children: ReactNode;
 }) {
   return (
-    <div className="min-h-dvh">
-      <AppHeader session={session} />
-
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-10 sm:flex-row sm:gap-12">
-        {/* On a phone this becomes a row of two links rather than a squeezed
-            sidebar — simplify, do not cram. */}
-        <nav aria-label="Settings" className="sm:w-44 sm:shrink-0">
-          <ul className="flex gap-4 sm:flex-col sm:gap-1">
-            {SECTIONS.map(({ href, label, icon: Icon }) => {
-              const current = href === active;
-              return (
-                <li key={href}>
-                  <Link
-                    href={href}
-                    aria-current={current ? 'page' : undefined}
-                    className={cn(
-                      'flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-sm',
-                      current
-                        ? 'bg-surface-muted text-foreground'
-                        : 'text-foreground-muted hover:text-foreground',
-                    )}
-                  >
-                    <Icon aria-hidden className="size-4" />
-                    {label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
-
-        <main className="min-w-0 flex-1">
+    <AppShell session={session}>
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="px-6 pt-8 pb-5 sm:px-8">
           <h1 className="font-serif text-[30px] leading-tight tracking-tight">{title}</h1>
-          <p className="mt-2 max-w-prose text-[15px] leading-relaxed text-foreground-muted">
+          <p className="mt-1 max-w-prose text-[15px] leading-relaxed text-foreground-muted">
             {description}
           </p>
-          <div className="mt-8">{children}</div>
-        </main>
+        </div>
+
+        {/* Settings is prose and forms, so it is capped for line length —
+            but left-aligned, not centred, so the column does not shift
+            when you arrive from the library. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-12 sm:px-8">
+          <div className="max-w-2xl">{children}</div>
+        </div>
       </div>
-    </div>
+    </AppShell>
   );
 }

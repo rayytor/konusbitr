@@ -1,0 +1,48 @@
+import type { SVGProps } from 'react';
+import { cn } from '@/lib/utils';
+
+export interface BrandIconProps extends SVGProps<SVGSVGElement> {
+  variant?: 'adaptive' | 'light' | 'dark';
+}
+
+/**
+ * The Konusbitr brand mark, derived from icon_LIGHT.svg and icon_DARK.svg.
+ *
+ * In adaptive mode (default), the main glyph uses `currentColor` to naturally
+ * match the foreground tone in both sepia-light and dark palettes, while preserving
+ * the signature red dot accent.
+ */
+export function BrandIcon({
+  variant = 'adaptive',
+  className,
+  'aria-hidden': ariaHidden = true,
+  ...props
+}: BrandIconProps) {
+  const markFill =
+    variant === 'light' ? '#f5f0e6' : variant === 'dark' ? '#29251f' : 'currentColor';
+
+  return (
+    <svg
+      version="1.1"
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 38.62573 36.88809"
+      aria-hidden={ariaHidden}
+      className={cn('inline-block shrink-0', className)}
+      {...props}
+    >
+      <title>Konusbitr</title>
+      <g transform="translate(-220.68714,-161.55595)">
+        <g stroke="none" strokeMiterlimit="10">
+          <path
+            d="M221.80346,186.15832c-3.49906,-9.66775 1.50165,-20.34157 11.1694,-23.84063c7.75417,-2.80647 26.34001,3.04527 26.34001,3.04527c0,0 -4.75955,2.68679 -2.49938,8.12413c0.24088,0.57949 -12.48734,7.33343 -13.2499,7.81966c-1.83693,1.17128 -0.7333,4.52192 2.02682,4.86935c6.95843,-0.18103 6.91743,-0.30133 10.44333,-0.25752c0.31027,0.00386 0.8043,0.59371 0.68509,0.87877c-1.9732,4.71823 -5.92542,8.66667 -11.07474,10.53037c-9.66775,3.49906 -20.34157,-1.50165 -23.84063,-11.1694z"
+            fill={markFill}
+          />
+          <path
+            d="M258.00081,186.87498c0.04967,-0.13789 0.09824,-0.27617 0.14569,-0.4148c0.02855,0.06494 0.05777,0.12953 0.08765,0.19374c-0.07354,0.07304 -0.15125,0.14676 -0.23334,0.22107z"
+            fill="#ff0000"
+          />
+        </g>
+      </g>
+    </svg>
+  );
+}

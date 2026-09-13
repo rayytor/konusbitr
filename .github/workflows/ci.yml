@@ -134,6 +134,77 @@ jobs:
           fi
           echo "the regression gate rejected the broken chunker, as it should"
 
+  e2e:
+    name: End to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # The worker is the Python half of the pipeline, and the suite waits for a
+      # document to reach `ready` — so it has to actually run.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/worker/uv.lock
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync the worker environment
+        run: uv sync --locked --project services/worker
+
+      - name: Install the browser
+        run: pnpm --filter @konusbitr/web exec playwright install --with-deps chromium
+
+      # Postgres, Redis and MinIO in containers, schema applied. The web server
+      # itself is started by Playwright, from a production build.
+      - name: Backing services
+        run: |
+          cp .env.example .env
+          pnpm dev:infra
+
+      - name: Worker
+        run: |
+          set -a; . ./.env; set +a
+          nohup uv run --project services/worker python -m konusbitr_worker > worker.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:8081/ready > /dev/null && exit 0
+            sleep 2
+          done
+          echo "::error::the worker never became ready"
+          cat worker.log
+          exit 1
+
+      - name: End-to-end tests
+        run: pnpm test:e2e
+
+      - name: Worker log
+        if: failure()
+        run: cat worker.log || true
+
+      - name: Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/e2e/.results
+          retention-days: 7
+
+      - name: Teardown
+        if: always()
+        run: pnpm infra:down
+
   python:
     name: Python worker
     runs-on: ubuntu-latest

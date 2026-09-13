@@ -73,7 +73,10 @@ describe('/signup', () => {
       searchParams: Promise.resolve({ redirect: '/accept-invitation/inv_123' }),
     });
 
-    expect(propValues(tree, 'redirectTo')).toEqual(['/accept-invitation/inv_123']);
+    expect(propValues(tree, 'redirectTo')).toEqual([
+      '/accept-invitation/inv_123',
+      '/accept-invitation/inv_123',
+    ]);
     expect(propValues(tree, 'callbackURL')).toEqual(['/accept-invitation/inv_123']);
     expect(propValues(tree, 'href')).toContain('/login?redirect=%2Faccept-invitation%2Finv_123');
   });
@@ -83,7 +86,7 @@ describe('/signup', () => {
       searchParams: Promise.resolve({ redirect: '//evil.example' }),
     });
 
-    expect(propValues(tree, 'redirectTo')).toEqual([DEFAULT_REDIRECT]);
+    expect(propValues(tree, 'redirectTo')).toEqual([DEFAULT_REDIRECT, DEFAULT_REDIRECT]);
     expect(propValues(tree, 'callbackURL')).toEqual([DEFAULT_REDIRECT]);
   });
 });

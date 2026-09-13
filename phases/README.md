@@ -23,6 +23,10 @@ needs, lists the work, and ends with hard acceptance criteria. Feed them **in or
 | 10 | `10-chat-with-citations.md` | Streaming grounded answers with verified citations |
 | 11 | `11-viewer-and-chat-ui.md` | PDF.js viewer + chat UI — **MVP ships here** |
 | 12 | `12-robust-ingestion.md` | OCR, languages, VLM `advanced`, images, tables, progress |
+| ↳ 12.1/4 | `12.1-4-ocr-pipeline.md` | Scanned page CPU OCR (RapidOCR/Tesseract), OpenCV cleanup, coordinates |
+| ↳ 12.2/4 | `12.2-4-multilingual-tables-and-images.md` | Multilingual routing, scanned tables (tableJson), figure extraction/captioning |
+| ↳ 12.3/4 | `12.3-4-vlm-advanced-and-licensing.md` | VLM advanced path (Qwen2.5-VL/Claude), hybrid reconciliation, licensing |
+| ↳ 12.4/4 | `12.4-4-resilient-scale-and-progress-ui.md` | Checkpointed scale (900 pages), disk spill, partial readiness, progress UI |
 | 13 | `13-public-api-v2.md` | parse/extract/split/ask, credits, OpenAPI, SDKs |
 | 14 | `14-product-surface.md` | Folders, search, chat-with-all, summaries, sharing, teams |
 | 15 | `15-distribution-and-launch.md` | Extension, deploy templates, docs, evals, launch |

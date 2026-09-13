@@ -324,6 +324,70 @@ export function scopedDb(db: Database, orgId: string) {
       return row;
     },
 
+    /**
+     * Every page of one of this org's documents, in page order.
+     *
+     * The viewer needs `width`/`height` before it can turn a citation's bbox
+     * into a rectangle — the bbox is in PDF points on the *visible* page, so
+     * the scale factor is `renderedWidthPx / width` and nothing else — and it
+     * needs `thumbnailKey` to know which pages have a rail image at all.
+     *
+     * Scoped through the document rather than directly, because `pages` has no
+     * `org_id` of its own: the join is the tenancy predicate.
+     */
+    async listPages(documentId: string) {
+      return db
+        .select({
+          pageNo: schema.pages.pageNo,
+          width: schema.pages.width,
+          height: schema.pages.height,
+          thumbnailKey: schema.pages.thumbnailKey,
+        })
+        .from(schema.pages)
+        .innerJoin(schema.documents, eq(schema.pages.documentId, schema.documents.id))
+        .where(and(eq(schema.pages.documentId, documentId), eq(schema.documents.orgId, orgId)))
+        .orderBy(asc(schema.pages.pageNo));
+    },
+
+    /**
+     * A single page by document id and page number.
+     */
+    async pageByNumber(documentId: string, pageNo: number) {
+      const [row] = await db
+        .select({
+          pageNo: schema.pages.pageNo,
+          width: schema.pages.width,
+          height: schema.pages.height,
+          thumbnailKey: schema.pages.thumbnailKey,
+        })
+        .from(schema.pages)
+        .innerJoin(schema.documents, eq(schema.pages.documentId, schema.documents.id))
+        .where(
+          and(
+            eq(schema.pages.documentId, documentId),
+            eq(schema.documents.orgId, orgId),
+            eq(schema.pages.pageNo, pageNo),
+          ),
+        )
+        .limit(1);
+      return row;
+    },
+
+    /**
+     * Change a document's display name.
+     *
+     * Returns `undefined` when this org does not have the document, so the
+     * caller renders the same 404 it renders for an id that never existed.
+     */
+    async renameDocument(documentId: string, filename: string) {
+      const [row] = await db
+        .update(schema.documents)
+        .set({ filename, updatedAt: new Date() })
+        .where(and(eq(schema.documents.id, documentId), eq(schema.documents.orgId, orgId)))
+        .returning();
+      return row;
+    },
+
     /** One folder, or `undefined` when this org does not have it. */
     async folderById(folderId: string) {
       const [row] = await db
