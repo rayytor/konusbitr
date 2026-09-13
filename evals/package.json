@@ -1,0 +1,29 @@
+{
+  "name": "@konusbitr/evals",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "eval:retrieval": "tsx src/eval-retrieval.ts",
+    "benchmark:retrieval": "tsx src/benchmark-latency.ts",
+    "golden:generate": "tsx generate-golden.ts",
+    "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@konusbitr/db": "workspace:*",
+    "@konusbitr/retrieval": "workspace:*",
+    "@konusbitr/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@konusbitr/tsconfig": "workspace:*",
+    "@testcontainers/postgresql": "^11.1.0",
+    "drizzle-orm": "^0.44.2",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

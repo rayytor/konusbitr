@@ -28,6 +28,8 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
+    "eval:retrieval": "pnpm --filter @konusbitr/evals eval:retrieval",
+    "benchmark:retrieval": "pnpm --filter @konusbitr/evals benchmark:retrieval",
     "db:migrate": "pnpm --filter @konusbitr/db db:migrate",
     "db:seed": "pnpm --filter @konusbitr/db db:seed",
     "codegen": "./scripts/codegen.sh",
@@ -45,6 +47,7 @@
     "@commitlint/cli": "^21.2.2",
     "@commitlint/config-conventional": "^21.2.2",
     "lefthook": "^2.1.12",
+    "tsx": "^4.23.13",
     "turbo": "^2.10.12",
     "typescript": "^5.9.3"
   }
