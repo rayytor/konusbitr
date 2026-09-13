@@ -19,6 +19,25 @@ export {
   completeChat,
 } from './chat.js';
 export {
+  type CitationVerificationResult,
+  fuzzyIncludes,
+  type GroundedChunk,
+  levenshteinDistance,
+  normalizeText,
+  parseInlineCitationMarkers,
+  parseStructuredCitations,
+  type RawCitation,
+  removeCitationsBlock,
+  stringSimilarity,
+  verifyCitations,
+} from './citations.js';
+
+export {
+  buildContext,
+  estimateTokens,
+  windowHistory,
+} from './context.js';
+export {
   breakerFor,
   EmbeddingDimensionError,
   type EmbedOptions,
@@ -46,6 +65,11 @@ export {
   resolveModel,
   stripProviderPrefix,
 } from './roles.js';
+export {
+  getChatLanguageModel,
+  type StreamChatOptions,
+  streamChat,
+} from './stream.js';
 export {
   collectUsage,
   estimateCostUsd,

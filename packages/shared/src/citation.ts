@@ -29,8 +29,24 @@ export const CitationSchema = z.object({
   bbox: BoundingBoxSchema,
   /** Id of the retrieved chunk the quote came from (`chk_…`). */
   chunkId: z.string().min(1),
+  /** Source document ID, populated when retrieval is in corpus scope. */
+  documentId: z.string().optional(),
   /** JSON Pointer into an extraction result, when the citation supports a field. */
   schemaPath: z.string().optional(),
 });
 
 export type Citation = z.infer<typeof CitationSchema>;
+
+/**
+ * A citation that failed mechanical verification and was rejected.
+ * Recorded for health metrics and diagnostic logging.
+ */
+export const RejectedCitationSchema = z.object({
+  chunkId: z.string(),
+  page: z.number().int().positive(),
+  quote: z.string(),
+  reason: z.string(),
+  documentId: z.string().optional(),
+});
+
+export type RejectedCitation = z.infer<typeof RejectedCitationSchema>;

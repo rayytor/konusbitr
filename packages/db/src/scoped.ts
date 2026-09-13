@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
+import { and, arrayContains, asc, desc, eq, gt, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
 import type { Database } from './client.js';
 import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';
@@ -406,6 +406,207 @@ export function scopedDb(db: Database, orgId: string) {
         })
         .returning();
       return row;
+    },
+
+    // ─── Conversations & Messages ──────────────────────────────────────────
+
+    /**
+     * Create a conversation belonging to this org.
+     */
+    async createConversation(input: {
+      id?: string;
+      userId: string;
+      scope?: string;
+      documentIds?: string[];
+      title?: string | null;
+    }) {
+      const [row] = await db
+        .insert(schema.conversations)
+        .values({
+          ...(input.id ? { id: input.id } : {}),
+          orgId,
+          userId: input.userId,
+          scope: input.scope ?? 'document',
+          documentIds: input.documentIds ?? [],
+          title: input.title ?? null,
+        })
+        .returning();
+      if (!row) throw new Error('Failed to create conversation');
+      return row;
+    },
+
+    /**
+     * Get a conversation by ID, or undefined if not found in this org.
+     */
+    async conversationById(conversationId: string) {
+      const [row] = await db
+        .select()
+        .from(schema.conversations)
+        .where(
+          and(eq(schema.conversations.id, conversationId), eq(schema.conversations.orgId, orgId)),
+        )
+        .limit(1);
+      return row;
+    },
+
+    /**
+     * List conversations in this org, newest first, with optional documentId filter
+     * and keyset pagination.
+     */
+    listConversations(options: {
+      limit: number;
+      before?: { updatedAt: Date; id: string };
+      documentId?: string | null;
+    }) {
+      const filters = [eq(schema.conversations.orgId, orgId)];
+
+      if (options.documentId) {
+        filters.push(arrayContains(schema.conversations.documentIds, [options.documentId]));
+      }
+
+      if (options.before) {
+        filters.push(
+          or(
+            lt(schema.conversations.updatedAt, options.before.updatedAt),
+            and(
+              eq(schema.conversations.updatedAt, options.before.updatedAt),
+              lt(schema.conversations.id, options.before.id),
+            ),
+          ) as SQL,
+        );
+      }
+
+      return db
+        .select()
+        .from(schema.conversations)
+        .where(and(...filters))
+        .orderBy(desc(schema.conversations.updatedAt), desc(schema.conversations.id))
+        .limit(options.limit);
+    },
+
+    /**
+     * Delete a conversation belonging to this org.
+     * Messages cascade delete via database foreign key.
+     */
+    async deleteConversation(conversationId: string) {
+      return db.transaction(async (tx) => {
+        const [row] = await tx
+          .delete(schema.conversations)
+          .where(
+            and(eq(schema.conversations.id, conversationId), eq(schema.conversations.orgId, orgId)),
+          )
+          .returning();
+        return row;
+      });
+    },
+
+    /**
+     * Update a conversation's title.
+     */
+    async updateConversationTitle(conversationId: string, title: string) {
+      const [row] = await db
+        .update(schema.conversations)
+        .set({ title, updatedAt: new Date() })
+        .where(
+          and(eq(schema.conversations.id, conversationId), eq(schema.conversations.orgId, orgId)),
+        )
+        .returning();
+      if (!row) throw new Error('Failed to update conversation title');
+      return row;
+    },
+
+    /**
+     * Bump a conversation's updatedAt timestamp.
+     */
+    async touchConversation(conversationId: string) {
+      const [row] = await db
+        .update(schema.conversations)
+        .set({ updatedAt: new Date() })
+        .where(
+          and(eq(schema.conversations.id, conversationId), eq(schema.conversations.orgId, orgId)),
+        )
+        .returning();
+      return row;
+    },
+
+    /**
+     * Record a message in a conversation. Enforces that the conversation
+     * belongs to this organization.
+     */
+    async createMessage(input: {
+      id?: string;
+      conversationId: string;
+      role: string;
+      content: string;
+      citations?: Record<string, unknown>[] | null;
+      usage?: Record<string, unknown> | null;
+    }) {
+      const conv = await db
+        .select({ id: schema.conversations.id })
+        .from(schema.conversations)
+        .where(
+          and(
+            eq(schema.conversations.id, input.conversationId),
+            eq(schema.conversations.orgId, orgId),
+          ),
+        )
+        .limit(1);
+
+      if (!conv.length) {
+        throw new Error('Conversation not found in this organization');
+      }
+
+      const [msg] = await db
+        .insert(schema.messages)
+        .values({
+          ...(input.id ? { id: input.id } : {}),
+          conversationId: input.conversationId,
+          role: input.role,
+          content: input.content,
+          citations: input.citations ?? null,
+          usage: input.usage ?? null,
+        })
+        .returning();
+
+      if (!msg) throw new Error('Failed to create message');
+
+      // Bump conversation updatedAt
+
+      await db
+        .update(schema.conversations)
+        .set({ updatedAt: new Date() })
+        .where(eq(schema.conversations.id, input.conversationId));
+
+      return msg;
+    },
+
+    /**
+     * Retrieve messages for a conversation, ordered chronologically.
+     * Enforces that the conversation belongs to this organization.
+     */
+    async messagesForConversation(conversationId: string, options?: { limit?: number }) {
+      const conv = await db
+        .select({ id: schema.conversations.id })
+        .from(schema.conversations)
+        .where(
+          and(eq(schema.conversations.id, conversationId), eq(schema.conversations.orgId, orgId)),
+        )
+        .limit(1);
+
+      if (!conv.length) {
+        return [];
+      }
+
+      const query = db
+        .select()
+        .from(schema.messages)
+        .where(eq(schema.messages.conversationId, conversationId))
+        .orderBy(asc(schema.messages.createdAt), asc(schema.messages.id));
+
+      if (options?.limit) {
+        return query.limit(options.limit);
+      }
+      return query;
     },
 
     /**

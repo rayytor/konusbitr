@@ -8,6 +8,22 @@
  */
 
 export {
+  type ChatMessageView,
+  ChatMessageViewSchema,
+  type ChatRequest,
+  ChatRequestSchema,
+  type ChatRole,
+  ChatRoleSchema,
+  type ConversationScope,
+  ConversationScopeSchema,
+  type ConversationView,
+  ConversationViewSchema,
+  type CreateConversationRequest,
+  CreateConversationRequestSchema,
+  type UpdateConversationRequest,
+  UpdateConversationRequestSchema,
+} from './chat.js';
+export {
   CHUNK_KINDS,
   CHUNKING_DEFAULTS,
   type ChunkKind,
@@ -30,6 +46,8 @@ export {
   BoundingBoxSchema,
   type Citation,
   CitationSchema,
+  type RejectedCitation,
+  RejectedCitationSchema,
 } from './citation.js';
 
 export {

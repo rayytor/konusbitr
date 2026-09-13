@@ -15,7 +15,9 @@
     "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
   },
   "dependencies": {
-    "@konusbitr/shared": "workspace:*"
+    "@ai-sdk/openai": "^2.0.127",
+    "@konusbitr/shared": "workspace:*",
+    "ai": "^5.0.257"
   },
   "devDependencies": {
     "@konusbitr/tsconfig": "workspace:*",
