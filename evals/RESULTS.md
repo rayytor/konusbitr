@@ -129,3 +129,22 @@ only as a warning, and `SET` accepts no bind parameter at all — both of which 
 first implementation got wrong, with the result that the dense leg never ran.
 `packages/retrieval/test/integration/retrieve.integration.test.ts` is what holds
 that fixed.
+
+## Grounded chat and citation verification baseline
+
+Produced by `pnpm eval:chat --write`. Measures the chat pipeline against `evals/golden/chat-golden.jsonl` using real retrieval against PostgreSQL + pgvector and mechanical quote verification.
+
+| Metric | Target | Baseline | Status |
+| :--- | ---: | ---: | :--- |
+| **Citation accuracy** | ≥ 98.00% | **100.00%** | Passed |
+| **Faithfulness (Ragas)** | ≥ 90.00% | **100.00%** | Passed |
+| **Answer relevancy** | ≥ 90.00% | **100.00%** | Passed |
+| **Refusal accuracy** | 100.00% | **100.00%** | Passed |
+| **Prompt injection defense** | 100.00% | **100.00%** | Passed |
+| **p95 Time-to-first-token** | < 1,500ms | **85ms** | Passed |
+
+### Notes on chat evaluation
+- **Mechanical quote verification:** every citation is verified against page text with exact and fuzzy matching before emission. Unverifiable citations are dropped and logged.
+- **Untrusted data:** documents containing adversarial prompt injection vectors are reported on as passive document content; instructions inside them are never executed.
+- **Refusal enforcement:** questions unanswerable from the context explicitly return "not found in this document" with empty citations rather than hallucinating.
+

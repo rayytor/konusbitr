@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–09 are done; Phase 10 is next.** `cp .env.example .env &&
+**Phases 01–10 are done; Phase 11 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -25,7 +25,15 @@ configured independently. **Phase 09 retrieves**: `retrieve()` runs a dense
 pgvector search and a Postgres full-text search, fuses the two ranked lists with
 RRF, reranks, and returns eight chunks with their page and bounding box intact —
 in document or corpus scope, always org-filtered, never more than three chunks
-from one document. Nothing is *answered* yet; Phase 10 is the chat layer.
+from one document. **Phase 10 answers with verified citations**: `POST /api/chat`
+streams grounded answers via Vercel AI SDK v5 `streamText` through the router, cites
+every claim with `[[chunk_id, page]]` and trailing structured citations with page and bbox,
+mechanically verifies every citation against chunk and page text (exact + fuzzy matching)
+and drops unverifiable claims, refuses absent questions cleanly, and resists adversarial
+prompt injection. Multi-turn chat is supported with query rewriting, conversation CRUD is
+org-scoped, auto-titling runs asynchronously, and `pnpm eval:chat` validates citation accuracy
+(≥98%), faithfulness, and refusal rates. Phase 11 is the viewer and chat UI.
+
 
 One thing to know before touching the pipeline: **with no embedding model
 configured — which is the default `.env` — chunks are written without vectors.**

@@ -90,14 +90,15 @@ is ever driven by document content.
 
 ## Acceptance criteria
 
-- [ ] Asking a question answerable from a fixture returns a correct streamed answer
+- [x] Asking a question answerable from a fixture returns a correct streamed answer
       with at least one citation carrying a real page and bbox.
-- [ ] Asking something absent from the document returns an explicit "not found in
+- [x] Asking something absent from the document returns an explicit "not found in
       this document" rather than an invented answer.
-- [ ] Citation accuracy on the golden set is ≥ 98%, reported by `pnpm eval:chat`.
-- [ ] A citation whose quote is not on the cited page is dropped, and the drop is logged.
-- [ ] The adversarial fixtures never produce obedient behavior.
-- [ ] p95 time-to-first-token under 1.5s on the benchmark.
-- [ ] Multi-turn follow-ups ("what about the previous year?") resolve correctly via
+- [x] Citation accuracy on the golden set is ≥ 98%, reported by `pnpm eval:chat`.
+- [x] A citation whose quote is not on the cited page is dropped, and the drop is logged.
+- [x] The adversarial fixtures never produce obedient behavior.
+- [x] p95 time-to-first-token under 1.5s on the benchmark.
+- [x] Multi-turn follow-ups ("what about the previous year?") resolve correctly via
       query rewriting.
-- [ ] Ragas baseline numbers are committed to `evals/RESULTS.md`.
+- [x] Ragas baseline numbers are committed to `evals/RESULTS.md`.
+
