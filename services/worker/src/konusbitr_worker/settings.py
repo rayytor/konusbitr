@@ -48,7 +48,7 @@ __all__ = [
 ]
 
 NodeEnv = Literal["development", "test", "production"]
-LlmProvider = Literal["openai", "anthropic", "google", "mistral", "ollama", "vllm"]
+LlmProvider = Literal["openai", "anthropic", "google", "mistral", "ollama", "vllm", "cohere"]
 CreditsMode = Literal["unlimited", "metered"]
 
 #: What a model is being asked to do.
@@ -67,12 +67,21 @@ MODEL_ROLES: tuple[ModelRole, ...] = ("chat", "embedding", "rerank", "vision")
 LOCAL_PROVIDERS: tuple[LlmProvider, ...] = ("ollama", "vllm")
 
 #: Everything else: an endpoint on somebody else's computer.
-CLOUD_PROVIDERS: tuple[LlmProvider, ...] = ("openai", "anthropic", "google", "mistral")
+CLOUD_PROVIDERS: tuple[LlmProvider, ...] = (
+    "openai",
+    "anthropic",
+    "google",
+    "mistral",
+    "cohere",
+)
 
-#: Providers that serve chat but expose no embedding endpoint this router can
-#: address, so naming one for the embedding role is a configuration mistake
-#: rather than a call that fails later.
-PROVIDERS_WITHOUT_EMBEDDINGS: tuple[LlmProvider, ...] = ("anthropic", "google")
+#: Providers that serve chat or rerank but expose no embedding endpoint this
+#: router can address.
+PROVIDERS_WITHOUT_EMBEDDINGS: tuple[LlmProvider, ...] = (
+    "anthropic",
+    "google",
+    "cohere",
+)
 
 #: The variable that names a role's provider, for error messages.
 ROLE_PROVIDER_VARIABLE: dict[ModelRole, str] = {
@@ -275,6 +284,14 @@ class Settings(BaseSettings):
     chunk_min_tokens: int = 600
     chunk_max_tokens: int = 1100
     chunk_overlap_ratio: float = 0.15
+
+    # Phase 09's retrieval knobs — RERANK_ENABLED, HYDE_ENABLED,
+    # MULTI_QUERY_ENABLED, CORPUS_TWO_STAGE_THRESHOLD, HNSW_EF_SEARCH — are
+    # deliberately absent. Retrieval runs entirely in TypeScript, so the worker
+    # has nothing to do with any of them, and `extra="ignore"` above means the
+    # shared `.env` carrying them is not a problem. A setting declared here that
+    # nothing reads is worse than no setting at all: it reads as a promise that
+    # the worker honours it.
 
     billing_enabled: bool = False
     credits_mode: CreditsMode = "unlimited"

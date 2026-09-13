@@ -602,6 +602,42 @@ class Database:
             ],
         )
 
+    async def upsert_document_summary(self, *, document_id: str, summary: str | None) -> None:
+        """Store the ~200-token abstract on `documents.summary`."""
+        await self._pool.execute(
+            """
+            UPDATE documents
+               SET summary = $2, updated_at = now()
+             WHERE id = $1
+            """,
+            document_id,
+            summary,
+        )
+
+    async def upsert_document_embedding(
+        self,
+        *,
+        embedding_id: str,
+        document_id: str,
+        org_id: str,
+        embedding: list[float] | None,
+    ) -> None:
+        """Upsert the summary embedding for two-stage retrieval."""
+        if embedding is None:
+            return
+        await self._pool.execute(
+            """
+            INSERT INTO document_embeddings (id, document_id, org_id, embedding)
+            VALUES ($1, $2, $3, $4::text::vector)
+            ON CONFLICT (document_id)
+            DO UPDATE SET embedding = EXCLUDED.embedding, created_at = now()
+            """,
+            embedding_id,
+            document_id,
+            org_id,
+            _vector_literal(embedding),
+        )
+
 
 def _vector_literal(embedding: list[float] | None) -> str | None:
     """pgvector's text form, which is what `$n::vector` parses.

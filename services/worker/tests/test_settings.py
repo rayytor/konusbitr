@@ -132,7 +132,7 @@ def test_rejects_app_url_with_trailing_slash(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_rejects_unknown_llm_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(EnvValidationError) as caught:
-        load({**VALID, "LLM_PROVIDER": "cohere"}, monkeypatch)
+        load({**VALID, "LLM_PROVIDER": "replicate"}, monkeypatch)
 
     assert "LLM_PROVIDER" in str(caught.value)
 
