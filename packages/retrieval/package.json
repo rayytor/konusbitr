@@ -1,0 +1,32 @@
+{
+  "name": "@konusbitr/retrieval",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf .turbo node_modules *.tsbuildinfo",
+    "test:integration": "vitest run -c vitest.config.integration.ts"
+  },
+  "dependencies": {
+    "@konusbitr/ai": "workspace:*",
+    "@konusbitr/db": "workspace:*",
+    "@konusbitr/shared": "workspace:*",
+    "drizzle-orm": "^0.44.2",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "@konusbitr/tsconfig": "workspace:*",
+    "@testcontainers/postgresql": "^11.1.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

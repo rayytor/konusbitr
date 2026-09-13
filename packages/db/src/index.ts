@@ -6,7 +6,7 @@
  * this package owns.
  */
 
-export type { Database } from './client.js';
+export type { Database, Transaction } from './client.js';
 
 // Client
 export { createDb } from './client.js';

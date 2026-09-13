@@ -14,6 +14,11 @@
  */
 
 export {
+  type ChatMessage,
+  type ChatOptions,
+  completeChat,
+} from './chat.js';
+export {
   breakerFor,
   EmbeddingDimensionError,
   type EmbedOptions,
@@ -21,6 +26,12 @@ export {
   embedTexts,
 } from './embed.js';
 export { assertReachable, isLocalEndpoint, OfflineModeError } from './offline.js';
+export { loadPrompt } from './prompts.js';
+export {
+  type RerankOptions,
+  type RerankResult,
+  rerankTexts,
+} from './rerank.js';
 export {
   CircuitBreaker,
   CircuitOpenError,
