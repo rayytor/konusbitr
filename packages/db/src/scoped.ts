@@ -361,6 +361,8 @@ export function scopedDb(db: Database, orgId: string) {
           width: schema.pages.width,
           height: schema.pages.height,
           thumbnailKey: schema.pages.thumbnailKey,
+          tier: schema.pages.tier,
+          ocrConfidence: schema.pages.ocrConfidence,
         })
         .from(schema.pages)
         .innerJoin(schema.documents, eq(schema.pages.documentId, schema.documents.id))

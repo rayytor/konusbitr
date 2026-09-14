@@ -173,6 +173,49 @@ describe('table inserts and reads', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('defaults a page to the native tier with no confidence', async () => {
+    // The migration that added these columns runs over tables that already have
+    // rows in them, and every one of those rows came from a parse that had no
+    // OCR tier to reach for. `native` is therefore not a convenient default: it
+    // is what those rows actually are.
+    await db.insert(schema.pages).values({
+      documentId: docId,
+      pageNo: 2,
+      width: 612,
+      height: 792,
+    });
+
+    const [row] = await db
+      .select()
+      .from(schema.pages)
+      .where(and(eq(schema.pages.documentId, docId), eq(schema.pages.pageNo, 2)));
+
+    expect(row?.tier).toBe('native');
+    // Null rather than 1.0: nothing guessed, so there is nothing to be
+    // confident about, and a column that answers everywhere cannot be read as
+    // "this page was recognised".
+    expect(row?.ocrConfidence).toBeNull();
+  });
+
+  it('stores a recognised page with its tier and confidence', async () => {
+    await db.insert(schema.pages).values({
+      documentId: docId,
+      pageNo: 3,
+      width: 612,
+      height: 792,
+      tier: 'ocr',
+      ocrConfidence: 0.71,
+    });
+
+    const [row] = await db
+      .select()
+      .from(schema.pages)
+      .where(and(eq(schema.pages.documentId, docId), eq(schema.pages.pageNo, 3)));
+
+    expect(row?.tier).toBe('ocr');
+    expect(row?.ocrConfidence).toBeCloseTo(0.71, 5);
+  });
+
   it('inserts a conversation and message', async () => {
     const convId = newId(ID_PREFIXES.conversation);
 

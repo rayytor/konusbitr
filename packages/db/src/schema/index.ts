@@ -21,6 +21,6 @@ export { folders } from './folders.js';
 export { jobs } from './jobs.js';
 export { membershipRoleEnum, memberships } from './memberships.js';
 export { type OrganizationRow, organizations } from './organizations.js';
-export { pages } from './pages.js';
+export { PAGE_TIERS, type PageTier, pages } from './pages.js';
 export { parseResults } from './parse-results.js';
 export { users } from './users.js';
