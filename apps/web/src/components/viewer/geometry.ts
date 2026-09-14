@@ -17,6 +17,9 @@ import type { BoundingBox } from '@konusbitr/shared';
  * undocumented second convention.
  */
 
+/** How a page's text was obtained. Mirrors `pages.tier`. */
+export type PageTier = 'native' | 'ocr' | 'vlm';
+
 /** A page's size in PDF points, as the reader sees it. */
 export type PageGeometry = {
   page: number;
@@ -24,6 +27,16 @@ export type PageGeometry = {
   width: number;
   /** Visible height in points. */
   height: number;
+  /**
+   * How this page's text was obtained. Absent on a document parsed before the
+   * OCR tier existed, which is a born-digital document by construction.
+   */
+  tier?: PageTier;
+  /**
+   * `0`-`1` for a recognised page; `null` for a born-digital one, where nothing
+   * guessed and so there is nothing to be confident about.
+   */
+  ocrConfidence?: number | null;
 };
 
 /** A rectangle in CSS pixels, relative to the rendered page's top-left. */

@@ -22,14 +22,21 @@ import {
   type Rotation,
   renderedPageSize,
 } from './geometry';
+import { PageBadge } from './page-badge';
 import { PageView } from './page-view';
 import { describePdfError, openPdf } from './pdf';
 import { type SearchMatch, searchDocument } from './search';
 import { ViewerToolbar } from './toolbar';
 import { citationToHighlight, type HighlightTarget, type ViewerHandle } from './types';
 
-/** Gap between pages, and the padding around the column, in CSS pixels. */
-const PAGE_GAP = 20;
+/**
+ * Gap between pages, and the padding around the column, in CSS pixels.
+ *
+ * Wide enough to hold a page's OCR badge, which sits in the gutter above the
+ * paper rather than on it — a marker drawn over the page would cover the one
+ * thing a reader opened the page to check.
+ */
+const PAGE_GAP = 26;
 const COLUMN_PADDING = 24;
 
 /**
@@ -140,11 +147,20 @@ export function Viewer({
     // Missing rows fall back to the previous page's size and then to Letter,
     // which is what a document still being parsed looks like: the first pages
     // have rows and the tail does not.
-    let last: Omit<PageGeometry, 'page'> = pages[0] ?? US_LETTER;
+    //
+    // The *size* is inherited and the tier is not. A guessed size is a good
+    // guess — consecutive pages of a document are nearly always the same shape,
+    // and the point of the guess is a scroll container whose height does not
+    // change under the reader's thumb. A guessed tier would be a claim about
+    // how a page was read, made about a page nothing has read yet, and it would
+    // put an "OCR 71%" badge on a blank placeholder.
+    let last: { width: number; height: number } = pages[0] ?? US_LETTER;
     return Array.from({ length: pageCount }, (_unused, index) => {
       const found = byPage.get(index + 1);
-      if (found) last = found;
-      return { page: index + 1, ...(found ?? last) };
+      if (found) last = { width: found.width, height: found.height };
+      return found
+        ? { ...found, page: index + 1 }
+        : { page: index + 1, width: last.width, height: last.height };
     });
   }, [pages, pageCount]);
 
@@ -547,6 +563,10 @@ export function Viewer({
                     left: `${Math.max(0, (columnWidth - size.width) / 2)}px`,
                   }}
                 >
+                  <PageBadge
+                    page={geometry}
+                    className="absolute right-0 bottom-full mb-1.5 bg-surface"
+                  />
                   <PageView
                     pdf={pdf}
                     pageNumber={geometry.page}

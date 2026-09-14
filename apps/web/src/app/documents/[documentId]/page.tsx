@@ -56,6 +56,11 @@ export default async function DocumentPage({ params }: { params: Promise<Params>
         page: page.pageNo,
         width: page.width,
         height: page.height,
+        // How the page was read, so the viewer can say so. A quote from a
+        // recognised page and a quote from a born-digital one deserve different
+        // amounts of trust, and nothing in the bounding boxes tells them apart.
+        tier: page.tier,
+        ocrConfidence: page.ocrConfidence,
       }))}
       viewUrl={viewUrl}
       downloadUrl={downloadUrl}

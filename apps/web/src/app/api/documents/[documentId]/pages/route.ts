@@ -15,6 +15,11 @@ import { IngestError, problemResponse } from '@/lib/ingest/errors';
  * would otherwise mean 500 signatures in one response, most of them for pages
  * the rail will never scroll to. The rail asks `…/thumbnail?page=n` for the
  * handful it actually shows.
+ *
+ * `tier` and `ocrConfidence` say how a page's text was obtained. A reader is
+ * entitled to know that a quoted sentence came out of a recogniser rather than
+ * out of a font, because those two claims deserve different amounts of trust —
+ * and the viewer cannot tell them apart from the bounding boxes alone.
  */
 export const GET = withAuth<{ documentId: string }>(
   async (_request, auth, { params }) => {
@@ -36,6 +41,8 @@ export const GET = withAuth<{ documentId: string }>(
             width: row.width,
             height: row.height,
             hasThumbnail: row.thumbnailKey !== null,
+            tier: row.tier,
+            ocrConfidence: row.ocrConfidence,
           })),
         },
         { headers: { 'cache-control': 'no-store' } },
