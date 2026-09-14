@@ -1,9 +1,21 @@
-# Konusbitr
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/icon_LIGHT.svg">
+    <source media="(prefers-color-scheme: light)" srcset="apps/web/public/icon_DARK.svg">
+    <img alt="Konusbitr Logo" src="apps/web/public/icon.svg" width="72">
+  </picture>
+</p>
 
-**Konusbitr** is an open-source, self-hostable alternative to PDF.ai. Upload
-documents, chat with them, and get answers with **clickable, page-accurate
-citations** — then drive the whole thing through a PDF.ai-wire-compatible `/v2`
-REST API.
+<h1 align="center">Konusbitr</h1>
+
+<p align="center">
+  <strong>Konusbitr</strong> is an open-source, self-hostable alternative to PDF.ai.<br />
+  Upload documents, chat with them, and get answers with <strong>clickable, page-accurate citations</strong> — then drive the whole thing through a PDF.ai-wire-compatible <code>/v2</code> REST API.
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshot.png" alt="Konusbitr Library Screenshot">
+</p>
 
 > **Status: `v0.1.0` — the product works end to end.** Upload a PDF, ask a
 > question, and every sentence of the answer carries the page it came from.
