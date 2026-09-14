@@ -18,12 +18,14 @@ import pytest
 
 from konusbitr_worker.contracts import JobErrorCode
 from konusbitr_worker.errors import JobFailure
+from konusbitr_worker.parse.artifact import PageTier
 from konusbitr_worker.parse.geometry import PageGeometry
 from konusbitr_worker.parse.inspect import (
     CHARS_PER_SQUARE_INCH_AT_FULL_COVERAGE,
     DocumentInspection,
     _coverage,
-    _require_text_layer,
+    require_text_layer,
+    classify_page_tier,
     inspect_pdf,
 )
 
@@ -73,15 +75,15 @@ class TestTextLayerRequirement:
         )
 
     def test_a_fully_born_digital_document_passes(self) -> None:
-        _require_text_layer(self.inspection([0.8] * 10), 0.1)
+        require_text_layer(self.inspection([0.8] * 10), 0.1)
 
     def test_a_scanned_page_or_two_inside_a_text_document_passes(self) -> None:
         """A signature page or a full-page chart is normal and must not fail an upload."""
-        _require_text_layer(self.inspection([0.8] * 9 + [0.0]), 0.1)
+        require_text_layer(self.inspection([0.8] * 9 + [0.0]), 0.1)
 
     def test_a_document_that_is_mostly_images_is_refused(self) -> None:
         with pytest.raises(JobFailure) as raised:
-            _require_text_layer(self.inspection([0.0] * 8 + [0.9, 0.9]), 0.1)
+            require_text_layer(self.inspection([0.0] * 8 + [0.9, 0.9]), 0.1)
 
         assert raised.value.code is JobErrorCode.needs_ocr
         assert raised.value.retryable is False
@@ -90,17 +92,17 @@ class TestTextLayerRequirement:
         """`TEXT_COVERAGE_THRESHOLD` is configuration, and it has to bite."""
         moderate = self.inspection([0.3] * 10)
 
-        _require_text_layer(moderate, 0.1)
+        require_text_layer(moderate, 0.1)
         with pytest.raises(JobFailure):
-            _require_text_layer(moderate, 0.5)
+            require_text_layer(moderate, 0.5)
 
     def test_the_boundary_is_a_fifth_of_the_pages(self) -> None:
         exactly_a_fifth = self.inspection([0.0] * 2 + [0.9] * 8)
         just_over = self.inspection([0.0] * 3 + [0.9] * 7)
 
-        _require_text_layer(exactly_a_fifth, 0.1)
+        require_text_layer(exactly_a_fifth, 0.1)
         with pytest.raises(JobFailure):
-            _require_text_layer(just_over, 0.1)
+            require_text_layer(just_over, 0.1)
 
 
 class TestOpening:
@@ -155,7 +157,8 @@ class TestOpening:
 
         assert raised.value.code is JobErrorCode.corrupt_document
 
-    def test_a_scan_is_refused_before_a_parser_is_loaded(self, fixtures_dir: Path) -> None:
+    def test_a_scan_is_refused_when_nothing_can_read_it(self, fixtures_dir: Path) -> None:
+        """The Phase 07 behaviour, which survives as the no-recogniser case."""
         with pytest.raises(JobFailure) as raised:
             inspect_pdf(fixtures_dir / "scanned-no-text.pdf")
 
@@ -169,3 +172,72 @@ class TestOpening:
 
     def test_a_zero_page_ceiling_means_unlimited(self, fixtures_dir: Path) -> None:
         assert inspect_pdf(fixtures_dir / "clean-text-10p.pdf", max_pages=0).page_count == 10
+
+
+class TestPageTiers:
+    """Per-page tiering: the Phase 12.1 change to what this module measures.
+
+    The measurement did not change. What changed is the granularity at which its
+    answer is acted on — a document is no longer refused or accepted whole, and
+    a hundred-page filing with three scanned exhibits sends three pages to a
+    recogniser rather than all of them or none.
+    """
+
+    def test_a_page_with_a_text_layer_is_native(self) -> None:
+        assert classify_page_tier(0.8, threshold=0.1) is PageTier.native
+
+    def test_a_page_with_no_text_layer_is_ocr(self) -> None:
+        assert classify_page_tier(0.0, threshold=0.1) is PageTier.ocr
+
+    def test_the_threshold_is_inclusive_at_the_boundary(self) -> None:
+        """A page exactly at the threshold has cleared it, not fallen short of it."""
+        assert classify_page_tier(0.1, threshold=0.1) is PageTier.native
+
+    def test_a_thin_text_layer_is_still_a_scan(self) -> None:
+        """The case a "has any text at all" test gets wrong.
+
+        A scan under a running header has extractable characters on it, and
+        parsing it on the strength of them returns the header and nothing else.
+        """
+        assert classify_page_tier(0.02, threshold=0.1) is PageTier.ocr
+
+    def test_a_wholly_scanned_document_tiers_every_page_for_recognition(
+        self, fixtures_dir: Path
+    ) -> None:
+        inspection = inspect_pdf(fixtures_dir / "scanned-letter.pdf", ocr_available=True)
+
+        assert inspection.pages_in_tier(PageTier.native) == []
+        assert inspection.pages_in_tier(PageTier.ocr) == [1, 2, 3]
+
+    def test_a_mixed_document_tiers_only_the_scanned_pages(self, fixtures_dir: Path) -> None:
+        """Seven born-digital pages and three photocopies, told apart by page."""
+        inspection = inspect_pdf(fixtures_dir / "mixed-digital-scanned-10p.pdf", ocr_available=True)
+
+        assert inspection.pages_in_tier(PageTier.native) == [1, 2, 3, 4, 5, 6, 7]
+        assert inspection.pages_in_tier(PageTier.ocr) == [8, 9, 10]
+
+    def test_a_born_digital_document_tiers_nothing_for_recognition(
+        self, fixtures_dir: Path
+    ) -> None:
+        inspection = inspect_pdf(fixtures_dir / "clean-text-10p.pdf", ocr_available=True)
+
+        assert inspection.pages_in_tier(PageTier.ocr) == []
+
+    def test_a_scan_is_no_longer_refused_when_something_can_read_it(
+        self, fixtures_dir: Path
+    ) -> None:
+        """The headline change: what Phase 07 failed with `needs_ocr` now parses."""
+        inspection = inspect_pdf(fixtures_dir / "scanned-letter.pdf", ocr_available=True)
+
+        assert inspection.page_count == 3
+
+    def test_tier_of_falls_back_to_native_for_an_unknown_page(self) -> None:
+        inspection = DocumentInspection(
+            page_count=1,
+            pages=[PageGeometry(page_no=1, raw_width=612.0, raw_height=792.0)],
+            coverage=[0.0],
+            tiers=[PageTier.ocr],
+        )
+
+        assert inspection.tier_of(1) is PageTier.ocr
+        assert inspection.tier_of(99) is PageTier.native

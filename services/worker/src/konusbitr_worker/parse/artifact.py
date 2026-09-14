@@ -20,7 +20,38 @@ from typing import Any
 
 from konusbitr_worker.parse.geometry import BBox
 
-__all__ = ["ElementType", "ParseArtifact", "ParsedElement", "ParsedPage", "TableData"]
+__all__ = [
+    "ElementType",
+    "PageTier",
+    "ParseArtifact",
+    "ParsedElement",
+    "ParsedPage",
+    "TableData",
+]
+
+
+class PageTier(StrEnum):
+    """How a page's text was obtained.
+
+    The tier is a property of the *page*, not of the document, and that is the
+    whole of Phase 12.1's first idea. A hundred-page filing with three scanned
+    exhibits is not a scanned document and not a digital one; tiering it as
+    either means ninety-seven pages of needless OCR or three pages of silence.
+
+    It is also the honest answer to a question a reader is entitled to ask. Text
+    that came out of a font is what the author typed; text that came out of a
+    recogniser is a machine's best reading of a photograph, and a citation
+    against it deserves to say so. `pages.tier` and `pages.ocr_confidence` are
+    what the viewer badges from.
+    """
+
+    #: A real text layer, read by Docling. No recogniser involved.
+    native = "native"
+    #: Recognised from a raster by :mod:`konusbitr_worker.parse.ocr`.
+    ocr = "ocr"
+    #: Reconstructed by a vision model. Phase 12.3; declared here so that the
+    #: column's vocabulary does not change when it arrives.
+    vlm = "vlm"
 
 
 class ElementType(StrEnum):
@@ -104,6 +135,18 @@ class ParsedPage:
     rotation: int = 0
     #: Storage key of the WebP thumbnail, once one has been written.
     thumbnail_key: str | None = None
+    #: How this page's text was obtained. See :class:`PageTier`.
+    tier: PageTier = PageTier.native
+    #: `0.0`-`1.0` for a recognised page; `None` for a native one.
+    #:
+    #: `None` rather than `1.0`, and the distinction is not pedantic. A native
+    #: page has no confidence because nothing guessed: the characters are the
+    #: ones in the file. Storing `1.0` would make "how confident are we in this
+    #: page?" a question with an answer on every page, and the honest answer on
+    #: a born-digital page is that it is not a question.
+    ocr_confidence: float | None = None
+    #: Which recogniser produced the text, when one did. Diagnostic.
+    ocr_engine: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -112,6 +155,11 @@ class ParsedPage:
             "height": round(self.height, 2),
             "rotation": self.rotation,
             "thumbnailKey": self.thumbnail_key,
+            "tier": self.tier.value,
+            "ocrConfidence": (
+                None if self.ocr_confidence is None else round(self.ocr_confidence, 4)
+            ),
+            "ocrEngine": self.ocr_engine,
         }
 
 
@@ -154,3 +202,23 @@ class ParseArtifact:
 def element_id(index: int) -> str:
     """`el_0007`. Zero-padded so that a lexical sort is a reading-order sort."""
     return f"el_{index:04d}"
+
+
+def markdown_from_elements(elements: list[ParsedElement]) -> str:
+    """Compose a document's markdown from its elements, in reading order.
+
+    Used when a document has pages from more than one tier. Docling's own
+    `export_to_markdown` is better than this — it knows about nested lists and
+    about captions belonging to the figure above them — so a wholly native
+    document keeps using it, unchanged from Phase 07. But Docling's export
+    covers only what Docling parsed, and on a mixed document that is the digital
+    pages alone: a markdown built that way would silently omit the scanned
+    exhibits from everything downstream that reads it, which is the summary, the
+    corpus-level retrieval index, and any answer the model draws from the
+    document as a whole.
+
+    Each element already carries its own markdown — a heading with its hashes, a
+    list item with its bullet, a table as a pipe table — so composing is joining
+    them with blank lines.
+    """
+    return "\n\n".join(element.markdown.strip() for element in elements if element.markdown.strip())

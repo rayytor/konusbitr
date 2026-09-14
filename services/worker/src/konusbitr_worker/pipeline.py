@@ -59,6 +59,11 @@ STAGE_MESSAGES: dict[JobStage, str] = {
     JobStage.fetching: "Fetching the document",
     JobStage.validating: "Checking the file",
     JobStage.parsing: "Reading the layout",
+    # Named for what it is rather than softened into "Reading the layout". A
+    # scan takes noticeably longer than a born-digital document and a reader
+    # watching a bar is owed the reason, not a spinner that appears to have
+    # stalled.
+    JobStage.ocr: "Recognising scanned pages",
     JobStage.chunking: "Splitting into passages",
     JobStage.embedding: "Building the index",
     JobStage.persisting: "Saving the result",
@@ -329,6 +334,8 @@ async def _persist_parse(
                 width=round(page.width),
                 height=round(page.height),
                 thumbnail_key=page.thumbnail_key,
+                tier=page.tier.value,
+                ocr_confidence=page.ocr_confidence,
             )
             for page in artifact.pages
         ],
@@ -355,11 +362,27 @@ async def _upsert_cached_pages(
                 width=round(p.get("width", 0)),
                 height=round(p.get("height", 0)),
                 thumbnail_key=p.get("thumbnailKey", p.get("thumbnail_key")),
+                # Defaulted, not assumed. An artifact cached before Phase 12.1
+                # carries no tier at all, and the parse it records was a
+                # standard-tier one by construction — the OCR tier did not
+                # exist when it ran.
+                tier=str(p.get("tier") or "native"),
+                ocr_confidence=_as_confidence(p.get("ocrConfidence")),
             )
             for p in pages_data
             if isinstance(p, dict) and ("pageNo" in p or "page_no" in p)
         ],
     )
+
+
+def _as_confidence(value: Any) -> float | None:
+    """A cached artifact's `ocrConfidence`, or `None` for anything unreadable."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 async def _summarize_and_embed(

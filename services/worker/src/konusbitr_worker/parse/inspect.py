@@ -10,13 +10,19 @@ terminally, with a message that names the problem.
 **Is it encrypted?** A password-protected document is not corrupt and telling
 somebody it is would send them looking for the wrong fix.
 
-**Does it have a text layer worth parsing?** This is the one that matters most,
-because it is the only failure mode that can produce a *plausible* wrong answer.
-A scanned page has no extractable characters; a standard-tier parse of it
-yields an empty document, or worse, the handful of characters in a header — and
-a chat built on that will answer questions confidently out of nothing. So the
-document is refused with `needs_ocr` and a message that says where OCR is
-coming from, rather than parsed into silence.
+**Which pages have a text layer worth parsing?** This is the one that matters
+most, because it is the only failure mode that can produce a *plausible* wrong
+answer. A scanned page has no extractable characters; a standard-tier parse of
+it yields an empty page, or worse, the handful of characters in a header — and
+a chat built on that will answer questions confidently out of nothing.
+
+Phase 07 asked that question of the whole document and refused the whole
+document. Phase 12.1 asks it **per page**, which is the same measurement read at
+the right granularity: every page gets a :class:`PageTier`, and a hundred-page
+filing with three scanned exhibits sends three pages to the recogniser rather
+than all hundred or none of them. The document-level refusal survives as the
+behaviour when no recogniser is configured — `needs_ocr` is still the honest
+answer when there is nothing that can read the page.
 
 PDFium rather than Docling for all of it: these are cheap structural questions,
 and asking them before loading a layout model is the difference between
@@ -25,15 +31,21 @@ rejecting a bad file in milliseconds and rejecting it in seconds.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from konusbitr_worker.contracts import JobErrorCode
 from konusbitr_worker.errors import JobFailure
 from konusbitr_worker.log import get_logger
+from konusbitr_worker.parse.artifact import PageTier
 from konusbitr_worker.parse.geometry import PageGeometry, normalize_rotation
 
-__all__ = ["DocumentInspection", "inspect_pdf"]
+__all__ = [
+    "DocumentInspection",
+    "classify_page_tier",
+    "inspect_pdf",
+    "require_text_layer",
+]
 
 logger = get_logger("konusbitr.worker.parse.inspect")
 
@@ -68,6 +80,23 @@ MAX_IMAGED_PAGE_FRACTION = 0.2
 _POINTS_PER_INCH = 72.0
 
 
+def classify_page_tier(coverage: float, *, threshold: float) -> PageTier:
+    """Which tier one page belongs to, from its extractable-text density.
+
+    The whole of the classification, and deliberately one line: the measurement
+    is :func:`_coverage`, the policy is this comparison, and keeping them apart
+    is what lets the threshold be tuned without anyone re-deriving what it is
+    measuring.
+
+    Returns :attr:`PageTier.native` for a page with a real font/text layer and
+    :attr:`PageTier.ocr` for a raster scan, an image-only page, or a page whose
+    text layer is too thin to be the page's content — the last being the case
+    that a binary "has any text at all" test gets wrong, because a scan under a
+    running header has text on it and is still a scan.
+    """
+    return PageTier.native if coverage >= threshold else PageTier.ocr
+
+
 @dataclass(frozen=True, slots=True)
 class DocumentInspection:
     """Everything the structural pass learned, for the stages after it."""
@@ -76,6 +105,8 @@ class DocumentInspection:
     pages: list[PageGeometry]
     #: Extractable-character coverage per page, index-aligned with `pages`.
     coverage: list[float]
+    #: Each page's tier, index-aligned with `pages`.
+    tiers: list[PageTier] = field(default_factory=list)
 
     def imaged_pages(self, threshold: float) -> list[int]:
         """1-based page numbers whose coverage fell below `threshold`."""
@@ -85,14 +116,37 @@ class DocumentInspection:
             if score < threshold
         ]
 
+    def pages_in_tier(self, tier: PageTier) -> list[int]:
+        """1-based page numbers classified into `tier`."""
+        return [
+            page.page_no
+            for page, page_tier in zip(self.pages, self.tiers, strict=True)
+            if page_tier is tier
+        ]
+
+    def tier_of(self, page_no: int) -> PageTier:
+        """One page's tier, defaulting to native for a page number we never saw."""
+        for page, tier in zip(self.pages, self.tiers, strict=True):
+            if page.page_no == page_no:
+                return tier
+        return PageTier.native
+
 
 def inspect_pdf(
     path: Path,
     *,
     coverage_threshold: float = DEFAULT_COVERAGE_THRESHOLD,
     max_pages: int = 0,
+    ocr_available: bool = False,
 ) -> DocumentInspection:
     """Open, validate and measure a PDF. Raises :class:`JobFailure` on anything unusable.
+
+    `ocr_available` says whether a recogniser is configured *and* able to run —
+    not whether the operator would like one. It is resolved by the caller from
+    `OCR_ENABLED` and from the engines actually answering, because those are two
+    different things and only the second one can read a page. When it is false
+    the Phase 07 refusal applies unchanged: a document that is mostly imaged is
+    failed with `needs_ocr` rather than parsed into silence.
 
     Runs synchronously and is CPU-bound; the pipeline calls it on a thread.
     """
@@ -130,8 +184,25 @@ def inspect_pdf(
     finally:
         document.close()
 
-    inspection = DocumentInspection(page_count=page_count, pages=geometries, coverage=coverage)
-    _require_text_layer(inspection, coverage_threshold)
+    inspection = DocumentInspection(
+        page_count=page_count,
+        pages=geometries,
+        coverage=coverage,
+        tiers=[classify_page_tier(score, threshold=coverage_threshold) for score in coverage],
+    )
+    if not ocr_available:
+        require_text_layer(inspection, coverage_threshold)
+    else:
+        imaged = inspection.pages_in_tier(PageTier.ocr)
+        if imaged:
+            logger.info(
+                "pages tiered for recognition",
+                extra={
+                    "pages": inspection.page_count,
+                    "ocr_pages": len(imaged),
+                    "threshold": coverage_threshold,
+                },
+            )
     return inspection
 
 
@@ -200,8 +271,15 @@ def _coverage(characters: int, width: float, height: float) -> float:
     return min(characters / expected, 1.0)
 
 
-def _require_text_layer(inspection: DocumentInspection, threshold: float) -> None:
-    """Refuse a document the standard tier cannot read honestly."""
+def require_text_layer(inspection: DocumentInspection, threshold: float) -> None:
+    """Refuse a document the standard tier cannot read honestly.
+
+    The Phase 07 rule, unchanged, and still reachable two ways: at inspection
+    time when recognition is switched off, and from the parse pipeline when it
+    is switched on but no engine could actually be loaded. The second is why
+    this is public — "configured" and "working" are different states, and only
+    the caller that tried to build an engine knows which one it is in.
+    """
     imaged = inspection.imaged_pages(threshold)
     if not imaged:
         return
@@ -220,7 +298,7 @@ def _require_text_layer(inspection: DocumentInspection, threshold: float) -> Non
 
     raise JobFailure(
         JobErrorCode.needs_ocr,
-        "That document has little or no selectable text — it looks like a scan. "
-        "Text recognition arrives with the advanced pipeline; until then, upload "
-        "a PDF with a text layer.",
+        "That document has little or no selectable text — it looks like a scan, "
+        "and text recognition is switched off on this instance. Set OCR_ENABLED "
+        "to read scanned documents, or upload a PDF with a text layer.",
     )

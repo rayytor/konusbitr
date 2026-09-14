@@ -24,6 +24,7 @@ from konusbitr_worker.contracts import STAGE_PERCENT, JobErrorCode, JobStage
 from konusbitr_worker.errors import JobFailure
 from konusbitr_worker.parse.artifact import (
     ElementType,
+    PageTier,
     ParseArtifact,
     ParsedElement,
     ParsedPage,
@@ -130,6 +131,81 @@ async def test_page_geometry_is_stored_in_the_visible_frame(
     # truncates.
     assert (second.width, second.height) == (842, 595)
     assert first.thumbnail_key == "thumb/1.webp"
+
+
+async def test_the_tier_and_the_confidence_reach_the_page_row(
+    settings: Settings,
+    queue: FakeQueue,
+    artifact: ParseArtifact,
+    stub_parse: list[dict[str, Any]],
+) -> None:
+    """The Phase 12.1 acceptance criterion, asserted where it is actually stored.
+
+    Per-page tiering is only verifiable because it lands in a column. The parse
+    can classify pages perfectly and still be useless if the classification is
+    dropped on the way to `pages`, and the viewer's badge reads that column and
+    nothing else.
+    """
+    artifact.pages[0].tier = PageTier.native
+    artifact.pages[1].tier = PageTier.ocr
+    artifact.pages[1].ocr_confidence = 0.71
+    artifact.pages[1].ocr_engine = "rapidocr"
+
+    payload = make_payload()
+    database = FakeDatabase(make_document())
+
+    await run_job(
+        payload,
+        database=database,
+        progress=reporter(payload, queue, database),
+        settings=settings,
+        store=FakeObjectStore(),
+    )
+
+    native, recognised = database.pages
+    assert native.tier == "native"
+    # None, not 1.0: nothing guessed on a born-digital page, so there is nothing
+    # to be confident about.
+    assert native.ocr_confidence is None
+    assert recognised.tier == "ocr"
+    assert recognised.ocr_confidence == pytest.approx(0.71)
+
+
+async def test_a_cached_parse_from_before_the_ocr_tier_reads_as_native(
+    settings: Settings, queue: FakeQueue
+) -> None:
+    """The docId cache holds artifacts written before `tier` existed.
+
+    Those parses were standard-tier by construction — there was no OCR tier when
+    they ran — so defaulting them to `native` is not a convenience, it is what
+    they are. Guessing anything else would badge a page that nothing recognised.
+    """
+    payload = make_payload()
+    document = make_document()
+    database = FakeDatabase(document)
+    database.parse_results.append(
+        {
+            "content_hash": document.content_hash,
+            "settings_hash": document.settings_hash,
+            # No `tier` key at all: the shape an artifact written before Phase
+            # 12.1 actually has.
+            "contents": {"pages": [{"pageNo": 1, "width": 612, "height": 792}]},
+            "markdown": "# Cached",
+            "page_count": 1,
+        }
+    )
+
+    await run_job(
+        payload,
+        database=database,
+        progress=reporter(payload, queue, database),
+        settings=settings,
+        store=FakeObjectStore(),
+    )
+
+    (page,) = database.pages
+    assert page.tier == "native"
+    assert page.ocr_confidence is None
 
 
 async def test_progress_is_published_as_well_as_persisted(

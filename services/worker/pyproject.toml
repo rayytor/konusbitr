@@ -16,6 +16,24 @@ dependencies = [
     # independently and an operator can point any of them at OpenAI or at a
     # local Ollama with no code change. See `docs/adr/0002-model-router.md`.
     "litellm>=1.80",
+    # ── The OCR tier (Phase 12.1) ────────────────────────────────────────────
+    #
+    # Every one of these is Apache-2.0, MIT or BSD-3, which is the constraint
+    # rather than a coincidence: the default build has to stay cleanly
+    # Apache-2.0-compatible, and the CI license audit fails the build if one of
+    # them ever changes its mind. PyMuPDF and Marker are the obvious
+    # alternatives and are both AGPL, which is why they live behind the
+    # `advanced` Compose profile and not here.
+    #
+    # `rapidocr-onnxruntime` ships the PP-OCRv4 detection and recognition
+    # weights inside the wheel, so the image needs no model download at build
+    # or at run time — the same property `DOCLING_ARTIFACTS_PATH` gives Docling,
+    # and the reason OFFLINE_MODE remains a claim rather than an aspiration.
+    "deskew>=1.6.1",
+    "onnxruntime>=1.20",
+    "opencv-python-headless>=4.11",
+    "pytesseract>=0.3.13",
+    "rapidocr-onnxruntime>=1.4.4",
     "pillow>=11",
     "pydantic-settings>=2.12.0",
     "pypdfium2>=4.30",
@@ -41,6 +59,11 @@ dev = [
     # on the fly rather than committing 20MB of it.
     "reportlab>=4.2",
     "ruff>=0.14.0",
+    # The license audit. `tests/test_licensing.py` runs it over the *installed*
+    # environment rather than over the lockfile, because a transitive
+    # dependency that arrives with a restrictive license arrives at install
+    # time and not at resolve time.
+    "pip-licenses>=5.0",
 ]
 
 [tool.uv.sources]

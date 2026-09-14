@@ -272,15 +272,37 @@ async def test_a_bad_fixture_fails_with_its_own_code(
     assert raised.value.message and raised.value.message[0].isupper()
 
 
-async def test_the_scanned_message_says_where_ocr_is_coming_from(
+async def test_a_page_with_nothing_readable_on_it_is_refused_not_parsed(
     settings: Settings, fixtures_dir: Path
 ) -> None:
-    """A refusal that does not say what to do instead is just a dead end."""
+    """The Phase 07 invariant, one step further along the pipeline.
+
+    `scanned-no-text.pdf` is a raster with no glyphs on it at all, so the
+    recogniser runs, reads nothing, and the document would otherwise reach
+    `ready` with an empty index — which is exactly the confident-answer-from-
+    nothing failure the coverage check was built to prevent. A refusal that does
+    not say what to do instead is a dead end, so the message names the likely
+    causes.
+    """
     with pytest.raises(JobFailure) as raised:
         await parse("scanned-no-text.pdf", settings=settings, fixtures_dir=fixtures_dir)
 
+    assert raised.value.code is JobErrorCode.needs_ocr
+    assert "no readable text" in raised.value.message.lower()
+
+
+async def test_the_refusal_names_the_switch_when_recognition_is_off(
+    settings: Settings, fixtures_dir: Path
+) -> None:
+    """With `OCR_ENABLED=false` the Phase 07 refusal is restored exactly."""
+    without_ocr = settings.model_copy(update={"ocr_enabled": False})
+
+    with pytest.raises(JobFailure) as raised:
+        await parse("scanned-no-text.pdf", settings=without_ocr, fixtures_dir=fixtures_dir)
+
+    assert raised.value.code is JobErrorCode.needs_ocr
     assert "scan" in raised.value.message.lower()
-    assert "advanced" in raised.value.message.lower()
+    assert "ocr_enabled" in raised.value.message.lower()
 
 
 async def test_a_page_ceiling_is_enforced_before_any_parsing(

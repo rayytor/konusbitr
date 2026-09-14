@@ -214,6 +214,51 @@ class Settings(BaseSettings):
     #: parser to treat it as born-digital. See `.env.example`.
     text_coverage_threshold: float = 0.1
 
+    # ── The OCR tier ─────────────────────────────────────────────────────────
+    #
+    # Phase 12.1. These are worker-only in the same sense `WORKER_CONCURRENCY`
+    # is: recognition happens here and nowhere else, and the web app has no
+    # decision to make about any of them. They are documented in `.env.example`
+    # alongside the shared variables because an operator sets them in the same
+    # file.
+
+    #: Whether scanned pages are recognised at all.
+    #:
+    #: On by default, which is the Phase 12.1 change in one line: a scan that
+    #: Phase 07 refused now parses. Turning it off restores that refusal
+    #: exactly — a deployment that would rather see `needs_ocr` than a
+    #: machine's reading of a photocopy is a legitimate position, and it is one
+    #: variable.
+    ocr_enabled: bool = True
+
+    #: What scanned pages are rendered at before recognition.
+    #:
+    #: 300 is what both engines are trained around. Raising it makes pages
+    #: quadratically more expensive for very little accuracy; lowering it makes
+    #: body text too small to recognise. It is a knob because faint 6pt
+    #: footnotes on a legal exhibit are a real case for 400, not because it
+    #: wants routine tuning.
+    ocr_dpi: float = 300.0
+
+    #: Primary-engine page confidence below which the fallback engine is tried.
+    ocr_fallback_threshold: float = 0.65
+
+    #: Page confidence below which the viewer warns the reader to check the
+    #: text. Not a failure threshold: the page is stored and indexed either way.
+    ocr_low_confidence_threshold: float = 0.85
+
+    #: Whether the fallback engine is consulted at all. Off is a supported
+    #: state — and is what a deployment with no `tesseract` binary gets anyway,
+    #: without having to say so.
+    ocr_fallback_enabled: bool = True
+
+    #: Whether skewed pages are straightened before recognition.
+    ocr_deskew: bool = True
+
+    #: Tesseract traineddata names, joined with `+`. Script auto-detection is
+    #: Phase 12.2; until then this is what the fallback is told to expect.
+    ocr_languages: str = "eng"
+
     # ── The model router ─────────────────────────────────────────────────────
     #
     # Every model call goes through LiteLLM; nothing here imports a provider
@@ -368,11 +413,34 @@ class Settings(BaseSettings):
             raise ValueError("must be greater than zero")
         return value
 
-    @field_validator("text_coverage_threshold")
+    @field_validator(
+        "text_coverage_threshold",
+        "ocr_fallback_threshold",
+        "ocr_low_confidence_threshold",
+    )
     @classmethod
     def _check_fraction(cls, value: float) -> float:
         if not 0.0 <= value <= 1.0:
             raise ValueError("must be a fraction between 0 and 1")
+        return value
+
+    @field_validator("ocr_dpi")
+    @classmethod
+    def _check_dpi(cls, value: float) -> float:
+        # The floor is where recognition starts failing rather than degrading;
+        # the ceiling is where a single page stops fitting in a worker's memory.
+        # Both are wide enough that hitting one means a typo — a DPI of 30 or of
+        # 3000 — rather than a deliberate choice.
+        if not 72.0 <= value <= 1200.0:
+            raise ValueError("must be between 72 and 1200 dots per inch")
+        return value
+
+    @field_validator("ocr_languages")
+    @classmethod
+    def _check_languages(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must name at least one language, e.g. eng")
         return value
 
     @field_validator("chunk_overlap_ratio")

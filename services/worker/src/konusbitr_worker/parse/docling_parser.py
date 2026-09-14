@@ -80,7 +80,13 @@ class DoclingParse:
     contents: list[ParsedElement]
 
 
-def convert(path: Path, *, geometries: dict[int, PageGeometry], threads: int) -> DoclingParse:
+def convert(
+    path: Path,
+    *,
+    geometries: dict[int, PageGeometry],
+    threads: int,
+    native_pages: set[int] | None = None,
+) -> DoclingParse:
     """Run Docling over a PDF and normalize the result. Synchronous and CPU-bound.
 
     `geometries` comes from the structural pass in
@@ -88,15 +94,32 @@ def convert(path: Path, *, geometries: dict[int, PageGeometry], threads: int) ->
     against — PDFium's view of the page, not Docling's. Two libraries agreeing
     on a page size is not something to assume, and the `pages` row a viewer
     scales by is written from PDFium's answer.
+
+    `native_pages` is the set of pages the inspection tiered as born-digital.
+    Anything Docling emits for a page outside it is dropped, because on a
+    scanned page Docling's text layer is a running header, a stamped page
+    number, or nothing — and the recogniser's reading of that page is about to
+    replace it. Two readings of one page in `contents` would be cited twice and
+    retrieved twice.
+
+    The set also narrows what Docling is asked to open. Docling takes a
+    contiguous `page_range` rather than a set, so the span from the first to the
+    last native page is the most that can be skipped — which happens to be the
+    common shape: a born-digital filing with scanned exhibits stapled to the
+    back. A document with one scanned page in the middle saves nothing here, and
+    the element filter is what keeps it correct.
     """
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption
 
     options = PdfPipelineOptions()
-    # Phase 07 is text PDFs. OCR and picture description are the `advanced`
-    # tier's job in Phase 12, and leaving them on here would quietly turn the
-    # `needs_ocr` refusal into a slow, low-quality parse.
+    # Docling's own OCR stays off. The OCR tier is
+    # :mod:`konusbitr_worker.parse.ocr`, which runs the engines directly so that
+    # it can keep word-level boxes, a per-page confidence and the deskew
+    # transform — none of which survive Docling's text-cell abstraction, and all
+    # three of which are Phase 12.1 acceptance criteria. See
+    # `docs/adr/0005-ocr.md`.
     options.do_ocr = False
     options.do_table_structure = True
     options.table_structure_options.do_cell_matching = True
@@ -116,7 +139,7 @@ def convert(path: Path, *, geometries: dict[int, PageGeometry], threads: int) ->
     )
 
     try:
-        result = converter.convert(str(path))
+        result = converter.convert(str(path), **_page_range(native_pages))
     except JobFailure:
         raise
     except Exception as error:
@@ -130,10 +153,27 @@ def convert(path: Path, *, geometries: dict[int, PageGeometry], threads: int) ->
         ) from error
 
     document = result.document
+    contents = normalize_items(document, geometries=geometries)
+    if native_pages is not None:
+        contents = [element for element in contents if element.page in native_pages]
     return DoclingParse(
         markdown=document.export_to_markdown(),
-        contents=normalize_items(document, geometries=geometries),
+        contents=contents,
     )
+
+
+def _page_range(native_pages: set[int] | None) -> dict[str, tuple[int, int]]:
+    """The contiguous span Docling is asked to open, when narrowing it is safe.
+
+    Empty when every page is native (Docling's own default covers the document)
+    and empty when no page is — a caller with nothing for Docling to do should
+    not be calling it at all, and returning a degenerate range here would hide
+    that mistake behind a parse of page one.
+    """
+    if not native_pages:
+        return {}
+    first, last = min(native_pages), max(native_pages)
+    return {"page_range": (first, last)}
 
 
 def normalize_items(document: Any, *, geometries: dict[int, PageGeometry]) -> list[ParsedElement]:

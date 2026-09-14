@@ -68,6 +68,13 @@ class PageRow:
     width: int
     height: int
     thumbnail_key: str | None = None
+    #: `native`, `ocr` or `vlm`. A string rather than the `PageTier` enum
+    #: because this module speaks to asyncpg and nothing else, and a `StrEnum`
+    #: would bind the worker's data layer to the parse package's vocabulary.
+    tier: str = "native"
+    #: `0.0`-`1.0` for a recognised page; `None` for a born-digital one, where
+    #: nothing guessed and so there is nothing to be confident about.
+    ocr_confidence: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,21 +590,42 @@ class Database:
         `thumbnail_key` is coalesced rather than assigned, so a re-delivery that
         has not re-rendered the thumbnails does not blank out keys that point
         at objects still sitting in the bucket.
+
+        `tier` and `ocr_confidence` are assigned rather than coalesced, and the
+        asymmetry is deliberate. A thumbnail key points at a side effect that
+        outlives the row; a tier is a *claim about this parse*, and a reindex
+        after `OCR_ENABLED` was switched off must be able to say "native" again
+        rather than keeping a stale "ocr 71%" badge on a page nothing recognised
+        this time. Coalescing would make the column monotonic, which is the one
+        thing a re-derived fact must not be.
         """
         if not pages:
             return
 
         await self._pool.executemany(
             """
-            INSERT INTO pages (id, document_id, page_no, width, height, thumbnail_key)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO pages (
+                id, document_id, page_no, width, height, thumbnail_key, tier, ocr_confidence
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (document_id, page_no)
             DO UPDATE SET width = EXCLUDED.width,
                           height = EXCLUDED.height,
-                          thumbnail_key = COALESCE(EXCLUDED.thumbnail_key, pages.thumbnail_key)
+                          thumbnail_key = COALESCE(EXCLUDED.thumbnail_key, pages.thumbnail_key),
+                          tier = EXCLUDED.tier,
+                          ocr_confidence = EXCLUDED.ocr_confidence
             """,
             [
-                (page.id, document_id, page.page_no, page.width, page.height, page.thumbnail_key)
+                (
+                    page.id,
+                    document_id,
+                    page.page_no,
+                    page.width,
+                    page.height,
+                    page.thumbnail_key,
+                    page.tier,
+                    page.ocr_confidence,
+                )
                 for page in pages
             ],
         )
