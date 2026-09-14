@@ -160,3 +160,25 @@ paragraph for a quote inside it is honest; highlighting a guess is not.
 **A sentence segmenter.** `_SENTENCE_BOUNDARY` is a crude regex, and
 deliberately: a real segmenter is a language-dependent dependency, and what is
 needed here is only "a place a reader would accept a break".
+
+## Chunks from a recognised page
+
+Phase 12.1 added a second source of elements, and the chunker treats them
+identically — which is the point of the parse artifact, and worth saying
+explicitly because one thing about them really is different.
+
+A recognised page produces **paragraphs only**, with an empty `sectionPath`. The
+OCR tier has no layout model: it knows where ink is and what it says, and it
+does not know that a line in larger type at the top of a page is a heading.
+Guessing would put a claim about the document's structure into the header of
+every chunk of every scanned document, and a wrong section path is worse than an
+absent one — it is asserted rather than missing, and it is asserted in exactly
+the place a retrieved passage uses to say where it came from.
+
+The consequences are real and bounded. A chunk from a scanned page says less
+about its context in the chunk header, so retrieval over a scanned corpus is a
+little weaker than over a born-digital one. Nothing else changes: the band, the
+overlap, the never-split-a-table rule and the `{ page, bbox }` requirement all
+apply unchanged, because they are properties of the artifact and not of the
+parser that filled it in. Structure on a scan arrives with the VLM tier in Phase
+12.3; see [`adr/0005-ocr.md`](adr/0005-ocr.md).

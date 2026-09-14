@@ -73,6 +73,39 @@ per-document fudge — the bug is in the worker and the fix belongs in the worke
 Compensating in the viewer is how a rendering layer silently becomes a second,
 undocumented coordinate system.
 
+## The OCR path, written out
+
+Phase 12.1 added a second producer of bounding boxes, and it reaches the same
+convention by a shorter route than Docling does. The chain, per scanned page:
+
+```
+PDFium renders the page  ──►  preprocess  ──►  engine
+      (pixels, visible frame)      (pixels, deskewed frame)
+  ──►  Preprocessed.to_source  ──►  multiply by 72/dpi  ──►  normalize(rotated=True)
+```
+
+Three things about it are load-bearing, and none is obvious from the code alone.
+
+**PDFium renders the page a reader sees.** It applies `/Rotate` before the
+bitmap exists, so an OCR pixel coordinate is already in the visible frame. That
+is why `normalize` is called with `rotated=True` on this path and why
+`services/worker/src/konusbitr_worker/parse/ocr/` contains no rotation
+arithmetic at all. A 90° scan is handled by the renderer.
+
+**The deskew is undone before the conversion.** Straightening a page moves every
+pixel, so a word box found on the straightened page is in a frame that does not
+exist in the document. `Preprocessed.to_source` is the inverse affine, and
+without it every highlight on a skewed scan is wrong by the skew angle — a few
+points at the top of the page and most of a line at the bottom, which reads as a
+rounding error until somebody scrolls down. Un-rotating a rectangle produces a
+rectangle at an angle; what is stored is the axis-aligned box that encloses it,
+which is a little loose around the ink and correct.
+
+**The DPI used is the one that was rendered, not the one that was asked for.** A
+very large page is rendered below `OCR_DPI` to stay inside a memory ceiling, and
+`RasterPage.dpi` records what actually happened. Scaling by the requested DPI
+instead is the difference between a box on the word and a box near it.
+
 ## The conversions, written out
 
 Given Docling's page height `h_raw` and a box in Docling's own frame:
@@ -115,11 +148,18 @@ assert, on real fixture PDFs:
   row records the rotated dimensions;
 - a non-Letter fixture (A4) is not silently measured against 612×792.
 
+`tests/test_ocr_fixtures.py` asserts the same properties of the OCR path, on
+scanned fixtures whose text this repository typeset — including a page at each
+of `/Rotate` 90, 180 and 270, and a page photographed at three and a half
+degrees under a lamp. `tests/test_ocr_preprocess.py` asserts the inverse map
+directly, by finding the ink on a straightened page and checking that the box
+maps back onto the ink on the page as stored.
+
 ## What is *not* in this convention
 
-- **Pixels.** Thumbnails and, later, OCR rasters are rendered at a DPI the
-  worker chooses; those pixel coordinates are converted to points before they
-  are stored and never escape the module that produced them.
+- **Pixels.** Thumbnails and OCR rasters are rendered at a DPI the worker
+  chooses; those pixel coordinates are converted to points before they are
+  stored and never escape the module that produced them.
 - **Normalized fractions.** Storing `0..1` would make a box unreadable without
   its page row and would quietly round away precision on large pages.
 - **Percentages, CSS units, or device pixels.** Those are the viewer's business

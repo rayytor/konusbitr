@@ -9,8 +9,9 @@
 # Builds on linux/amd64 and linux/arm64.
 #
 # This runs the real job loop: a FastAPI app serving /health and /ready, with
-# the Redis-stream consumer started from its lifespan, and the Phase 07 parse
-# pipeline behind it: PDFium for structure and thumbnails, Docling for layout.
+# the Redis-stream consumer started from its lifespan, and the parse pipeline
+# behind it: PDFium for structure and thumbnails, Docling for layout, and the
+# Phase 12.1 OCR tier for pages that have no text layer at all.
 #
 # Docling's layout models are **baked into the image** rather than fetched on
 # first use. A worker that downloads several hundred megabytes from Hugging
@@ -18,6 +19,12 @@
 # air-gapped deployment, fails behind a corporate proxy, and turns the first
 # parse after every deploy into a two-minute one. OFFLINE_MODE is a headline
 # claim of this project; a model downloaded at runtime would quietly break it.
+# RapidOCR needs no equivalent step: its PP-OCRv4 weights ship inside the wheel
+# and are installed by `uv sync` along with everything else.
+#
+# Every package in the default image is Apache-2.0, MIT or BSD-3.
+# `services/worker/tests/test_licensing.py` fails the build if that stops being
+# true, which is what keeps AGPL dependencies behind the `advanced` profile.
 
 ARG PYTHON_VERSION=3.12
 ARG UV_VERSION=0.12
@@ -79,12 +86,27 @@ ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models \
     HF_HUB_DISABLE_TELEMETRY=1 \
     OMP_NUM_THREADS=4
 
-# OpenCV arrives through Docling's layout models and links against the system
-# GL and glib shared objects, which `python:slim` does not ship. Without these
-# two packages the image builds cleanly and then fails on the first import, at
-# the first job — the worst place to discover a missing library.
+# Three system packages, for two different reasons.
+#
+# OpenCV arrives through Docling's layout models and the OCR preprocessing
+# chain, and links against the system GL and glib shared objects, which
+# `python:slim` does not ship. Without them the image builds cleanly and then
+# fails on the first import, at the first job — the worst place to discover a
+# missing library.
+#
+# `tesseract-ocr` is the OCR tier's fallback engine, reached when RapidOCR is
+# unsure about a page. `pytesseract` is only a wrapper around this binary, and
+# a deployment without it keeps working with the primary engine alone rather
+# than failing — but the default image should carry both, because "the fallback
+# exists" is a claim the phase makes. `tesseract-ocr-eng` is its English
+# traineddata; `OCR_LANGUAGES` names which sets are loaded, and adding a
+# language means adding its `tesseract-ocr-<lang>` package here.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        tesseract-ocr \
+        tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # A dedicated unprivileged user; the slim image has no equivalent of node's.

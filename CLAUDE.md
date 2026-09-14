@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–10 are done; Phase 11 is next.** `cp .env.example .env &&
+**Phases 01–11 and 12.1/4 are done; Phase 12.2/4 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -32,7 +32,20 @@ mechanically verifies every citation against chunk and page text (exact + fuzzy 
 and drops unverifiable claims, refuses absent questions cleanly, and resists adversarial
 prompt injection. Multi-turn chat is supported with query rewriting, conversation CRUD is
 org-scoped, auto-titling runs asynchronously, and `pnpm eval:chat` validates citation accuracy
-(≥98%), faithfulness, and refusal rates. Phase 11 is the viewer and chat UI.
+(≥98%), faithfulness, and refusal rates. **Phase 11 is the product**: the
+viewer, the chat pane and the workspace that joins them, where a citation is
+clicked and the sentence lights up on the page.
+
+**Phase 12.1/4 reads scans.** The `needs_ocr` refusal is now a *tier*: every page
+is classified by its extractable-text density, Docling reads the born-digital
+ones and an Apache-2.0 CPU OCR stack — RapidOCR under `onnxruntime`, with
+Tesseract as a fallback — reads the rest. A mixed document runs both over the
+pages each is right for. Pages are deskewed, denoised and binarised before
+recognition and the transform is **undone** before any box is stored, so a
+recognised box lands in the same coordinate convention as a parsed one. Every
+page carries its `tier` and, where something guessed, an `ocr_confidence` the
+viewer badges from. A document the recogniser cannot read is still refused
+rather than parsed into silence.
 
 
 One thing to know before touching the pipeline: **with no embedding model
@@ -100,11 +113,19 @@ What exists:
   lifespan. `contracts.py` is generated and must never be hand-edited;
   `queue.py` owns the stream, `runtime.py` the loop (concurrency, per-job
   timeout, retry classification, dead-lettering), `db.py` the worker's own raw
-  SQL, `parse/` the Docling pipeline, `chunk/` the layout-aware chunker and the
-  batched embed-and-upsert, `ai/` the LiteLLM router (role resolution, offline
-  enforcement, retries, circuit breaker, the tokenizer the chunker measures
-  with), and `pipeline.py` the coordination — one `run_job` for `parse`,
-  `chunk_embed` and `reindex`, differing only in which short-circuits apply.
+  SQL, `parse/` the Docling pipeline, `parse/ocr/` the Phase 12.1 OCR tier,
+  `chunk/` the layout-aware chunker and the batched embed-and-upsert, `ai/` the
+  LiteLLM router (role resolution, offline enforcement, retries, circuit
+  breaker, the tokenizer the chunker measures with), and `pipeline.py` the
+  coordination — one `run_job` for `parse`, `chunk_embed` and `reindex`,
+  differing only in which short-circuits apply. `parse/ocr/` is five modules
+  with one job each: `raster.py` renders with PDFium, `preprocess.py` deskews,
+  denoises and binarises *and keeps the affine map back*, `engines.py` is
+  RapidOCR and Tesseract behind one interface speaking pixels, `layout.py`
+  rebuilds the lines and paragraphs a recogniser discards, and `pipeline.py`
+  composes them and converts into the coordinate convention. It has no layout
+  model and emits paragraphs only — headings and tables on a scan are Phase 12.2
+  and 12.3; see `docs/adr/0005-ocr.md` for why that trade was taken.
 - `packages/db` — the complete Drizzle schema (17 tables, auth included),
   migrations, the `scopedDb(orgId)` multi-tenancy helper with document CRUD
   queries (`listDocuments`, `documentById`, `documentByHashes`,
@@ -117,9 +138,15 @@ What exists:
 - `fixtures/` — the PDF corpus, every file produced by `fixtures/generate.py`
   and nothing scraped: a clean 10-page document, a 50-page budget fixture, a
   table-heavy report, a two-column paper, a rotated A4 document, an image-only
-  scan, an encrypted PDF and a truncated one. Regeneration is byte-stable, so a
-  diff on those files means the corpus actually moved. The 500-page monster is
-  generated at test time rather than committed.
+  scan, an encrypted PDF and a truncated one. Phase 12.1 adds four scanned
+  fixtures, and they are *rasters of real glyphs* rather than grey bars: a clean
+  Letter scan, one page at each of `/Rotate` 90/180/270, a page photographed at
+  three and a half degrees under a lamp, and a ten-page filing with seven
+  digital pages and three photocopies. Each is typeset with reportlab, rendered
+  with PDFium and degraded deterministically, so the tests can assert what the
+  page *says* rather than record what the recogniser returned. Regeneration is
+  byte-stable, so a diff on those files means the corpus actually moved. The
+  500-page monster is generated at test time rather than committed.
 - `docs/coordinates.md` — the coordinate convention, written out: the
   conversions, the rotation table, and what is deliberately *not* in it.
 - `docs/chunking.md` — the rules a chunk is built by, including the two places
@@ -131,6 +158,11 @@ What exists:
 - `docs/adr/0002-model-router.md` — why every model call goes through LiteLLM in
   the worker and `packages/ai` on the product surface, why the four roles are
   configured independently, and why the embedding width is fixed at 1024.
+- `docs/adr/0005-ocr.md` — why pages are tiered individually, why the OCR
+  engines are driven directly rather than through Docling (per-page confidence,
+  the deskew transform and word boxes do not survive its text-cell
+  abstraction), and why RapidOCR is primary with Tesseract as a genuinely
+  different fallback.
 - `docs/adr/0003-retrieval.md` — why fusion is RRF over ranks rather than
   normalized scores, why the sparse leg ORs its terms and drops function words
   first, why `hnsw.ef_search` has to be set with `SET LOCAL` inside the query's
@@ -257,12 +289,23 @@ These cut across many files; violating one breaks the product rather than one fe
   only applies a scale factor — if the viewer needs more than that, fix the
   worker, not the viewer. Documented in `docs/coordinates.md`, implemented in
   `services/worker/src/konusbitr_worker/parse/geometry.py` and **nowhere else**.
-- **A document the standard tier cannot read honestly is refused, not parsed.**
-  A scan has no text layer; parsing it anyway returns almost nothing and a chat
-  built on that answers confidently out of an empty document. `inspect.py`
-  measures extractable-character coverage per page and fails the job with
-  `needs_ocr` when more than a fifth of the pages fall below
-  `TEXT_COVERAGE_THRESHOLD`.
+  The OCR tier reaches it by a shorter route and adds no arithmetic of its own:
+  PDFium renders the page a reader *sees*, so a pixel is already in the visible
+  frame and the conversion is `× 72/dpi` plus `normalize(rotated=True)`. The one
+  thing that path must never skip is undoing the deskew — recognition happens on
+  a straightened page and storage happens on the page as it exists, and
+  `Preprocessed.to_source` is the bridge.
+- **A page the standard tier cannot read honestly is recognised, not parsed —
+  and a page nothing can read is refused.** A scan has no text layer; parsing it
+  anyway returns almost nothing and a chat built on that answers confidently out
+  of an empty document. `inspect.py` measures extractable-character coverage
+  **per page** and assigns each one a `PageTier`: `native` above
+  `TEXT_COVERAGE_THRESHOLD`, `ocr` below it. The OCR tier reads the `ocr` pages.
+  The refusal did not go away, it moved to the two places where it is still the
+  honest answer: `needs_ocr` when no recogniser is configured and more than a
+  fifth of the pages are imaged, and `needs_ocr` again when a recogniser ran and
+  found no words anywhere in the document. Never let a document reach `ready`
+  with nothing in it.
 - **Citations are verified mechanically before they reach the client.** Every
   quote must actually appear in the parse result for the page it cites
   (exact match, then fuzzy for hyphenation/ligature noise). Unverifiable citations
@@ -370,7 +413,13 @@ These cut across many files; violating one breaks the product rather than one fe
   holds literal `model_dump_json()` output to keep that honest.
 - **Licensing discipline:** the default build must be cleanly Apache-2.0
   compatible. AGPL/commercially-restricted dependencies (PyMuPDF, Marker) live
-  only behind the Compose `advanced` profile, asserted by a CI license audit.
+  only behind the Compose `advanced` profile. Asserted by
+  `services/worker/tests/test_licensing.py`, which audits the *installed*
+  environment rather than the lockfile — a restrictively-licensed package
+  almost always arrives as somebody else's transitive dependency, and that is
+  visible at install time and not at resolve time. This is the constraint that
+  chose the whole OCR stack: PyMuPDF and Marker are the strongest tools for the
+  job and both are AGPL.
 
 ## Commands
 
