@@ -245,6 +245,59 @@ jobs:
       - name: Test
         run: uv run pytest
 
+  licenses:
+    name: Licence audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/worker/uv.lock
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync the worker environment
+        run: uv sync --locked --project services/worker
+
+      # The claim this job exists to keep: the default build contains no AGPL,
+      # GPL, SSPL or non-commercially-licensed package. It runs over the
+      # *installed* environment rather than the lockfile, because a
+      # restrictively-licensed package almost always arrives as somebody else's
+      # transitive dependency — visible at install time, not at resolve time.
+      #
+      # Its own job rather than a step inside `python`, so that a licence
+      # regression is legible in the checks list as a licence regression rather
+      # than as a failing test suite.
+      - name: pnpm audit:licenses
+        run: pnpm audit:licenses
+
+      # The other half of the boundary. The quarantined packages are pinned in
+      # `docker/advanced-requirements.txt` and must appear nowhere in the
+      # project's own dependency resolution — as a `pyproject.toml` extra they
+      # would constrain the base resolution, which is the quarantine leaking in
+      # the one direction it must never leak. See the header of that file.
+      - name: The quarantined parsers are outside the project's resolution
+        run: |
+          uv lock --check --project services/worker
+          for package in pymupdf surya-ocr marker-pdf; do
+            grep -qi "name = \"$package\"" services/worker/uv.lock \
+              && { echo "$package is in the worker lockfile"; exit 1; }
+          done
+          grep -q 'pymupdf' docker/advanced-requirements.txt \
+            || { echo "the advanced requirements file lost its pins"; exit 1; }
+          echo "ok — the advanced parsers are pinned outside the default resolution"
+
   infra:
     name: Backing services
     runs-on: ubuntu-latest
@@ -265,6 +318,22 @@ jobs:
           cp .env.example .env
           docker compose config --quiet
           docker compose --profile local-llm config --quiet
+          docker compose --profile advanced config --quiet
+
+      # The licence boundary, asserted as a property of the compose file rather
+      # than as a comment in it: the default profile must not contain the
+      # advanced worker, and the advanced profile must build the stage that
+      # installs the restrictively-licensed extras.
+      - name: The advanced worker is only in the advanced profile
+        run: |
+          docker compose config --services | grep -qx worker-advanced \
+            && { echo "worker-advanced is in the default profile"; exit 1; }
+          docker compose --profile advanced config --services \
+            | grep -qx worker-advanced \
+            || { echo "worker-advanced is missing from the advanced profile"; exit 1; }
+          docker compose --profile advanced config \
+            | grep -q 'target: worker-advanced' \
+            || { echo "the advanced profile does not build the quarantined stage"; exit 1; }
 
       # This is the `pnpm dev:infra` path: backing services in containers, app
       # code native. It has to publish every port on localhost, because that is

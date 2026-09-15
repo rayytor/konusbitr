@@ -1,0 +1,54 @@
+# The `advanced` profile's parsers. NOT PART OF THE DEFAULT BUILD.
+#
+# Every package here is AGPL-3.0, GPL-3.0 or carries a non-commercial
+# restriction. `services/worker/tests/test_licensing.py` fails if any of them is
+# present in the environment the default image builds, and that test is what
+# keeps Konusbitr's Apache-2.0 promise enforceable rather than aspirational.
+#
+# **Installing these changes the licence of the image you build.** An image
+# containing PyMuPDF is AGPL-3.0 and may not be redistributed under Apache-2.0.
+# Read `docs/licensing.md` before you build it.
+#
+# ── Why this is a requirements file and not an extra in pyproject.toml ───────
+#
+# It was an extra first. It cannot be one, and the reason is the quarantine
+# working correctly rather than a packaging inconvenience.
+#
+# uv resolves a project's extras *together with* its base dependencies, so that
+# one lockfile describes every installable combination. Both packages below pin
+# `pillow<11`, and `pillow>=11` is a runtime dependency of the default build. As
+# an extra, they therefore made the default resolution unsatisfiable — and the
+# only ways out would have been to downgrade Pillow in the Apache-2.0 image, or
+# to loosen its pin, so that an optional, quarantined, never-installed package
+# got to decide what the default build ships.
+#
+# That is the quarantine leaking in the one direction it must never leak. A
+# dependency nobody installs must not be able to touch the image everybody runs.
+# So the advanced packages sit entirely outside the project's resolution, pinned
+# here, installed by one Dockerfile stage and by nothing else.
+#
+# The cost is that these versions are not resolved against the rest of the
+# environment — the `worker-advanced` stage will downgrade Pillow when it
+# installs them. That is correct: it is a different image, with a different
+# licence, and the operator who built it asked for exactly that.
+
+# AGPL-3.0 (or a paid commercial licence from Artifex).
+# The best raster and text extraction in Python by some distance, and the reason
+# this quarantine exists at all rather than being theoretical.
+pymupdf==1.24.14
+
+# GPL-3.0. Surya's layout and reading-order models.
+surya-ocr==0.6.13
+
+# Marker is deliberately absent even from this file.
+#
+# It is GPL-3.0 *and* carries a commercial-use restriction on its hosted
+# weights, which is not an open-source licence at all — it is a use restriction
+# an operator has to evaluate against their own situation, and one this project
+# should not install on anybody's behalf even behind a profile. It also pulls a
+# large model set at first use, which would make the advanced image a network
+# dependency in a project whose OFFLINE_MODE is a headline claim.
+#
+# If you want it, install it yourself into the advanced image and accept both.
+# `konusbitr_worker.parse.advanced` reports its absence the same way it reports
+# a missing PyMuPDF, so nothing breaks by its not being here.
