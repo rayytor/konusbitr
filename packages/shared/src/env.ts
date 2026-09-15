@@ -12,6 +12,11 @@ import {
   providerCanEmbed,
 } from './models.js';
 import { DEFAULT_MAX_UPLOAD_BYTES } from './upload.js';
+import {
+  DEFAULT_MAX_VLM_PAGES_PER_JOB,
+  DEFAULT_TIER_FALLBACK_THRESHOLD,
+  DEFAULT_VLM_DPI,
+} from './vlm.js';
 
 /**
  * Runtime configuration, validated once at process start.
@@ -147,6 +152,66 @@ export const EnvSchema = z.object({
    * can be misspelled in the file the other half reads.
    */
   TEXT_COVERAGE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.1),
+
+  // ── Phase 12.3 — the advanced (VLM) tier ─────────────────────────────────
+  //
+  // Read by the worker, which is where pages are looked at, except for the
+  // three the intake path also enforces: `MAX_VLM_PAGES_PER_JOB` refuses a
+  // document before a job exists, and the two pricing variables are what
+  // `POST /api/documents/estimate-cost` quotes from. Declared together so an
+  // operator sets the tier in one block.
+
+  /**
+   * Whether `quality: "advanced"` may run at all.
+   *
+   * On, because refusing it silently would be worse; but it does nothing
+   * without a configured vision role, and the default `.env` has none. The
+   * combination an operator actually gets out of the box is "advanced is
+   * available, and asking for it tells you a vision model is not configured".
+   */
+  VLM_ENABLED: z.stringbool().default(true),
+
+  /**
+   * Pages of one document the VLM tier will read before the job is refused.
+   *
+   * The cost guardrail with teeth. Enforced at intake, so a 400-page filing
+   * submitted as `advanced` is rejected with `too_many_pages` before anything
+   * is spent, and enforced again in the worker, because a job payload arrives
+   * from a queue rather than from the endpoint that validated it.
+   */
+  MAX_VLM_PAGES_PER_JOB: z.coerce.number().int().positive().default(DEFAULT_MAX_VLM_PAGES_PER_JOB),
+
+  /**
+   * Recognition confidence below which a page is escalated to the VLM tier.
+   *
+   * The *automatic* half of tier 3: a page the OCR tier read badly is worth
+   * looking at, even on a document nobody asked to parse as `advanced`. Set it
+   * to 0 to disable escalation entirely and make the tier opt-in only.
+   */
+  TIER_FALLBACK_THRESHOLD: z.coerce.number().min(0).max(1).default(DEFAULT_TIER_FALLBACK_THRESHOLD),
+
+  /** What a page is rendered at before it is shown to a vision model. */
+  VLM_DPI: z.coerce.number().min(72).max(400).default(DEFAULT_VLM_DPI),
+
+  /**
+   * What one page costs on this deployment, in USD, overriding the built-in
+   * price table.
+   *
+   * For an operator who has negotiated a rate, or who runs a gateway whose
+   * prices are not the provider's. Unset means the published table, and the
+   * estimate says which it used.
+   */
+  VLM_USD_PER_PAGE: z.coerce.number().min(0).optional(),
+
+  /**
+   * Ceiling on one organization's advanced-tier spend per calendar month, USD.
+   *
+   * `0` — the default — means no cap, which is the right default for a
+   * single-tenant self-hosted instance where the operator *is* the tenant. A
+   * multi-tenant deployment sets it, and intake refuses a document whose
+   * estimate would cross it rather than discovering the overrun on an invoice.
+   */
+  ORG_MONTHLY_VLM_USD_CAP: z.coerce.number().min(0).default(0),
 
   // ── Phase 08 — the model router ──────────────────────────────────────────
   //
