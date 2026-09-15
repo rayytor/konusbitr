@@ -120,6 +120,43 @@ very large page is rendered below `OCR_DPI` to stay inside a memory ceiling, and
 `RasterPage.dpi` records what actually happened. Scaling by the requested DPI
 instead is the difference between a box on the word and a box near it.
 
+## The VLM and text-layer paths, written out
+
+Phase 12.3 added two more producers, and they land on **opposite sides of the
+same flag** — which is the whole reason they are written down together.
+
+**The VLM path takes the OCR route.** A vision model is shown the bitmap PDFium
+rendered, so its boxes are already in the visible frame. It reports them as
+integers on a 0–1000 scale in `[ymin, xmin, ymax, xmax]`, which
+`parse/vlm/response.py` multiplies back into points and normalizes with
+`origin=top_left, rotated=True`. No rotation arithmetic, exactly as in the OCR
+tier, and for exactly the same reason.
+
+The 0–1000 scale is a property of the models rather than a choice: Gemini and
+Qwen2.5-VL emit it natively, and a box given as a fraction of the page is
+resolution-independent, so the render DPI can change without every stored
+rectangle moving. A model that answers on 0–1 anyway is read as a fraction — the
+alternative reading makes the box a thousandth of a page across, which is never
+a real element.
+
+**The text-layer path takes the figure route.** `parse/textlayer.py` reads
+PDFium's *character* boxes, and PDFium reports those in unrotated page space
+with a bottom-left origin — the same frame it reports image object bounds in.
+So a word's box is normalized with `origin=bottom_left, rotated=False`, and the
+rotation table below is what turns it.
+
+Two paths added in one phase, reading the same page, on opposite settings of the
+same two flags. The rule that resolves it every time:
+
+> **A rendered page has had `/Rotate` applied. An object's reported bounds have
+> not.**
+
+`tests/test_textlayer.py` asserts this against the rendered pixels rather than
+against the page bounds, because bounds cannot catch it: `BBox.clamp` pulls an
+over-running box back inside the page, so the wrong answer is wrong *and* in
+range. The test renders the rotated fixture and checks that a word's rectangle
+contains ink.
+
 ## The conversions, written out
 
 Given Docling's page height `h_raw` and a box in Docling's own frame:
@@ -169,12 +206,23 @@ degrees under a lamp. `tests/test_ocr_preprocess.py` asserts the inverse map
 directly, by finding the ink on a straightened page and checking that the box
 maps back onto the ink on the page as stored.
 
+`tests/test_textlayer.py` asserts the text-layer path **against the rendered
+pixels**, and that is not belt-and-braces. Bounds cannot catch a rotation error
+on this path: `BBox.clamp` pulls an over-running box back inside the page, so a
+box computed in the wrong frame is wrong *and* in range, and every
+inside-the-page assertion passes. So the test renders the quarter-turned fixture
+the way a reader sees it and checks that a word's rectangle contains ink. It has
+been verified to fail when `rotated` is flipped.
+
 ## What is *not* in this convention
 
 - **Pixels.** Thumbnails and OCR rasters are rendered at a DPI the worker
   chooses; those pixel coordinates are converted to points before they are
   stored and never escape the module that produced them.
 - **Normalized fractions.** Storing `0..1` would make a box unreadable without
-  its page row and would quietly round away precision on large pages.
+  its page row and would quietly round away precision on large pages. Phase
+  12.3's vision models *report* on a 0–1000 scale, which is a property of those
+  models; `parse/vlm/response.py` converts to points before anything is stored,
+  the same way the OCR tier converts pixels.
 - **Percentages, CSS units, or device pixels.** Those are the viewer's business
   and are derived from a scale factor at render time.
