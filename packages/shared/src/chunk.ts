@@ -40,10 +40,50 @@ export const ChunkPageSchema = z.object({
 
 export type ChunkPage = z.infer<typeof ChunkPageSchema>;
 
-/** A table as data, carried through from the parse artifact. */
+/**
+ * One cell of a table, addressable by position and locatable on the page.
+ *
+ * `bbox` is what makes a cell-level citation possible: "the 2024 revenue
+ * figure" can be highlighted on the number rather than on the whole table.
+ * It is optional because not every source produces it — a table whose cells
+ * carry no provenance is still a table — and `rowSpan`/`colSpan` are omitted
+ * when they are 1, so an ordinary table's JSON is not mostly boilerplate.
+ *
+ * `rowIndex` counts the header row as row 0, matching `rows` holding the data
+ * rows alone: the header cell of a column is the one with `rowIndex === 0`.
+ */
+export const ChunkTableCellSchema = z.object({
+  rowIndex: z.number().int().nonnegative(),
+  colIndex: z.number().int().nonnegative(),
+  text: z.string(),
+  bbox: BoundingBoxSchema.optional(),
+  rowSpan: z.number().int().positive().default(1),
+  colSpan: z.number().int().positive().default(1),
+  header: z.boolean().default(false),
+});
+
+export type ChunkTableCell = z.infer<typeof ChunkTableCellSchema>;
+
+/**
+ * A table as data, carried through from the parse artifact.
+ *
+ * `numRows` counts the header row; `numCols` is the widest row. Both are
+ * derivable from `headers` and `rows` and are stored anyway, because Phase 13's
+ * `extract` answers "how big is this table?" without walking it and because a
+ * consumer that reads only the dimensions should not have to know the counting
+ * rule.
+ *
+ * Every field except `headers` and `rows` has a default. Artifacts written
+ * before Phase 12.2 carry only those two, and a parse from the docId cache is
+ * years-old JSON by design — so reading one must produce a valid table rather
+ * than a validation error.
+ */
 export const ChunkTableSchema = z.object({
+  numRows: z.number().int().nonnegative().optional(),
+  numCols: z.number().int().nonnegative().optional(),
   headers: z.array(z.string()),
   rows: z.array(z.array(z.string())),
+  cells: z.array(ChunkTableCellSchema).default([]),
 });
 
 export type ChunkTable = z.infer<typeof ChunkTableSchema>;
@@ -53,9 +93,12 @@ export type ChunkTable = z.infer<typeof ChunkTableSchema>;
  *
  * `prose` is the ordinary case and is the only kind the token band applies to.
  * `table` is a chunk that exists because a table may never be split, so its
- * size is the table's size and not a choice the chunker made.
+ * size is the table's size and not a choice the chunker made. `figure` is a
+ * vision model's description of an extracted image, kept whole for the same
+ * reason and cited against the figure's own rectangle — so that an answer drawn
+ * from a chart points at the chart.
  */
-export const CHUNK_KINDS = ['prose', 'table'] as const;
+export const CHUNK_KINDS = ['prose', 'table', 'figure'] as const;
 
 export const ChunkKindSchema = z.enum(CHUNK_KINDS);
 
@@ -183,5 +226,8 @@ export function unionChunkPages(entries: readonly ChunkPage[]): ChunkPage[] {
 
   return [...byPage.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([page, bbox]) => ({ page, bbox: [...bbox] as [number, number, number, number] }));
+    .map(([page, bbox]) => ({
+      page,
+      bbox: [...bbox] as [number, number, number, number],
+    }));
 }

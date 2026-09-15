@@ -75,6 +75,20 @@ const corpus: {
     text: 'Payment terms are net thirty days from the invoice date shown in the header.',
   },
   {
+    // A figure chunk: a vision model's description of a bar chart, written by
+    // the Phase 12.2 parse and indexed like any other passage. The document it
+    // belongs to says nothing about regions in its prose, so a query that finds
+    // it found it through the chart.
+    id: 'chk_lease_figure',
+    org: orgA,
+    doc: docLease,
+    ordinal: 2,
+    page: 9,
+    text:
+      '[Figure: A stacked bar chart of leased floorspace by region. ' +
+      'North America accounts for 54 percent, Europe for 28 percent and Asia Pacific for 18 percent.]',
+  },
+  {
     id: 'chk_other_org',
     org: orgB,
     doc: docOther,
@@ -259,6 +273,24 @@ describe('retrieve() against real SQL', () => {
     expect(deposit?.page).toBe(4);
     expect(deposit?.bbox).toEqual([72, 100, 540, 160]);
     expect(deposit?.pages).toEqual([{ page: 4, bbox: [72, 100, 540, 160] }]);
+  });
+
+  it('retrieves a figure chunk for a question only the chart can answer', async () => {
+    // The Phase 12.2 acceptance criterion, and the reason figures are captioned
+    // at all: `floorspace by region` appears nowhere in this corpus except in a
+    // description of a bar chart. A pipeline that extracted the chart and never
+    // described it returns nothing here, and the document looks as though it
+    // does not contain the answer.
+    const results = await retrieveIn({
+      orgId: orgA,
+      scope: { kind: 'corpus' },
+      query: 'floorspace by region Asia Pacific',
+    });
+
+    const figure = results.find((chunk) => chunk.id === 'chk_lease_figure');
+    expect(figure).toBeDefined();
+    // And it still says where it came from, so the citation lands on the chart.
+    expect(figure?.pages[0]).toEqual({ page: 9, bbox: [72, 100, 540, 160] });
   });
 
   it('confines a document-scoped search to that document', async () => {

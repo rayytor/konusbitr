@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CHUNK_KINDS,
   CHUNKING_DEFAULTS,
   ChunkMetaSchema,
   type ChunkPage,
@@ -86,6 +87,57 @@ describe('the chunk contract', () => {
 
     expect(parsed.meta?.tableJson).toBeNull();
     expect(parsed.pages[0]?.page).toBe(4);
+  });
+
+  it('accepts the table JSON the Phase 12.2 worker writes, cells and all', () => {
+    // Held as a literal rather than built, because this is the shape the Python
+    // half emits and the two runtimes share no code. If `TableData.to_json`
+    // changes, this is what notices.
+    const parsed = ChunkMetaSchema.parse({
+      kind: 'table',
+      elementIds: ['el_0104'],
+      truncated: false,
+      tableJson: {
+        numRows: 3,
+        numCols: 3,
+        headers: ['Metric', 'Q3 2024', 'Q3 2025'],
+        rows: [
+          ['Revenue', '$12.4M', '$18.2M'],
+          ['Net Income', '$2.1M', '$4.3M'],
+        ],
+        cells: [
+          { rowIndex: 0, colIndex: 0, text: 'Metric', bbox: [58, 120, 180, 140], header: true },
+          { rowIndex: 1, colIndex: 0, text: 'Revenue', bbox: [58, 160, 180, 180] },
+          { rowIndex: 0, colIndex: 1, text: 'Quarter', bbox: [180, 120, 550, 140], colSpan: 2 },
+        ],
+      },
+    });
+
+    expect(parsed.tableJson?.numRows).toBe(3);
+    expect(parsed.tableJson?.cells[1]?.rowSpan).toBe(1);
+    expect(parsed.tableJson?.cells[2]?.colSpan).toBe(2);
+    expect(parsed.tableJson?.cells[0]?.header).toBe(true);
+  });
+
+  it('reads a table written before Phase 12.2 without complaining', () => {
+    // A parse from the docId cache is years-old JSON by design: the cache key
+    // is the file's bytes, so a document parsed under an older worker is read
+    // back verbatim rather than re-parsed. Every field the newer worker adds
+    // therefore has to be optional on the way in.
+    const parsed = ChunkMetaSchema.parse({
+      kind: 'table',
+      tableJson: { headers: ['Segment', '2024'], rows: [['Services', '2,110']] },
+    });
+
+    expect(parsed.tableJson?.cells).toEqual([]);
+    expect(parsed.tableJson?.numRows).toBeUndefined();
+  });
+
+  it('knows a figure chunk from a prose one', () => {
+    // A figure chunk is a vision model's description of an extracted image,
+    // kept whole so that an answer drawn from a chart cites the chart.
+    expect(ChunkMetaSchema.parse({ kind: 'figure', elementIds: ['img_001'] }).kind).toBe('figure');
+    expect(CHUNK_KINDS).toEqual(['prose', 'table', 'figure']);
   });
 
   it('defaults chunk metadata to an ordinary prose chunk', () => {

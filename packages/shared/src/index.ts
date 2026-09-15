@@ -33,6 +33,8 @@ export {
   type ChunkPage,
   ChunkPageSchema,
   type ChunkTable,
+  type ChunkTableCell,
+  ChunkTableCellSchema,
   ChunkTableSchema,
   type ChunkView,
   ChunkViewSchema,
@@ -49,7 +51,6 @@ export {
   type RejectedCitation,
   RejectedCitationSchema,
 } from './citation.js';
-
 export {
   DOCUMENT_STATUSES,
   type DocumentStatus,
@@ -111,6 +112,7 @@ export {
   providerCanEmbed,
   SUPPORTED_EXTERNAL_PROVIDERS,
 } from './models.js';
+export { type ExtractedImage, ExtractedImageSchema } from './parse-artifact.js';
 
 export {
   canonicalizeParseSettings,
