@@ -202,6 +202,7 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
+      target: runtime
     restart: unless-stopped
     # Scaled to zero by the `advanced` profile's instructions above. Declared
     # here rather than left to `--scale` on the command line so that the

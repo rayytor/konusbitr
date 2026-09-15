@@ -229,3 +229,10 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
   CMD ["python", "-m", "konusbitr_worker.health"]
 
 CMD ["python", "-m", "konusbitr_worker"]
+
+# ------------------------------------------------------------------ default ---
+# Re-expose the runtime stage as the final stage so that a bare `docker build`
+# or a compose service without an explicit target builds the Apache-2.0 runtime
+# by default, without running into the opt-in check of worker-advanced.
+FROM runtime AS default
+
