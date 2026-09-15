@@ -73,6 +73,20 @@ per-document fudge — the bug is in the worker and the fix belongs in the worke
 Compensating in the viewer is how a rendering layer silently becomes a second,
 undocumented coordinate system.
 
+## The figure path, written out
+
+Phase 12.2 added a third producer, and it is the **only** one that takes the
+long route through `_rotate`. PDFium reports an image object's bounds in
+unrotated page space with the origin at the bottom left — which is PDF's own
+convention and the opposite of everything stored — so a figure's box is
+normalized with `origin=bottom_left` and `rotated=False`, and the rotation table
+below is what turns it.
+
+That is worth stating beside the OCR path precisely because the two look alike
+and are opposites. A *rendered* page has had `/Rotate` applied by the renderer;
+an *object's bounds* have not. One flag separates a highlight that lands on a
+chart from one a quarter turn away from it.
+
 ## The OCR path, written out
 
 Phase 12.1 added a second producer of bounding boxes, and it reaches the same

@@ -26,3 +26,18 @@ decision changes, it is superseded.
 - [`adr/0002-model-router.md`](adr/0002-model-router.md) — every model call goes
   through LiteLLM (worker) or `packages/ai` (product surface), never a provider
   SDK, with the four roles configured independently. Phase 08.
+- [`adr/0003-retrieval.md`](adr/0003-retrieval.md) — fusion is RRF over ranks
+  rather than normalized scores, the sparse leg ORs its terms and drops function
+  words first, and `hnsw.ef_search` is set with `SET LOCAL` inside the query's
+  own transaction. Phase 09.
+- [`adr/0004-viewer.md`](adr/0004-viewer.md) — how the viewer renders a page and
+  draws a citation on it, applying a scale factor and nothing else. Phase 11.
+- [`adr/0005-ocr.md`](adr/0005-ocr.md) — pages are tiered individually, and the
+  OCR engines are driven directly rather than through Docling, because per-page
+  confidence, the deskew transform and word boxes do not survive its text-cell
+  abstraction. Phase 12.1.
+- [`adr/0006-multilingual-tables-figures.md`](adr/0006-multilingual-tables-figures.md)
+  — the language route is a per-document decision and the reading direction a
+  per-line one; both image preparations are read when an engine wants both; a
+  scanned table is reconstructed from its ruling lines; figures are extracted
+  always and captioned only on request. Phase 12.2.

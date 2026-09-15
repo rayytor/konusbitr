@@ -20,8 +20,10 @@
 > **Status: `v0.1.0` — the product works end to end.** Upload a PDF, ask a
 > question, and every sentence of the answer carries the page it came from.
 > Click a page reference and the viewer scrolls there and highlights the exact
-> region on the page. Phases 12–15 add breadth (OCR, the public API, billing,
-> distribution); see [`phases/`](./phases).
+> region on the page. Scans are read too — CPU OCR, routed by language, with
+> ruled tables reconstructed and figures described. Phases 12.3–15 add the rest
+> of the breadth (the VLM tier, the public API, billing, distribution); see
+> [`phases/`](./phases).
 
 ## Why two runtimes
 

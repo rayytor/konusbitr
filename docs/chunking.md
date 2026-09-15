@@ -167,9 +167,13 @@ Phase 12.1 added a second source of elements, and the chunker treats them
 identically — which is the point of the parse artifact, and worth saying
 explicitly because one thing about them really is different.
 
-A recognised page produces **paragraphs only**, with an empty `sectionPath`. The
-OCR tier has no layout model: it knows where ink is and what it says, and it
-does not know that a line in larger type at the top of a page is a heading.
+A recognised page produces **paragraphs and ruled tables**, with an empty
+`sectionPath`. The OCR tier has no layout model: it knows where ink is and what
+it says, and it does not know that a line in larger type at the top of a page is
+a heading. A table is the one exception and it is not a guess — the grid was
+printed on the page, and Phase 12.2 reads it off the ruling lines rather than
+inferring it. A table held together by whitespace alone is still read as prose;
+see [`adr/0006-multilingual-tables-figures.md`](adr/0006-multilingual-tables-figures.md).
 Guessing would put a claim about the document's structure into the header of
 every chunk of every scanned document, and a wrong section path is worse than an
 absent one — it is asserted rather than missing, and it is asserted in exactly
@@ -180,5 +184,47 @@ about its context in the chunk header, so retrieval over a scanned corpus is a
 little weaker than over a born-digital one. Nothing else changes: the band, the
 overlap, the never-split-a-table rule and the `{ page, bbox }` requirement all
 apply unchanged, because they are properties of the artifact and not of the
-parser that filled it in. Structure on a scan arrives with the VLM tier in Phase
+parser that filled it in. Headings on a scan arrive with the VLM tier in Phase
 12.3; see [`adr/0005-ocr.md`](adr/0005-ocr.md).
+
+## Chunks from a figure
+
+Phase 12.2 added a **third stream**, and unlike the other two it does not come
+out of the artifact's `contents` at all. It comes out of its `images`: every
+figure the parse extracted and the vision role described becomes one chunk,
+reading
+
+```
+[Figure: A bar chart of revenue by region, 2024. North America accounts for
+54 percent, Europe for 28 percent and Asia Pacific for 18 percent.]
+```
+
+Three properties, each of which is why it is a stream rather than a paragraph.
+
+**It is atomic, for the same reason a table is** — and the reason is the
+citation rather than the size. The chunk carries the figure's own rectangle on
+its own page, so following the citation puts the reader in front of the picture
+the answer came from. Packed in with the prose around it the passage would still
+retrieve, and the highlight would land on a paragraph *beside* the figure, which
+is a citation that does not survive being checked.
+
+**It has no breadcrumb.** A figure is extracted from the page's object stream
+rather than from the element tree, so nothing knows which section it sits under.
+An invented heading trail would be the same wrong claim about structure that the
+OCR tier declines to make.
+
+**An uncaptioned figure produces no chunk at all.** No vision model configured,
+`llm` not set, a provider that failed: there is no text to embed and nothing to
+retrieve on. The figure stays in the artifact, in storage and locatable — it is
+simply not searchable, which is the honest state rather than an empty passage
+diluting the index.
+
+The marker is in the chunk *text* and not only in its metadata, on the same
+principle as `TRUNCATION_MARKER`: whatever reads the passage has to be able to
+tell that it is reading a description of a picture rather than a sentence
+somebody wrote.
+
+One thing that is **not** a figure chunk: a Docling `figure` element in
+`contents`. That is a picture's caption as the document printed it, and it
+belongs in the prose beside it. The two are kept apart by the caller that knows
+which is which rather than by a rule in the chunker that would have to guess.

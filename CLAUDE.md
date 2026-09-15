@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–11 and 12.1/4 are done; Phase 12.2/4 is next.** `cp .env.example .env &&
+**Phases 01–11 and 12.1–12.2/4 are done; Phase 12.3/4 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -47,6 +47,35 @@ page carries its `tier` and, where something guessed, an `ocr_confidence` the
 viewer badges from. A document the recogniser cannot read is still refused
 rather than parsed into silence.
 
+**Phase 12.2/4 reads scans in other languages, as tables, and with their
+pictures.** Three things, and each removes a different silent loss.
+
+A document is now **routed before it is read**: `settings.langList` wins
+outright, and otherwise `fast-langdetect` identifies the document's text —
+using the FastText model bundled inside its own wheel, so identification costs
+no network call and works under `OFFLINE_MODE`. The route decides which engine
+is primary, so Arabic and Hebrew and Turkish and Japanese go to Tesseract's
+language packs while Latin and Chinese stay on PP-OCRv4's shipped head. Reading
+*direction* is decided per line from the line's own characters rather than from
+the route, because a Latin page inside an Arabic document must not come back
+with its sentences reversed. Both image preparations are read where an engine
+wants both, because neither dominates: the binarisation is the only thing that
+makes a shadowed photograph readable and it erodes the hairline strokes of
+connected scripts, at an identical page confidence.
+
+A **ruled table on a scanned page is reconstructed from its own ruling lines**
+and comes back as a `table` element with markdown, `headers`, `rows` and
+cell-level boxes — merged cells included, read off the rule that is *not* there.
+A table held together by whitespace alone is still read as prose, which is
+stated rather than hidden.
+
+**Figures are extracted from every document** — filtered to remove the
+letterhead, the rule and the page-sized scan, deduplicated, and stored under
+`orgs/{orgId}/documents/{docId}/images/{n}.png`. When an upload asks for it with
+`llm: true` *and* a vision role is configured, each one is described through the
+router and that description becomes a chunk of its own carrying the figure's
+rectangle — so a question only a bar chart can answer retrieves the bar chart.
+`docs/adr/0006-multilingual-tables-figures.md` records all three decisions.
 
 One thing to know before touching the pipeline: **with no embedding model
 configured — which is the default `.env` — chunks are written without vectors.**
@@ -63,7 +92,9 @@ What exists:
   (bucket and dev access key created automatically), a `migrate` one-shot that
   applies the migrations before web and worker start, the web image and the
   worker image, plus the `local-llm` profile for Ollama. `advanced` is declared
-  and deliberately empty until Phase 12.
+  and deliberately empty until Phase 12.3. The worker image carries Tesseract
+  and the language packs the Phase 12.2 routing sends documents to; adding
+  another language is one line in `docker/worker.Dockerfile`.
 - `apps/web` — Next.js 15 with the sepia theme tokens. Better Auth on the
   Phase 03 tables: email + password with verification, magic links, optional
   Google and GitHub, and the organization plugin. `src/lib/auth/` owns the
@@ -113,19 +144,24 @@ What exists:
   lifespan. `contracts.py` is generated and must never be hand-edited;
   `queue.py` owns the stream, `runtime.py` the loop (concurrency, per-job
   timeout, retry classification, dead-lettering), `db.py` the worker's own raw
-  SQL, `parse/` the Docling pipeline, `parse/ocr/` the Phase 12.1 OCR tier,
-  `chunk/` the layout-aware chunker and the batched embed-and-upsert, `ai/` the
-  LiteLLM router (role resolution, offline enforcement, retries, circuit
-  breaker, the tokenizer the chunker measures with), and `pipeline.py` the
-  coordination — one `run_job` for `parse`, `chunk_embed` and `reindex`,
-  differing only in which short-circuits apply. `parse/ocr/` is five modules
-  with one job each: `raster.py` renders with PDFium, `preprocess.py` deskews,
-  denoises and binarises *and keeps the affine map back*, `engines.py` is
-  RapidOCR and Tesseract behind one interface speaking pixels, `layout.py`
-  rebuilds the lines and paragraphs a recogniser discards, and `pipeline.py`
-  composes them and converts into the coordinate convention. It has no layout
-  model and emits paragraphs only — headings and tables on a scan are Phase 12.2
-  and 12.3; see `docs/adr/0005-ocr.md` for why that trade was taken.
+  SQL, `parse/` the Docling pipeline, `parse/ocr/` the OCR tier,
+  `parse/images.py` and `parse/captions.py` the figure extraction and its
+  captions, `chunk/` the layout-aware chunker and the batched embed-and-upsert,
+  `ai/` the LiteLLM router (role resolution, offline enforcement, retries,
+  circuit breaker, the tokenizer the chunker measures with, and `vision.py` for
+  figure captions), and `pipeline.py` the coordination — one `run_job` for
+  `parse`, `chunk_embed` and `reindex`, differing only in which short-circuits
+  apply. `parse/ocr/` is seven modules with one job each: `raster.py` renders
+  with PDFium, `preprocess.py` deskews, denoises and binarises *and keeps the
+  affine map back*, `engines.py` is RapidOCR and Tesseract behind one interface
+  speaking pixels, `layout.py` rebuilds the lines and paragraphs a recogniser
+  discards in either reading direction, `languages.py` decides which engine and
+  which dictionary read a document, `tables.py` recovers a ruled table's grid
+  from the page's own rules, and `pipeline.py` composes them and converts into
+  the coordinate convention. It has no layout model, so it emits paragraphs and
+  ruled tables and no headings — headings on a scan are Phase 12.3; see
+  `docs/adr/0005-ocr.md` and `docs/adr/0006-multilingual-tables-figures.md` for
+  why those trades were taken.
 - `packages/db` — the complete Drizzle schema (17 tables, auth included),
   migrations, the `scopedDb(orgId)` multi-tenancy helper with document CRUD
   queries (`listDocuments`, `documentById`, `documentByHashes`,
@@ -144,9 +180,18 @@ What exists:
   three and a half degrees under a lamp, and a ten-page filing with seven
   digital pages and three photocopies. Each is typeset with reportlab, rendered
   with PDFium and degraded deterministically, so the tests can assert what the
-  page *says* rather than record what the recogniser returned. Regeneration is
-  byte-stable, so a diff on those files means the corpus actually moved. The
-  500-page monster is generated at test time rather than committed.
+  page *says* rather than record what the recogniser returned. Phase 12.2 adds
+  three more: a four-page scan with one script per page (Turkish, Arabic,
+  Chinese, Japanese), a scanned ruled financial statement whose second page has
+  a merged header cell, and a born-digital report carrying one real bar chart
+  plus the logo and rule the extraction filters must remove. Those three are
+  drawn with Pillow rather than typeset with reportlab, because reportlab does
+  no text shaping and Arabic laid out without a shaper is not Arabic; their
+  fonts are subset and committed under `fixtures/fonts/` by
+  `scripts/vendor-fixture-fonts.py`, so regeneration does not depend on what the
+  machine happens to have installed. Regeneration is byte-stable, so a diff on
+  those files means the corpus actually moved. The 500-page monster is generated
+  at test time rather than committed.
 - `docs/coordinates.md` — the coordinate convention, written out: the
   conversions, the rotation table, and what is deliberately *not* in it.
 - `docs/chunking.md` — the rules a chunk is built by, including the two places
@@ -163,6 +208,11 @@ What exists:
   the deskew transform and word boxes do not survive its text-cell
   abstraction), and why RapidOCR is primary with Tesseract as a genuinely
   different fallback.
+- `docs/adr/0006-multilingual-tables-figures.md` — why the language route is a
+  per-document decision but the reading *direction* is a per-line one, why both
+  image preparations are read when an engine wants both, why a scanned table is
+  reconstructed from its ruling lines rather than through Docling's TableFormer,
+  and why figures are extracted always and captioned only on request.
 - `docs/adr/0003-retrieval.md` — why fusion is RRF over ranks rather than
   normalized scores, why the sparse leg ORs its terms and drops function words
   first, why `hnsw.ef_search` has to be set with `SET LOCAL` inside the query's
@@ -294,7 +344,12 @@ These cut across many files; violating one breaks the product rather than one fe
   frame and the conversion is `× 72/dpi` plus `normalize(rotated=True)`. The one
   thing that path must never skip is undoing the deskew — recognition happens on
   a straightened page and storage happens on the page as it exists, and
-  `Preprocessed.to_source` is the bridge.
+  `Preprocessed.to_source` is the bridge. **The figure path is the opposite and
+  looks identical**, which is the trap: PDFium reports an image *object's*
+  bounds in unrotated page space with a bottom-left origin, so
+  `parse/images.py` normalizes with `origin=bottom_left, rotated=False` and the
+  rotation table is what turns it. A rendered page has had `/Rotate` applied;
+  an object's bounds have not.
 - **A page the standard tier cannot read honestly is recognised, not parsed —
   and a page nothing can read is refused.** A scan has no text layer; parsing it
   anyway returns almost nothing and a chat built on that answers confidently out
@@ -317,6 +372,16 @@ These cut across many files; violating one breaks the product rather than one fe
   cited, and an uncitable answer is the failure this product exists to prevent.
   Implemented in `services/worker/src/konusbitr_worker/chunk/` and documented in
   `docs/chunking.md`.
+- **A document is routed by language before a page of it is recognised, and the
+  reading direction is decided per line.** The two are separate on purpose.
+  `settings.langList` or `fast-langdetect` chooses which engine is primary and
+  which dictionary it loads, once per document, because a language identifier
+  needs text and the only text a scan has is what is about to be recognised.
+  Direction is not that question: a Latin page inside an Arabic filing must read
+  left to right, so `layout.is_rtl_text` decides from each line's own characters
+  with the document's route only as the tiebreak. A document-level flag returned
+  a Turkish page with every word correct and every sentence backwards, which
+  reads as a recognition failure and can never be matched by the quote verifier.
 - **A table is never split.** Half a table cites nothing — the header row and
   the number land in different chunks. An oversized table is its own chunk, past
   the prose ceiling if it must be, and is truncated only when it exceeds the
@@ -384,6 +449,14 @@ These cut across many files; violating one breaks the product rather than one fe
   is tested from both sides. See `docs/adr/0002-model-router.md`.
 - **Prompts live in versioned files** under `packages/ai/prompts/`, never inline
   string literals, so an eval score change can be attributed to a prompt change.
+- **A figure is extracted from every document and described only when asked.**
+  Extraction is unconditional and is mostly a *filter* — under 100px is
+  decoration, over 90% of the page is the page, a recognised page's one image is
+  the page, and identical bytes are stored once. Captioning needs
+  `settings.llm`, which is part of the docId cache key, *and* a configured
+  vision role; neither is the default, and an uncaptioned figure is stored and
+  located but produces no chunk, because a passage with no text dilutes the
+  index. It is the one path that sends document *pixels* anywhere.
 - **Document text is untrusted data.** It never becomes instructions, never drives
   tool execution, and never reaches Sentry.
 - **Ids are prefixed ULID-ish strings** (`doc_…`, `chk_…`, `org_…`, `key_…`) via a
@@ -439,6 +512,7 @@ pnpm dev                                 # infra + native web + native worker
 pnpm infra:down                          # stop containers; infra:reset also drops volumes
 pnpm infra:logs / infra:ps / infra:psql  # same set exists as `make` targets
 pnpm codegen                             # Zod → pydantic; must be a no-op on a clean tree
+./scripts/vendor-fixture-fonts.py        # re-subset the fixture fonts; rarely needed
 pnpm db:migrate                          # idempotent; a `migrate` one-shot runs it on every compose up
 pnpm infra:migrate                       # the same one-shot, without restarting the stack
 pnpm --filter @konusbitr/db db:generate  # regenerate a migration after a schema edit

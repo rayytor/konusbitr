@@ -8,8 +8,17 @@ loop.
 is fetched from storage and re-hashed, opened with PDFium for structure and
 text-layer coverage, converted by Docling, normalized into the Konusbitr parse
 artifact, and written to `parse_results` and `pages` alongside one WebP
-thumbnail per page. OCR, scanned documents and the VLM tier are Phase 12;
-chunking and embedding are Phase 08.
+thumbnail per page. Phase 08 chunks and embeds what comes out.
+
+**Phases 12.1 and 12.2 read the pages Docling cannot.** A page whose
+extractable-text coverage falls below the threshold is not parsed, it is
+*recognised*: rendered, deskewed, denoised, binarised and read by an
+Apache-2.0 CPU OCR stack, with the preprocessing transform undone before any
+box is stored. Phase 12.2 routes that reading by language before the first
+page is touched, reconstructs a ruled table from the page's own ruling lines,
+and extracts every document's figures — describing them through the vision
+role when the upload asked for it with `llm: true`. The VLM tier is
+Phase 12.3.
 
 ## The parse pipeline
 
@@ -20,11 +29,27 @@ at-least-once queue safe stay small enough to read in one sitting:
 | module              | what it owns                                              |
 | ------------------- | --------------------------------------------------------- |
 | `storage.py`        | the S3 client: get the object down, put thumbnails back up |
-| `inspect.py`        | PDFium: readable, not encrypted, page ceiling, text layer  |
+| `inspect.py`        | PDFium: readable, not encrypted, page ceiling, per-page tier |
 | `docling_parser.py` | Docling, and the normalization of what it returns          |
+| `ocr/`              | the recogniser: seven modules, one job each (below)        |
+| `images.py`         | the figures: find them, filter them, store them             |
+| `captions.py`       | what a figure says, through the vision role, only if asked  |
 | `geometry.py`       | the one coordinate convention, and every conversion into it |
 | `thumbnails.py`     | one WebP per page, rendered from the rotated page          |
 | `artifact.py`       | the shape everything downstream reads                       |
+
+`parse/ocr/` splits the same way, and the split is what keeps the tier
+reviewable:
+
+| module          | what it owns                                                 |
+| --------------- | ------------------------------------------------------------ |
+| `raster.py`     | PDFium renders the page a reader sees                        |
+| `preprocess.py` | deskew, denoise, binarise — **and the affine map back**      |
+| `engines.py`    | RapidOCR and Tesseract behind one interface speaking pixels  |
+| `languages.py`  | which engine and which dictionary read this document         |
+| `layout.py`     | the lines and paragraphs a recogniser discards, either way   |
+| `tables.py`     | a ruled table's grid, recovered from the page's own rules    |
+| `pipeline.py`   | composition, and the conversion into the coordinate convention |
 
 Two things are worth knowing before changing any of it.
 
@@ -33,11 +58,31 @@ applied. `docs/coordinates.md` is the specification and `geometry.py` is the
 only place anything converts into it. If the Phase 11 viewer ever needs more
 than a scale factor, the bug is here.
 
-**A scan is refused, not parsed.** A standard-tier parse of an image-only PDF
-succeeds and returns almost nothing, and a chat built on that answers
-confidently out of an empty document. `inspect.py` measures extractable-character
-coverage per page and fails the job with `needs_ocr` when more than a fifth of
-the pages fall below `TEXT_COVERAGE_THRESHOLD`.
+**A scan is recognised, and a page nothing can read is still refused.** A
+standard-tier parse of an image-only PDF succeeds and returns almost nothing,
+and a chat built on that answers confidently out of an empty document.
+`inspect.py` measures extractable-character coverage **per page** and assigns
+each one a `PageTier`: `native` above `TEXT_COVERAGE_THRESHOLD`, `ocr` below
+it, so a mixed filing runs both readers over the pages each is right for. The
+refusal did not go away; it moved to the two places where it is still the
+honest answer — `needs_ocr` when no recogniser is configured and more than a
+fifth of the pages are imaged, and `needs_ocr` again when a recogniser ran and
+found no words anywhere in the document.
+
+**A document is routed by language, and a line is read by its own
+characters.** `settings.langList` wins outright; otherwise `fast-langdetect`
+identifies the document from the first page's probe, using the FastText model
+bundled inside its own wheel so identification costs no network call. That
+route decides which engine is primary. It does *not* decide reading direction:
+`layout.is_rtl_text` does, per line, because a Latin page inside an Arabic
+filing must not come back with every word correct and every sentence
+backwards. `docs/adr/0006-multilingual-tables-figures.md` records why.
+
+**A figure's bounds are the opposite convention and look identical.** PDFium
+reports an image *object's* bounds in unrotated page space with a bottom-left
+origin, while a rendered page has already had `/Rotate` applied — so
+`images.py` normalizes with `origin=bottom_left, rotated=False` and the OCR
+tier does not. That is the one trap in this directory worth reading twice.
 
 Docling's layout models are baked into the container image at build time
 (`docker/worker.Dockerfile`), so no job ever waits on a model download and
@@ -51,8 +96,16 @@ by `fixtures/generate.py` — nothing scraped, nothing copyrighted, and every
 expected string is one this repository wrote into the document. Regenerate with:
 
 ```bash
-uv run --no-project --with reportlab --with pillow python ../../fixtures/generate.py
+cd services/worker && uv run python ../../fixtures/generate.py
 ```
+
+Run it from the worker's own environment, which already has reportlab, Pillow
+and PDFium. The Phase 12.2 fixtures are drawn with Pillow rather than typeset
+with reportlab — reportlab does no text shaping, and Arabic laid out without a
+shaper is not Arabic — so regenerating them needs a Pillow built against
+libraqm. Their fonts are subset and committed under `fixtures/fonts/` by
+`scripts/vendor-fixture-fonts.py`, so what the machine happens to have
+installed never moves the corpus.
 
 `tests/test_parse_fixtures.py` runs the real parser over that corpus and is
 marked `slow`. CI runs it; while iterating, `uv run pytest -m "not slow"` skips
@@ -104,7 +157,7 @@ never drives tool execution, and it never reaches error reporting.
 | `settings.py` | The environment, validated at boot. Hand-written. |
 | `queue.py` | The Redis stream: read, claim, acknowledge, retry, dead-letter. |
 | `runtime.py` | The job loop: concurrency, timeouts, retry classification. |
-| `pipeline.py` | The work. A stub until Phase 07. |
+| `pipeline.py` | The work: one `run_job` for parse, chunk_embed and reindex. |
 | `progress.py` | Publishes progress and persists it, because both are needed. |
 | `db.py` | The worker's own SQL. Every statement is an upsert. |
 | `app.py` | FastAPI: `/health` and `/ready`, and the loop's lifespan. |
