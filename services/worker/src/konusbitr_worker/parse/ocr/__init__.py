@@ -56,6 +56,7 @@ from konusbitr_worker.parse.ocr.pipeline import (
     OcrOptions,
     OcrPageResult,
     OcrPipeline,
+    RecognizedWord,
     ocr_pages,
 )
 from konusbitr_worker.parse.ocr.tables import TableGrid, detect_tables
@@ -70,6 +71,7 @@ __all__ = [
     "OcrWord",
     "RapidOcrEngine",
     "RapidOcrOptions",
+    "RecognizedWord",
     "TableGrid",
     "TesseractEngine",
     "TesseractOptions",

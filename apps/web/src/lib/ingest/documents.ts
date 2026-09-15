@@ -10,6 +10,7 @@ import { db } from '../db';
 import { loadWebEnv } from '../env';
 import { storage } from '../storage';
 import { enqueueParseJob } from './queue';
+import { estimateFor, recordEstimate } from './vlm';
 
 /**
  * The docId cache, which is the reason this phase exists.
@@ -115,6 +116,20 @@ export async function resolveDocument(input: ResolveInput): Promise<ResolveResul
       contentHash: document.contentHash,
       settings: input.settings,
     });
+  }
+
+  // Charged against the monthly allowance at the moment the job is created,
+  // because that is the last moment at which the number could still have
+  // prevented a spend. Only for `advanced`: the standard tier costs the
+  // operator's own CPU and there is nothing to meter. The route has already
+  // refused a document the allowance would not cover — this is the record of
+  // the one it did.
+  if (input.settings.quality === 'advanced') {
+    await recordEstimate(
+      input.orgId,
+      document.id,
+      estimateFor(env, document.pageCount ?? input.pageCount ?? 0),
+    );
   }
 
   return { document, cached: false };

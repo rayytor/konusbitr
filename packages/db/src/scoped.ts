@@ -1,4 +1,17 @@
-import { and, arrayContains, asc, desc, eq, gt, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
+import {
+  and,
+  arrayContains,
+  asc,
+  desc,
+  eq,
+  gt,
+  gte,
+  isNull,
+  lt,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm';
 import type { Database } from './client.js';
 import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';
@@ -491,6 +504,42 @@ export function scopedDb(db: Database, orgId: string) {
         })
         .returning();
       return row;
+    },
+
+    /**
+     * This organization's advanced-parse spend since the start of the UTC month.
+     *
+     * Read back out of the credit ledger's `metadata`, where
+     * `resolveDocument` writes an estimate for every `advanced` parse it
+     * enqueues. A ledger row rather than a counter column because the cap has
+     * to be *auditable*: an operator asking why an upload was refused gets a
+     * list of the documents that spent the month's allowance, with dates.
+     *
+     * The figure is an estimate, deliberately and by construction. It is
+     * recorded when the job is created, because that is the moment a refusal
+     * can still prevent the spend — reconciling against what the provider
+     * actually billed would be accurate and a month too late. The real numbers
+     * are in the worker's usage log.
+     *
+     * `numeric` in the sum and `float8` out: the values are small decimals, and
+     * summing them as doubles in Postgres accumulates error across a month of
+     * fractions of a cent.
+     */
+    async vlmSpendThisMonth(reason = 'vlm_parse', now: Date = new Date()): Promise<number> {
+      const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const [row] = await db
+        .select({
+          usd: sql<number>`coalesce(sum((${schema.creditLedger.metadata} ->> 'estimatedUsd')::numeric), 0)::float8`,
+        })
+        .from(schema.creditLedger)
+        .where(
+          and(
+            eq(schema.creditLedger.orgId, orgId),
+            eq(schema.creditLedger.reason, reason),
+            gte(schema.creditLedger.createdAt, since),
+          ),
+        );
+      return row?.usd ?? 0;
     },
 
     // ─── Conversations & Messages ──────────────────────────────────────────

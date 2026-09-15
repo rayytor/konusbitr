@@ -11,11 +11,25 @@
 #   (default)   postgres, redis, minio, minio-init, migrate, web, worker
 #   local-llm   adds Ollama and pre-pulls a chat + embedding model, which is
 #               what makes OFFLINE_MODE=true a real claim rather than a flag
-#   advanced    reserved for the AGPL / commercially-restricted parser extras
-#               (PyMuPDF, Marker) that Phase 12 adds. The default images must
-#               stay cleanly Apache-2.0 compatible, and a CI licence audit
-#               asserts it, so nothing may be added to the services below that
-#               would pull those in.
+#   advanced    swaps the worker for one built from the `worker-advanced`
+#               Dockerfile stage, which installs the AGPL-3.0 and GPL-3.0
+#               parsers (PyMuPDF, Surya, Marker). **It replaces the default
+#               worker rather than joining it**, so it is two settings and not
+#               one:
+#
+#                   WORKER_REPLICAS=0 docker compose --profile advanced up
+#
+#               Both consume the same Redis consumer group, so leaving the
+#               default worker running would split jobs between an image that
+#               has the advanced parsers and one that does not — and a document
+#               would then be parsed differently depending on which container
+#               happened to claim it. That is worse than either image alone.
+#
+#               The default images must stay cleanly Apache-2.0 compatible and
+#               `pnpm audit:licenses` asserts it, so nothing may be added to the
+#               services below that would pull those packages in. Building the
+#               advanced image changes the licence of what you built; see
+#               `docs/licensing.md`.
 #
 # Ports, credentials and model names all come from `.env`; the defaults after
 # `:-` exist so that a bare `docker compose config` still resolves.
@@ -188,7 +202,13 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
+      target: runtime
     restart: unless-stopped
+    # Scaled to zero by the `advanced` profile's instructions above. Declared
+    # here rather than left to `--scale` on the command line so that the
+    # setting lives in `.env` alongside every other operator decision.
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -217,6 +237,55 @@ services:
       # Probes the worker's own /health, which reports both the job loop's
       # heartbeat and Redis connectivity — so a process that is running but has
       # stopped consuming is reported unhealthy rather than merely "up".
+      test: ['CMD', 'python', '-m', 'konusbitr_worker.health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # ------------------------------------------------------ Profile: advanced --
+  #
+  # The same worker, built from the stage that installs the restrictively
+  # licensed parsers. Everything else about it — the environment, the health
+  # check, the consumer group — is identical, because the licence boundary is
+  # the only difference between the two images and pretending otherwise would
+  # make this a second deployment to keep in step.
+  #
+  # `ENABLE_ADVANCED_PARSERS` is passed explicitly rather than defaulted: the
+  # Dockerfile stage fails the build without it, so an operator who reaches this
+  # service gets the AGPL packages they asked for or a build error saying why
+  # they did not — never an image that looks advanced and is not.
+  worker-advanced:
+    profiles: [advanced]
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+      target: worker-advanced
+      args:
+        ENABLE_ADVANCED_PARSERS: 'true'
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-konusbitr}:${POSTGRES_PASSWORD:-konusbitr}@postgres:5432/${POSTGRES_DB:-konusbitr}
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      OLLAMA_BASE_URL: http://ollama:11434
+      WORKER_PORT: '8081'
+    ports:
+      - '${WORKER_PORT:-8081}:8081'
+    healthcheck:
       test: ['CMD', 'python', '-m', 'konusbitr_worker.health']
       interval: 10s
       timeout: 5s
@@ -254,6 +323,10 @@ services:
       # 1024-dimensional and multilingual, matching the width
       # `chunks.embedding` is declared at. See `.env.example`.
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-bge-m3}
+      # Optional, and several gigabytes. Qwen2.5-VL is the open vision model
+      # that returns bounding boxes, which is what Phase 12.3's advanced parser
+      # needs — a description-only model produces elements nothing can cite.
+      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-}
     entrypoint: ['/bin/sh', '/pull-models.sh']
     volumes:
       - ./docker/ollama/pull-models.sh:/pull-models.sh:ro

@@ -25,9 +25,20 @@
 # Every package in the default image is Apache-2.0, MIT or BSD-3.
 # `services/worker/tests/test_licensing.py` fails the build if that stops being
 # true, which is what keeps AGPL dependencies behind the `advanced` profile.
+#
+# That profile is the `worker-advanced` stage at the bottom of this file. It is
+# never reached by a default build — `docker build .` stops at `runtime`, and
+# only `--target worker-advanced --build-arg ENABLE_ADVANCED_PARSERS=true`
+# installs the AGPL and GPL extras. Building it changes the licence of the
+# resulting image; `docs/licensing.md` says exactly how.
 
 ARG PYTHON_VERSION=3.12
 ARG UV_VERSION=0.12
+
+# Opt-in to the restrictively-licensed parsers. Only the `worker-advanced` stage
+# reads it, and that stage refuses to build without it — see the bottom of this
+# file for why a build argument that merely defaults to false was not enough.
+ARG ENABLE_ADVANCED_PARSERS=false
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
 
@@ -158,3 +169,70 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
   CMD ["python", "-m", "konusbitr_worker.health"]
 
 CMD ["python", "-m", "konusbitr_worker"]
+
+# --------------------------------------------------------- advanced (opt-in) --
+#
+# **This stage installs AGPL-3.0 and GPL-3.0 packages. It is not part of the
+# default build and an image produced from it may not be redistributed under
+# Apache-2.0.** Read `docs/licensing.md` first.
+#
+#   docker build -f docker/worker.Dockerfile \
+#     --target worker-advanced \
+#     --build-arg ENABLE_ADVANCED_PARSERS=true .
+#
+# Reached through Compose only as `docker compose --profile advanced up`, which
+# builds this target and nothing else does.
+#
+# Two locks, and both are needed. The packages live in the `advanced` extra in
+# `pyproject.toml`, so `uv sync --no-dev` — what every other stage runs — cannot
+# install them however it is invoked. And this stage *fails the build* when
+# `ENABLE_ADVANCED_PARSERS` is not `true`, rather than quietly producing an
+# image identical to `runtime`. A silent no-op would mean somebody could target
+# this stage, get a clean image, and believe they had the advanced parsers —
+# then discover at the first document that they did not. A licence boundary that
+# can be crossed by accident is not one; neither is one that can be *missed* by
+# accident.
+FROM runtime AS worker-advanced
+
+ARG ENABLE_ADVANCED_PARSERS
+USER root
+
+COPY --from=uv-bin /uv /usr/local/bin/uv
+COPY docker/advanced-requirements.txt /tmp/advanced-requirements.txt
+
+# Installed from a pinned requirements file rather than from a `pyproject.toml`
+# extra, and that file explains why at length: both packages pin `pillow<11`,
+# the default build needs `pillow>=11`, and uv resolves extras together with the
+# base dependencies — so as an extra they would have decided which Pillow the
+# *Apache-2.0* image ships. A dependency nobody installs must not be able to
+# touch the image everybody runs.
+RUN if [ "${ENABLE_ADVANCED_PARSERS}" != "true" ]; then \
+      echo "worker-advanced: refusing to build without ENABLE_ADVANCED_PARSERS=true." >&2; \
+      echo "This stage installs AGPL-3.0 and GPL-3.0 packages; see docs/licensing.md." >&2; \
+      exit 1; \
+    fi \
+    && VIRTUAL_ENV=/opt/venv uv pip install --requirement /tmp/advanced-requirements.txt \
+    && rm -f /tmp/advanced-requirements.txt \
+    && rm -rf /root/.cache/uv \
+    && chown -R konusbitr:konusbitr /opt/venv
+
+# Announced in the environment rather than inferred from an import that may or
+# may not have succeeded. `konusbitr_worker.parse.advanced` reads it to decide
+# whether to *look* for the packages at all, so a default image never pays an
+# import error to learn what it already knows.
+ENV KONUSBITR_ADVANCED_PARSERS=true
+
+USER konusbitr
+WORKDIR /home/konusbitr
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
+  CMD ["python", "-m", "konusbitr_worker.health"]
+
+CMD ["python", "-m", "konusbitr_worker"]
+
+# ------------------------------------------------------------------ default ---
+# Re-expose the runtime stage as the final stage so that a bare `docker build`
+# or a compose service without an explicit target builds the Apache-2.0 runtime
+# by default, without running into the opt-in check of worker-advanced.
+FROM runtime AS default
+

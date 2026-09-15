@@ -9,6 +9,7 @@ import { parseSettingsFrom, presentDocument, resolveDocument } from '@/lib/inges
 import { IngestError, problemResponse } from '@/lib/ingest/errors';
 import { inspectDocumentStream, settingsHash } from '@/lib/ingest/inspect';
 import { fetchRemoteDocument, SsrfError } from '@/lib/ingest/ssrf';
+import { assertAllowed } from '@/lib/ingest/vlm';
 import { storage } from '@/lib/storage';
 
 /**
@@ -84,6 +85,11 @@ export const POST = withAuth(
       }
 
       const settings = parseSettingsFrom(parsed.data.settings);
+
+      // The same guardrails the upload path applies, on the same settings. The
+      // object this refusal orphans is removed by the `catch` below, which
+      // already exists for every other refusal on this path.
+      await assertAllowed(auth.orgId, env, settings, inspection.pageCount);
 
       const resolved = await resolveDocument({
         orgId: auth.orgId,

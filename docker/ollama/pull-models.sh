@@ -15,7 +15,13 @@ set -eu
 
 export OLLAMA_HOST
 
-for model in "${OLLAMA_CHAT_MODEL}" "${OLLAMA_EMBEDDING_MODEL}"; do
+# The vision model is optional, unlike the other two. It is several gigabytes
+# and it is only needed by two things — figure captions, and Phase 12.3's
+# advanced parser — so a stack that wants offline chat and retrieval and nothing
+# else should not be made to wait for it. Unset simply skips it.
+models="${OLLAMA_CHAT_MODEL} ${OLLAMA_EMBEDDING_MODEL} ${OLLAMA_VISION_MODEL:-}"
+
+for model in ${models}; do
   echo "ollama-init: pulling ${model}"
   ollama pull "${model}"
 done

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -164,3 +165,110 @@ class TestDefaultBuildLicensing:
         assert expected in entry["License"].lower(), (
             f"{package} declares {entry['License']!r}, not {expected}"
         )
+
+
+class TestTheQuarantine:
+    """The `advanced` profile's packages are absent, and stay absent.
+
+    Phase 12.3's licensing work is not really about *adding* the restrictive
+    parsers — it is about making their absence from the default build a
+    property something checks rather than a fact somebody remembers. These are
+    the assertions that do the checking.
+    """
+
+    @pytest.mark.parametrize("package", ["pymupdf", "fitz", "surya-ocr", "marker-pdf"])
+    def test_a_quarantined_package_is_not_installed(self, package: str) -> None:
+        installed = {entry["Name"].lower() for entry in declared_licenses()}
+        assert package.lower() not in installed, (
+            f"{package} is in the default environment. It belongs in "
+            "docker/advanced-requirements.txt, installed only by the "
+            "`worker-advanced` Docker stage. See docs/licensing.md."
+        )
+
+    def test_they_are_not_in_the_projects_dependency_resolution(self) -> None:
+        """Not merely uninstalled — **unresolvable from this project at all**.
+
+        They were a `pyproject.toml` extra first, and could not stay one: both
+        pin `pillow<11`, the default build needs `pillow>=11`, and uv resolves
+        extras together with the base dependencies. As an extra they therefore
+        got to decide which Pillow the *Apache-2.0* image ships, which is the
+        quarantine leaking in the one direction it must never leak.
+
+        So the pins live in a requirements file that nothing but one Dockerfile
+        stage reads, and the lockfile must never mention them.
+        """
+        lockfile = Path(__file__).resolve().parents[1] / "uv.lock"
+        if not lockfile.is_file():  # pragma: no cover - a broken checkout
+            pytest.skip("uv.lock is missing")
+
+        text = lockfile.read_text(encoding="utf-8").lower()
+        for package in ("pymupdf", "surya-ocr", "marker-pdf"):
+            assert f'name = "{package}"' not in text, (
+                f"{package} is in uv.lock, so it constrains the default build's "
+                "resolution. It belongs in docker/advanced-requirements.txt."
+            )
+
+    def test_the_requirements_file_pins_what_it_declares(self) -> None:
+        """An operator who opts in gets pinned versions, not an unpinned install
+        of an AGPL package into the container that is meant to be the carefully
+        quarantined one."""
+        requirements = Path(__file__).resolve().parents[3] / "docker" / "advanced-requirements.txt"
+        if not requirements.is_file():  # pragma: no cover - a broken checkout
+            pytest.skip("the advanced requirements file is missing")
+
+        pins = [
+            line.strip()
+            for line in requirements.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        assert pins, "the advanced requirements file declares nothing"
+        assert all("==" in pin for pin in pins), f"an unpinned advanced package: {pins}"
+
+    def test_nothing_imports_them_at_module_scope(self) -> None:
+        """A top-level import of any of these would make the whole worker fail
+        to start on a default build — which is every build.
+
+        `konusbitr_worker.parse.advanced` is the one module that names them, and
+        it names them as *strings*, inside functions.
+        """
+        source_root = Path(__file__).resolve().parents[1] / "src" / "konusbitr_worker"
+        offenders: list[str] = []
+        for path in source_root.rglob("*.py"):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                stripped = line.strip()
+                if not stripped.startswith(("import ", "from ")):
+                    continue
+                if any(
+                    stripped.startswith(f"{form} {package}")
+                    for form in ("import", "from")
+                    for package in ("fitz", "pymupdf", "surya", "marker")
+                ):
+                    offenders.append(f"{path.name}:{number}: {stripped}")
+
+        assert not offenders, "a quarantined parser is imported directly:\n  " + "\n  ".join(
+            offenders
+        )
+
+    def test_the_boundary_module_reports_absence_rather_than_raising(self) -> None:
+        from konusbitr_worker.parse.advanced import advanced_parsers_available
+
+        available = advanced_parsers_available()
+        assert available.any is False
+
+    def test_asking_for_one_names_the_profile_rather_than_the_import_error(
+        self,
+    ) -> None:
+        """A caller gets a message about a licensing boundary, not an
+        `ImportError` from three frames deeper that a reader has to recognise as
+        one."""
+        from konusbitr_worker.parse.advanced import (
+            AdvancedParserUnavailable,
+            require_advanced_parsers,
+        )
+
+        with pytest.raises(AdvancedParserUnavailable) as raised:
+            require_advanced_parsers("fitz")
+
+        message = str(raised.value)
+        assert "advanced" in message
+        assert "docs/licensing.md" in message

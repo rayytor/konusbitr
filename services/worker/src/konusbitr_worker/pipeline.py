@@ -120,8 +120,11 @@ async def run_job(
             "That job refers to a version of the document that is no longer stored.",
         )
 
-    async def announce(stage: JobStage) -> None:
-        await progress.stage(stage, message=STAGE_MESSAGES.get(stage))
+    async def announce(stage: JobStage, message: str | None = None) -> None:
+        # The parse may override the wording for a stage two tiers share — see
+        # `StageReporter`. It never invents a *stage*, which is the part of this
+        # that crosses the runtime boundary.
+        await progress.stage(stage, message=message or STAGE_MESSAGES.get(stage))
 
     cached = await database.parse_artifact(document.content_hash, document.settings_hash)
 
@@ -150,6 +153,7 @@ async def run_job(
             content_hash=document.content_hash,
             lang_list=list(payload.settings.langList),
             llm=payload.settings.llm,
+            quality=payload.settings.quality.value,
             on_stage=announce,
         )
         await _persist_parse(
