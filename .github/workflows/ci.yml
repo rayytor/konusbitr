@@ -221,6 +221,18 @@ jobs:
           enable-cache: true
           cache-dependency-glob: services/worker/uv.lock
 
+      # The OCR tier's second engine, with the language packs the Phase 12.2
+      # routing sends documents to. `tests/test_multilingual_fixtures.py` skips
+      # cleanly without them — which is right for a developer's laptop and wrong
+      # for CI, where the multilingual acceptance criteria have to actually run.
+      # The same list is installed into `docker/worker.Dockerfile`.
+      - name: Install Tesseract and its language packs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara \
+            tesseract-ocr-chi-sim tesseract-ocr-jpn tesseract-ocr-tur
+
       - name: Sync
         run: uv sync --locked
 

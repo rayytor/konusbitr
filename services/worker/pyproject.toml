@@ -46,6 +46,7 @@ dependencies = [
     "torchvision>=0.19",
     "uvicorn>=0.52.4",
     "uvloop>=0.22.1",
+    "fast-langdetect>=1.0.1",
 ]
 
 [dependency-groups]
@@ -106,6 +107,19 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# RUF001/RUF002 flag characters that look like ASCII but are not — a dotless ı
+# mistaken for an i, a full-width comma for a comma. That is a genuinely useful
+# rule everywhere except in the two places whose whole subject is non-Latin
+# text: the language router's tables and the tests that assert what a recogniser
+# read off a Turkish, Arabic, Chinese or Japanese page. Suppressing it there is
+# not a style concession — the alternative is escaping every such character,
+# which would make an assertion about a sentence unreadable to anyone checking
+# whether it is the right sentence.
+"src/konusbitr_worker/parse/ocr/languages.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_ocr_languages.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_multilingual_fixtures.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"

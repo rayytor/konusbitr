@@ -11,9 +11,12 @@ The stages, in order, each of which is a module of its own:
    layout model is loaded.
 3. **convert** — Docling over the born-digital pages, then normalization into
    the artifact. Everything parser-shaped stops at that module's edge.
-4. **recognise** — the OCR tier over the scanned ones. Skipped entirely when
-   there are none, which is the ordinary case and must stay free.
-5. **thumbnails** — one WebP per page, streamed to storage.
+4. **recognise** — the OCR tier over the scanned ones, routed to an engine and
+   a dictionary by the document's language. Skipped entirely when there are
+   none, which is the ordinary case and must stay free.
+5. **figures** — the embedded images, extracted, filtered and stored; captioned
+   through the vision role when the upload asked for it with `llm: true`.
+6. **thumbnails** — one WebP per page, streamed to storage.
 
 Stages 3 and 4 are two readings of one document and they must not overlap. A
 page belongs to exactly one tier, Docling's output for a page outside its tier
@@ -35,10 +38,11 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import time
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from konusbitr_worker.ai.vision import VisionRouter
 from konusbitr_worker.contracts import JobErrorCode, JobStage
 from konusbitr_worker.errors import JobFailure
 from konusbitr_worker.log import get_logger
@@ -50,7 +54,17 @@ from konusbitr_worker.parse.artifact import (
     element_id,
     markdown_from_elements,
 )
+from konusbitr_worker.parse.captions import caption_images
 from konusbitr_worker.parse.docling_parser import DoclingParse, convert
+from konusbitr_worker.parse.geometry import PageGeometry
+from konusbitr_worker.parse.images import (
+    IMAGE_CONTENT_TYPE,
+    ExtractedImage,
+    ImageCandidate,
+    extract_images,
+    image_id,
+    image_key,
+)
 from konusbitr_worker.parse.inspect import (
     DocumentInspection,
     inspect_pdf,
@@ -83,6 +97,8 @@ async def parse_document(
     document_id: str,
     storage_key: str,
     content_hash: str,
+    lang_list: Sequence[str] = (),
+    llm: bool = False,
     on_stage: StageReporter | None = None,
 ) -> ParseArtifact:
     """Run the whole parse and return the artifact. Writes thumbnails; writes no rows.
@@ -91,9 +107,17 @@ async def parse_document(
     function of the bytes it fetches, which is what lets the fixture tests run
     it end to end without a database — and what keeps the idempotency rules,
     which are about *writes*, in the one place that does any.
+
+    `lang_list` and `llm` are `settings.langList` and `settings.llm` from the
+    job payload, and they are here rather than in `Settings` because they are
+    properties of the *upload* rather than of the deployment: both are hashed
+    into `settings_hash`, so a document parsed with captions and the same
+    document parsed without them are two cache entries and not one that quietly
+    changed underneath a reader.
     """
     timings: dict[str, int] = {}
-    recognizer = _recognizer(settings)
+    ocr_options = _ocr_options(settings, lang_list=lang_list)
+    recognizer = _recognizer(settings, ocr_options)
 
     with _temporary_pdf() as path:
         with _timed(timings, "fetch"):
@@ -143,8 +167,13 @@ async def parse_document(
                     path,
                     scanned_pages,
                     geometries=geometries,
-                    options=_ocr_options(settings),
+                    options=ocr_options,
                     pipeline=recognizer,
+                    # The born-digital half of a mixed filing is what the
+                    # language identifier reads, and it is free — it has already
+                    # been parsed. A wholly scanned document has no such text
+                    # and `ocr_pages` falls back to probing its first page.
+                    sample=parsed.markdown,
                 )
 
         contents, markdown = _merge(parsed, recognized)
@@ -168,6 +197,27 @@ async def parse_document(
         ]
         _apply_confidence(pages, recognized)
 
+        with _timed(timings, "figures"):
+            images = await _extract_figures(
+                path,
+                store=store,
+                settings=settings,
+                org_id=org_id,
+                document_id=document_id,
+                geometries=geometries,
+                # An imaged page's one image *is* the page. Extracting it would
+                # duplicate the document, and captioning it would ask a vision
+                # model to describe a photograph of text the OCR tier has
+                # already read properly.
+                #
+                # The set is every page the *inspection* tiered as imaged, not
+                # only the ones a recogniser reached: a scan on a deployment
+                # with no engine installed is still a scan, and the page-area
+                # filter downstream is a backstop rather than the rule.
+                skip_pages=set(inspection.pages_in_tier(PageTier.ocr)),
+                llm=llm,
+            )
+
         with _timed(timings, "thumbnails"):
             # No stage announcement. `ProgressReporter` clamps the percentage
             # to be monotonic, so announcing `persisting` (95%) here — before
@@ -189,6 +239,7 @@ async def parse_document(
         page_count=inspection.page_count,
         contents=contents,
         pages=pages,
+        images=[image.to_json() for image in images],
         timings=timings,
     )
     logger.info(
@@ -197,6 +248,9 @@ async def parse_document(
             "pages": artifact.page_count,
             "elements": len(artifact.contents),
             "ocr_pages": len(recognized),
+            "tables": sum(result.tables for result in recognized),
+            "figures": len(images),
+            "captioned": sum(1 for image in images if image.caption),
             "timings_ms": timings,
         },
     )
@@ -267,21 +321,27 @@ def _require_something_readable(contents: list[ParsedElement], *, recognized: bo
     )
 
 
-def _recognizer(settings: Settings) -> OcrPipeline | None:
+def _recognizer(settings: Settings, options: OcrOptions) -> OcrPipeline | None:
     """The OCR tier for this job, or `None` when it is switched off.
 
     Built once per document rather than once per page: `onnxruntime` loading
-    three graphs costs a few hundred milliseconds and tens of megabytes, and a
+    two graphs costs a few hundred milliseconds and tens of megabytes, and a
     fifty-page scan would otherwise pay it fifty times. Built even when the
     document turns out to have no scanned pages, because the engines are lazy
     inside — constructing this object loads nothing.
+
+    It is built before the language is known, and that is deliberate rather
+    than an ordering accident: `_pages_to_recognize` has to ask whether *any*
+    engine can run before Docling is started, and the answer to that does not
+    depend on which dictionary will be loaded. `OcrPipeline.retune` adopts the
+    resolved plan later and rebuilds only what actually changed.
     """
     if not settings.ocr_enabled:
         return None
-    return OcrPipeline(_ocr_options(settings))
+    return OcrPipeline(options)
 
 
-def _ocr_options(settings: Settings) -> OcrOptions:
+def _ocr_options(settings: Settings, *, lang_list: Sequence[str] = ()) -> OcrOptions:
     return OcrOptions(
         dpi=settings.ocr_dpi,
         fallback_threshold=settings.ocr_fallback_threshold,
@@ -290,6 +350,9 @@ def _ocr_options(settings: Settings) -> OcrOptions:
         fallback_enabled=settings.ocr_fallback_enabled,
         languages=settings.ocr_languages,
         threads=settings.worker_parse_threads,
+        requested_languages=tuple(lang_list),
+        model_dir=settings.ocr_model_dir,
+        tables_enabled=settings.ocr_tables_enabled,
     )
 
 
@@ -310,7 +373,7 @@ def _merge(
 
     combined: list[ParsedElement] = list(parsed.contents)
     for result in recognized:
-        combined.extend(result.elements(first_index=0))
+        combined.extend(result.elements_for_artifact(first_index=0))
     combined.sort(key=lambda element: element.page)
 
     renumbered = [
@@ -343,6 +406,89 @@ def _apply_confidence(pages: list[ParsedPage], recognized: list[OcrPageResult]) 
             continue
         page.ocr_confidence = result.confidence
         page.ocr_engine = result.engine or None
+
+
+async def _extract_figures(
+    path: Path,
+    *,
+    store: ObjectStore,
+    settings: Settings,
+    org_id: str,
+    document_id: str,
+    geometries: dict[int, PageGeometry],
+    skip_pages: set[int],
+    llm: bool,
+) -> list[ExtractedImage]:
+    """Extract, store and — when asked — caption the document's figures.
+
+    Extraction runs on every document; captioning runs only when the upload set
+    `llm: true` *and* a vision role is configured. The split is the phase's:
+    getting a chart out of a PDF and knowing where it sits costs nothing and
+    makes the viewer able to show it, while describing it costs a model call
+    per figure and sends pixels to a provider.
+
+    Uploaded in batches, as thumbnails are, so that neither every bitmap in a
+    slide deck nor every outstanding upload is held at once. The candidates for
+    a batch are kept only until that batch is captioned — a figure's PNG is
+    megabytes, and a two-hundred-figure deck held whole would be a worker's
+    memory ceiling.
+
+    A figure that cannot be stored does not fail the document. The parse of the
+    text is the thing the upload was for; a bucket that refused one image is
+    worth a warning and not worth the reader losing the parse.
+    """
+    if not settings.figures_enabled:
+        return []
+
+    router = VisionRouter.configured(settings) if llm else None
+    candidates = extract_images(
+        path,
+        geometries=geometries,
+        skip_pages=skip_pages,
+        min_edge=settings.figure_min_edge,
+        limit=settings.figure_max_per_document,
+    )
+
+    stored: list[ExtractedImage] = []
+    batch: list[tuple[ExtractedImage, ImageCandidate]] = []
+    batch_size = max(settings.worker_parse_threads, 1)
+
+    while True:
+        produced = await asyncio.to_thread(_take, candidates, batch_size)
+        if not produced:
+            break
+
+        batch.clear()
+        for candidate in produced:
+            index = len(stored) + 1
+            key = image_key(org_id, document_id, index)
+            try:
+                await store.put_bytes(key, candidate.data, content_type=IMAGE_CONTENT_TYPE)
+            except JobFailure:
+                logger.warning(
+                    "could not store an extracted figure",
+                    extra={"page": candidate.page, "document_id": document_id},
+                )
+                continue
+            image = ExtractedImage(
+                id=image_id(index),
+                page=candidate.page,
+                bbox=candidate.bbox,
+                width=candidate.width,
+                height=candidate.height,
+                storage_key=key,
+            )
+            stored.append(image)
+            batch.append((image, candidate))
+
+        await caption_images(batch, router=router)
+
+    if stored:
+        logger.info(
+            "figures extracted",
+            extra={"figures": len(stored), "captioned": sum(1 for i in stored if i.caption)},
+        )
+    return stored
 
 
 async def _write_thumbnails(

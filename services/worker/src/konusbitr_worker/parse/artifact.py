@@ -26,7 +26,9 @@ __all__ = [
     "ParseArtifact",
     "ParsedElement",
     "ParsedPage",
+    "TableCellData",
     "TableData",
+    "markdown_table",
 ]
 
 
@@ -73,6 +75,52 @@ class ElementType(StrEnum):
 
 
 @dataclass(slots=True)
+class TableCellData:
+    """One cell, addressable by position and locatable on the page.
+
+    Added in Phase 12.2, and the part that is genuinely new is `bbox`. Headers
+    and rows say what a table *contains*; a cell box says where a number is, and
+    without it "cite the 2024 revenue figure" can only ever highlight the whole
+    table. On a scanned page the cell box is also the only honest answer — the
+    table was reconstructed from ruling lines and word boxes, and the reader is
+    entitled to see the rectangle a value was read out of.
+
+    `row_index` counts the header row as row 0, matching `rows` being the data
+    rows alone: a consumer that wants the header cell of a column looks for
+    `row_index == 0`.
+    """
+
+    row_index: int
+    col_index: int
+    text: str
+    #: `None` when the source located the table but not its individual cells.
+    bbox: BBox | None = None
+    row_span: int = 1
+    col_span: int = 1
+    #: True for a cell in a declared header row or column.
+    header: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "rowIndex": self.row_index,
+            "colIndex": self.col_index,
+            "text": self.text,
+        }
+        if self.bbox is not None:
+            payload["bbox"] = self.bbox.as_list()
+        # Spans are emitted only when they are not 1, so an ordinary table's
+        # JSON is not two thirds boilerplate. A reader that sees no `rowSpan`
+        # reads 1, which is what every consumer already assumes.
+        if self.row_span != 1:
+            payload["rowSpan"] = self.row_span
+        if self.col_span != 1:
+            payload["colSpan"] = self.col_span
+        if self.header:
+            payload["header"] = True
+        return payload
+
+
+@dataclass(slots=True)
 class TableData:
     """A table as data, alongside the same table as markdown.
 
@@ -85,9 +133,30 @@ class TableData:
 
     headers: list[str]
     rows: list[list[str]]
+    #: Cell-level detail, when the source produced any. Empty is a supported
+    #: state and not a degraded one: `headers` and `rows` are the contract, and
+    #: a parser that knows the grid but not where each cell sits still produces
+    #: a table Phase 13 can address.
+    cells: list[TableCellData] = field(default_factory=list)
+
+    @property
+    def num_rows(self) -> int:
+        """Rows including the header row, which is what `rowIndex` counts in."""
+        return len(self.rows) + (1 if self.headers else 0)
+
+    @property
+    def num_cols(self) -> int:
+        widths = [len(self.headers), *(len(row) for row in self.rows)]
+        return max(widths) if widths else 0
 
     def to_json(self) -> dict[str, Any]:
-        return {"headers": self.headers, "rows": self.rows}
+        return {
+            "numRows": self.num_rows,
+            "numCols": self.num_cols,
+            "headers": self.headers,
+            "rows": self.rows,
+            "cells": [cell.to_json() for cell in self.cells],
+        }
 
 
 @dataclass(slots=True)
@@ -197,6 +266,39 @@ class ParseArtifact:
         if include_markdown:
             payload["markdown"] = self.markdown
         return payload
+
+
+def markdown_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Render a table as GitHub-flavoured markdown.
+
+    One renderer for both tiers. Docling exports its own markdown for a
+    born-digital table and that export is better than this — it knows about
+    cells containing line breaks — so this is that path's fallback and the OCR
+    tier's only path, and having one function means a scanned table and a parsed
+    one reach the model in the same shape.
+
+    Pipes inside a cell are escaped, because an unescaped one silently adds a
+    column and shifts every value in the row one place to the left, which is a
+    wrong number rather than a broken table.
+    """
+    width = max(len(headers), *(len(row) for row in rows), 0)
+    if width == 0:
+        return ""
+
+    def line(cells: list[str]) -> str:
+        padded = [*cells, *([""] * (width - len(cells)))]
+        return (
+            "| " + " | ".join(cell.replace("|", "\\|").replace("\n", " ") for cell in padded) + " |"
+        )
+
+    head = headers if headers else [""] * width
+    return "\n".join(
+        [
+            line(head),
+            "| " + " | ".join("---" for _ in range(width)) + " |",
+            *(line(row) for row in rows),
+        ]
+    )
 
 
 def element_id(index: int) -> str:

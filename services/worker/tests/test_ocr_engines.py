@@ -37,8 +37,16 @@ from konusbitr_worker.parse.ocr.raster import POINTS_PER_INCH, RasterPage
 class FakeEngine:
     """An engine that returns whatever it was constructed with."""
 
-    def __init__(self, name: str, confidence: float, *, present: bool = True) -> None:
+    def __init__(
+        self,
+        name: str,
+        confidence: float,
+        *,
+        present: bool = True,
+        preparations: tuple[str, ...] = ("image",),
+    ) -> None:
         self.name = name
+        self.preparations = preparations
         self._confidence = confidence
         self._present = present
         self.calls = 0
@@ -108,11 +116,47 @@ class TestFallbackRule:
         assert engine.process_page(object()).engine == "primary"
         assert second.calls == 0
 
-    def test_the_fallback_reads_the_binarised_page(self) -> None:
-        """Tesseract binarises internally and does better with a good threshold.
+    def test_an_engine_reads_the_image_it_wants_wherever_it_sits(self) -> None:
+        """Which image an engine gets follows the *engine*, not the slot.
 
-        PP-OCR is trained on photographs and reads a hard black-and-white page
-        slightly worse, which is why preprocessing produces two images.
+        Since Phase 12.2 either one can be primary — an Arabic document is read
+        by Tesseract first — and a rule written as "the fallback gets the
+        binary" would hand the thresholded page to whichever engine happened to
+        be second.
+        """
+        seen: list[tuple[str, object]] = []
+
+        class Recorder(FakeEngine):
+            def run(self, image: Any) -> OcrResult:
+                seen.append((self.name, image))
+                return super().run(image)
+
+        colour, binary = object(), object()
+
+        engine = OcrPipeline(
+            OcrOptions(),
+            primary=Recorder("rapid-like", 0.10),
+            fallback=Recorder("tesseract-like", 0.90, preparations=("binary",)),
+        )
+        engine.process_page(colour, binary=binary)
+        assert seen == [("rapid-like", colour), ("tesseract-like", binary)]
+
+        seen.clear()
+        swapped = OcrPipeline(
+            OcrOptions(),
+            primary=Recorder("tesseract-like", 0.10, preparations=("binary",)),
+            fallback=Recorder("rapid-like", 0.90),
+        )
+        swapped.process_page(colour, binary=binary)
+        assert seen == [("tesseract-like", binary), ("rapid-like", colour)]
+
+    def test_an_engine_that_wants_both_preparations_is_read_from_both(self) -> None:
+        """Tesseract names two, because neither dominates.
+
+        The Sauvola binarisation is what makes a shadowed photograph readable at
+        all, and its window erodes the hairline strokes of connected scripts. The
+        two fixtures that prove each half pull in opposite directions, so both
+        are read.
         """
         seen: list[object] = []
 
@@ -121,15 +165,73 @@ class TestFallbackRule:
                 seen.append(image)
                 return super().run(image)
 
+        colour, binary = object(), object()
         engine = OcrPipeline(
             OcrOptions(),
-            primary=FakeEngine("primary", 0.10),
-            fallback=Recorder("fallback", 0.90),
+            primary=Recorder("both", 0.95, preparations=("binary", "image")),
+            fallback=FakeEngine("unused", 0.99),
         )
-        colour, binary = object(), object()
-        engine.process_page(colour, binary=binary)
 
-        assert seen == [binary]
+        engine.process_page(colour, binary=binary)
+        assert seen == [binary, colour]
+
+    def test_the_fuller_reading_wins_when_both_are_confident(self) -> None:
+        """The case a confidence comparison cannot see.
+
+        A preparation that loses a whole line is entirely sure about the lines it
+        kept: the Arabic fixture's binarised page comes back at 0.92 with half
+        its text missing and its greyscale at 0.92 with all of it. Confidence is
+        a statement about what *was* recognised and says nothing about what was
+        not, so the tie-break is how much was read.
+        """
+
+        class Uneven:
+            name = "uneven"
+            preparations = ("binary", "image")
+
+            def available(self) -> bool:
+                return True
+
+            def run(self, image: Any) -> OcrResult:
+                text = "half a page" if image == "binary-image" else "the whole of a page of text"
+                return OcrResult(
+                    words=[OcrWord(text=text, box=(0.0, 0.0, 100.0, 20.0), confidence=0.92)],
+                    engine=self.name,
+                )
+
+        engine = OcrPipeline(OcrOptions(), primary=Uneven(), fallback=FakeEngine("unused", 0.99))
+        result = engine.process_page("colour-image", binary="binary-image")
+
+        assert result.text == "the whole of a page of text"
+
+    def test_a_preparation_below_the_threshold_loses_however_much_it_produced(self) -> None:
+        """Volume is the tie-break, not the measure.
+
+        Otherwise a preparation that turns a page into plausible noise wins by
+        producing more of it, which is the failure the floor exists to prevent.
+        """
+
+        class Noisy:
+            name = "noisy"
+            preparations = ("binary", "image")
+
+            def available(self) -> bool:
+                return True
+
+            def run(self, image: Any) -> OcrResult:
+                if image == "binary-image":
+                    return OcrResult(
+                        words=[OcrWord(text="a" * 200, box=(0.0, 0.0, 10.0, 10.0), confidence=0.2)],
+                        engine=self.name,
+                    )
+                return OcrResult(
+                    words=[OcrWord(text="clean", box=(0.0, 0.0, 10.0, 10.0), confidence=0.95)],
+                    engine=self.name,
+                )
+
+        engine = OcrPipeline(OcrOptions(), primary=Noisy(), fallback=FakeEngine("unused", 0.99))
+
+        assert engine.process_page("colour-image", binary="binary-image").text == "clean"
 
 
 class TestRapidOcrConfiguration:

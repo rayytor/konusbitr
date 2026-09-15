@@ -6,7 +6,7 @@ leave the product in: real corpora are mostly scanned agreements, stamped
 receipts and mixed PDFs where three pages of a hundred are photocopies. This
 package is what turns that refusal into a second tier.
 
-Five modules, each with one job:
+Seven modules, each with one job:
 
 - :mod:`raster` renders a page to pixels with PDFium, at a DPI both engines can
   read, and records what it actually rendered at.
@@ -14,8 +14,13 @@ Five modules, each with one job:
   binarise — and keeps the affine map back to where the pixels came from.
 - :mod:`engines` is RapidOCR and Tesseract behind one interface, speaking
   pixels.
-- :mod:`layout` rebuilds the lines and paragraphs a recogniser discards.
-- :mod:`pipeline` composes the four and converts the result into the one
+- :mod:`layout` rebuilds the lines and paragraphs a recogniser discards, in
+  either reading direction.
+- :mod:`languages` decides which engine and which dictionary read a document,
+  from `settings.langList` or from what `fast-langdetect` makes of its text.
+- :mod:`tables` recovers a ruled table's grid from the page's own ruling lines
+  and puts the recognised words back into cells.
+- :mod:`pipeline` composes the rest and converts the result into the one
   coordinate convention.
 
 Nothing here decides *whether* a page is scanned. That is
@@ -40,14 +45,24 @@ from konusbitr_worker.parse.ocr.engines import (
     TesseractEngine,
     TesseractOptions,
 )
+from konusbitr_worker.parse.ocr.languages import (
+    LanguagePlan,
+    detect_languages,
+    normalize_tags,
+    plan_languages,
+)
 from konusbitr_worker.parse.ocr.pipeline import (
+    OcrElement,
     OcrOptions,
     OcrPageResult,
     OcrPipeline,
     ocr_pages,
 )
+from konusbitr_worker.parse.ocr.tables import TableGrid, detect_tables
 
 __all__ = [
+    "LanguagePlan",
+    "OcrElement",
     "OcrOptions",
     "OcrPageResult",
     "OcrPipeline",
@@ -55,7 +70,12 @@ __all__ = [
     "OcrWord",
     "RapidOcrEngine",
     "RapidOcrOptions",
+    "TableGrid",
     "TesseractEngine",
     "TesseractOptions",
+    "detect_languages",
+    "detect_tables",
+    "normalize_tags",
     "ocr_pages",
+    "plan_languages",
 ]

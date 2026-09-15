@@ -31,6 +31,7 @@ from konusbitr_worker.ai.offline import OfflineModeError, is_local_endpoint
 from konusbitr_worker.ai.resilience import CircuitBreaker, CircuitOpenError, ModelCallError
 from konusbitr_worker.ai.tokens import Tokenizer
 from konusbitr_worker.ai.usage import UsageRecord
+from konusbitr_worker.ai.vision import VisionModel, VisionRouter, resolve_vision_model
 
 __all__ = [
     "ChatModel",
@@ -44,6 +45,9 @@ __all__ = [
     "OfflineModeError",
     "Tokenizer",
     "UsageRecord",
+    "VisionModel",
+    "VisionRouter",
     "is_local_endpoint",
     "resolve_chat_model",
+    "resolve_vision_model",
 ]

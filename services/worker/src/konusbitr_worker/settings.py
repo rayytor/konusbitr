@@ -35,6 +35,7 @@ __all__ = [
     "CLOUD_PROVIDERS",
     "DEFAULT_CHAT_MODELS",
     "DEFAULT_EMBEDDING_MODELS",
+    "DEFAULT_VISION_MODELS",
     "LOCAL_PROVIDERS",
     "MODEL_ROLES",
     "PROVIDERS_WITHOUT_EMBEDDINGS",
@@ -98,6 +99,22 @@ DEFAULT_EMBEDDING_MODELS: dict[LlmProvider, str] = {
     "openai": "text-embedding-3-large",
     "mistral": "mistral-embed",
     "ollama": "ollama/bge-m3",
+}
+
+#: The vision model each provider gets when only a provider is named.
+#:
+#: Not simply ``DEFAULT_CHAT_MODELS``: the two roles diverge wherever a
+#: provider's cheapest chat model cannot see. Mistral's small model is
+#: text-only and Pixtral is the one that reads an image; Ollama's Llama 3.2 3B
+#: has no vision head and the 11B one does. Getting this wrong fails at the
+#: first figure with a provider error rather than at boot, which is why the
+#: table is explicit rather than inherited.
+DEFAULT_VISION_MODELS: dict[LlmProvider, str] = {
+    "openai": "gpt-4.1-mini",
+    "anthropic": "claude-sonnet-4-5",
+    "google": "gemini/gemini-2.5-flash",
+    "mistral": "pixtral-12b-2409",
+    "ollama": "ollama/llama3.2-vision",
 }
 
 DEFAULT_CHAT_MODELS: dict[LlmProvider, str] = {
@@ -255,9 +272,42 @@ class Settings(BaseSettings):
     #: Whether skewed pages are straightened before recognition.
     ocr_deskew: bool = True
 
-    #: Tesseract traineddata names, joined with `+`. Script auto-detection is
-    #: Phase 12.2; until then this is what the fallback is told to expect.
+    #: Tesseract traineddata names, joined with `+`.
+    #:
+    #: The *floor* since Phase 12.2 rather than the whole answer: a document
+    #: with `langList` set, or one the identifier recognises, adds its own packs
+    #: on top of this. It is what an unrouted document is read with, and what a
+    #: deployment that has installed exactly one extra language pack names.
     ocr_languages: str = "eng"
+
+    # ── Multilingual routing, tables and figures (Phase 12.2) ────────────────
+
+    #: Where alternative RapidOCR recognition heads live, if any are installed.
+    #:
+    #: `rapidocr-onnxruntime` ships the Chinese/Latin PP-OCRv4 pair inside the
+    #: wheel and nothing else. The Japanese, Korean, Cyrillic and Devanagari
+    #: heads are separate downloads, and Konusbitr never fetches one at run time
+    #: — that would be a network call in the middle of a parse and a hole in
+    #: `OFFLINE_MODE`. An operator drops the `.onnx` and its `_dict.txt` in this
+    #: directory; without them those languages are routed to Tesseract instead.
+    ocr_model_dir: str | None = None
+
+    #: Whether ruled tables on scanned pages are reconstructed into a grid.
+    #:
+    #: On. Off restores the Phase 12.1 reading, in which a scanned balance sheet
+    #: comes back as lines of prose — which is worse but not wrong, and is the
+    #: right answer for a corpus of ruled forms that are not tables at all.
+    ocr_tables_enabled: bool = True
+
+    #: Whether embedded images are extracted from documents and stored.
+    figures_enabled: bool = True
+
+    #: Shortest side, in pixels, an embedded image must have to be a figure
+    #: rather than a bullet, a rule or a logo.
+    figure_min_edge: int = 100
+
+    #: Ceiling per document, so one pathological file cannot fill a bucket.
+    figure_max_per_document: int = 200
 
     # ── The model router ─────────────────────────────────────────────────────
     #
@@ -394,6 +444,8 @@ class Settings(BaseSettings):
         "chunk_target_tokens",
         "chunk_min_tokens",
         "chunk_max_tokens",
+        "figure_min_edge",
+        "figure_max_per_document",
     )
     @classmethod
     def _check_positive_int(cls, value: int) -> int:

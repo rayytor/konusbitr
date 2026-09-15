@@ -32,7 +32,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from konusbitr_worker.ai import ChatRouter, EmbeddingRouter, Tokenizer
-from konusbitr_worker.chunk import ChunkingOptions, chunk_elements, elements_from_contents
+from konusbitr_worker.chunk import (
+    ChunkingOptions,
+    chunk_elements,
+    elements_from_contents,
+    figure_elements,
+)
 from konusbitr_worker.chunk.embed import EmbedReport, ProgressCallback, embed_and_store
 from konusbitr_worker.contracts import STAGE_PERCENT, JobErrorCode, JobPayload, JobStage, JobType
 from konusbitr_worker.db import Database, PageRow
@@ -143,6 +148,8 @@ async def run_job(
             document_id=document.id,
             storage_key=document.storage_key,
             content_hash=document.content_hash,
+            lang_list=list(payload.settings.langList),
+            llm=payload.settings.llm,
             on_stage=announce,
         )
         await _persist_parse(
@@ -226,6 +233,10 @@ async def _chunk_and_embed(
         elements_from_contents(contents),
         tokenizer=router.tokenizer if router is not None else _fallback_tokenizer(settings),
         options=_chunking_options(settings),
+        # Read out of the artifact's `images` rather than its `contents`, which
+        # is why a `reindex` recreates the figure chunks without re-extracting
+        # or re-captioning anything: the captions are in the cached parse.
+        figures=figure_elements(contents),
     )
 
     await progress.stage(JobStage.embedding, message=STAGE_MESSAGES[JobStage.embedding])

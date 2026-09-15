@@ -23,6 +23,7 @@ from konusbitr_worker.chunk import (
     ChunkingOptions,
     chunk_elements,
     elements_from_contents,
+    figure_elements,
 )
 
 #: A model with a real tokenizer, so the band is measured in the units the
@@ -481,3 +482,201 @@ def test_a_zero_overlap_ratio_produces_no_shared_elements(tokenizer: Tokenizer) 
     for produced in chunks:
         assert not seen & base_ids(produced.element_ids)
         seen.update(base_ids(produced.element_ids))
+
+
+def test_a_scanned_table_is_never_split_however_large(tokenizer: Tokenizer) -> None:
+    """The Phase 12.2 restatement of the invariant, over the shape the OCR tier emits.
+
+    A table reconstructed from a scan reaches the chunker through exactly the
+    same `contents` entry a Docling table does, so there is no second code path
+    — which is the point of the parse artifact and is worth a test that would
+    fail if a `cells` array ever tempted somebody to add one.
+
+    Large on purpose: a forty-row balance sheet is comfortably past the prose
+    ceiling, and the rule is that it becomes one oversized chunk rather than
+    five that each cite nothing. Half a table answers nothing: the header row
+    and the number land in different chunks, and whichever is retrieved is
+    missing the other.
+    """
+    rows = [
+        [f"Segment {index}", f"{index},120", f"{index},860", f"{index}%"] for index in range(40)
+    ]
+    markdown = "\n".join(
+        [
+            "| Segment | 2023 | 2024 | Change |",
+            "| --- | --- | --- | --- |",
+            *("| " + " | ".join(row) + " |" for row in rows),
+        ]
+    )
+    scanned_table = element(
+        id="el_0001",
+        type="table",
+        text=markdown,
+        markdown=markdown,
+        page=1,
+        tableJson={
+            "numRows": len(rows) + 1,
+            "numCols": 4,
+            "headers": ["Segment", "2023", "2024", "Change"],
+            "rows": rows,
+            # What distinguishes a reconstructed table from a parsed one: every
+            # cell knows where it was read from on the page.
+            "cells": [
+                {"rowIndex": 0, "colIndex": 0, "text": "Segment", "bbox": [72, 150, 189, 184]}
+            ],
+        },
+    )
+
+    chunks = chunk(
+        [element(id="el_0000", text=words(400), page=1), scanned_table],
+        tokenizer=tokenizer,
+    )
+
+    table_chunks = [produced for produced in chunks if produced.kind == "table"]
+    assert len(table_chunks) == 1
+    assert table_chunks[0].element_ids == ["el_0001"]
+    assert "Segment 39" in table_chunks[0].text
+    assert table_chunks[0].truncated is False
+    assert table_chunks[0].table_json is not None
+    assert table_chunks[0].table_json["cells"][0]["bbox"] == [72, 150, 189, 184]
+
+
+# ── Figures (Phase 12.2) ─────────────────────────────────────────────────────
+#
+# A figure chunk is the Phase 08 bridge for the Phase 12.2 image work: a chart
+# is extracted and captioned during the parse, and it becomes retrievable here.
+# It reads out of the artifact's `images` rather than its `contents`, which is
+# what makes a `reindex` recreate it with no model call and no re-extraction.
+
+
+def artifact(images: list[dict[str, object]], contents: list[dict[str, object]] | None = None):
+    return {"contents": contents or [], "images": images}
+
+
+def image(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "id": "img_001",
+        "page": 4,
+        "bbox": [72, 268, 468, 532],
+        "width": 792,
+        "height": 528,
+        "storageKey": "orgs/org_a/documents/doc_a/images/1.png",
+        "caption": (
+            "A bar chart of revenue by region for 2024. North America accounts for "
+            "54 percent, Europe for 28 percent and Asia Pacific for 18 percent."
+        ),
+    }
+    base.update(overrides)
+    return base
+
+
+def chunk_with_figures(
+    contents: list[dict[str, object]],
+    images: list[dict[str, object]],
+    *,
+    tokenizer: Tokenizer,
+):
+    payload = artifact(images, contents)
+    return chunk_elements(
+        elements_from_contents(payload),
+        figures=figure_elements(payload),
+        tokenizer=tokenizer,
+        options=ChunkingOptions(),
+    )
+
+
+def test_a_captioned_figure_becomes_a_chunk_of_its_own(tokenizer: Tokenizer) -> None:
+    """Atomic for the same reason a table is, and the reason is the citation.
+
+    Packed in with the prose around it the passage would still retrieve, and the
+    highlight would land on a paragraph beside the figure — a citation that does
+    not survive being checked.
+    """
+    chunks = chunk_with_figures([element(text=words(400), page=4)], [image()], tokenizer=tokenizer)
+
+    figures = [produced for produced in chunks if produced.kind == "figure"]
+    assert len(figures) == 1
+    assert figures[0].text.startswith("[Figure: ")
+    assert "North America" in figures[0].text
+    assert figures[0].element_ids == ["img_001"]
+
+
+def test_a_figure_chunk_points_at_the_figure(tokenizer: Tokenizer) -> None:
+    """The rectangle is the figure's own box on its own page.
+
+    Following the citation puts the reader in front of the picture the answer
+    came from, which is the whole reason the chunk exists separately.
+    """
+    chunks = chunk_with_figures([element(page=4)], [image()], tokenizer=tokenizer)
+
+    figure_chunk = next(produced for produced in chunks if produced.kind == "figure")
+    assert figure_chunk.pages == [{"page": 4, "bbox": [72.0, 268.0, 468.0, 532.0]}]
+
+
+def test_an_uncaptioned_figure_produces_no_chunk(tokenizer: Tokenizer) -> None:
+    """No vision model, `llm` not set, a provider that failed.
+
+    There is no text to embed and nothing to retrieve on, and a chunk of it
+    would be an empty passage that dilutes the index. The figure is still in the
+    artifact, still in storage and still locatable — it is simply not
+    searchable, which is the honest state rather than a broken one.
+    """
+    chunks = chunk_with_figures(
+        [element(text=words(400))], [image(caption=None)], tokenizer=tokenizer
+    )
+
+    assert [produced.kind for produced in chunks] == ["prose"]
+
+
+def test_a_figure_chunk_lands_next_to_the_page_it_is_on(tokenizer: Tokenizer) -> None:
+    """Not at the end of the document, which is where an appended element goes.
+
+    A figure has no position in `contents` at all, so the only honest answer to
+    "where in the document is it?" is "just after the last element on its page".
+    """
+    contents = [
+        element(id="el_0000", text=words(400), page=1),
+        element(id="el_0001", text=words(400), page=4),
+        element(id="el_0002", text=words(400), page=9),
+    ]
+    chunks = chunk_with_figures(contents, [image(page=4)], tokenizer=tokenizer)
+
+    kinds = [produced.kind for produced in chunks]
+    assert kinds.index("figure") not in (0, len(kinds) - 1)
+
+
+def test_a_docling_picture_caption_stays_in_the_prose_around_it(tokenizer: Tokenizer) -> None:
+    """Two different things that happen to share a word.
+
+    A `figure` element in `contents` is a picture's caption *as the document
+    printed it* and belongs with the sentences beside it. A figure chunk is a
+    vision model's description of the picture itself. The caller keeps them
+    apart rather than a rule in the chunker guessing which is which.
+    """
+    contents = [
+        element(id="el_0000", text=words(400)),
+        element(
+            id="el_0001",
+            type="figure",
+            text="Figure 1. Revenue by region.",
+            markdown="![Figure 1. Revenue by region.]()",
+        ),
+        element(id="el_0002", text=words(400)),
+    ]
+    chunks = chunk_with_figures(contents, [], tokenizer=tokenizer)
+
+    assert all(produced.kind == "prose" for produced in chunks)
+    assert any("Figure 1. Revenue by region." in produced.text for produced in chunks)
+
+
+def test_ordinals_stay_dense_across_all_three_streams(tokenizer: Tokenizer) -> None:
+    """The upsert key. Dense and stable for a given input, or a re-chunk collides."""
+    contents = [
+        element(id="el_0000", text=words(400), page=1),
+        element(id="el_0001", type="table", text="| a |", markdown="| a |", page=2),
+        element(id="el_0002", text=words(400), page=4),
+    ]
+    chunks = chunk_with_figures(contents, [image(page=4)], tokenizer=tokenizer)
+
+    assert [produced.ordinal for produced in chunks] == list(range(len(chunks)))
+    assert {produced.kind for produced in chunks} == {"prose", "table", "figure"}

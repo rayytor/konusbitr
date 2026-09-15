@@ -24,9 +24,9 @@ from konusbitr_worker.parse.inspect import (
     CHARS_PER_SQUARE_INCH_AT_FULL_COVERAGE,
     DocumentInspection,
     _coverage,
-    require_text_layer,
     classify_page_tier,
     inspect_pdf,
+    require_text_layer,
 )
 
 LETTER_SQUARE_INCHES = (612 / 72) * (792 / 72)

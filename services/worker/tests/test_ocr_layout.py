@@ -170,3 +170,103 @@ class TestConfidence:
         )
 
         assert page.confidence == 1.0
+
+
+# ── Reading direction (Phase 12.2) ───────────────────────────────────────────
+
+
+def rtl_line_at(y: float, texts: list[str], *, right: float = 500.0) -> list[OcrWord]:
+    """A row of words laid out right to left, `texts` in *logical* order.
+
+    The first word of the sentence is the rightmost box on the page, which is
+    how a right-to-left line is actually placed — and is exactly what a sort by
+    ascending x destroys.
+    """
+    return [
+        word(text, right - (index + 1) * 70, y, right - index * 70 - 10, y + 20.0)
+        for index, text in enumerate(texts)
+    ]
+
+
+class TestReadingDirection:
+    def test_a_right_to_left_line_comes_back_in_logical_order(self) -> None:
+        """The sentence a reader reads, not the boxes left to right.
+
+        Getting this wrong does not produce garbage, which is what makes it
+        dangerous: it produces a sentence with its words reversed, which reads
+        as a recognition failure, embeds as nonsense, and can never be matched
+        by the quote verifier against anything a model quotes back.
+        """
+        lines = group_lines(rtl_line_at(100, ["تم", "توقيع", "العقد"]))
+
+        assert [line.text for line in lines] == ["تم توقيع العقد"]
+
+    def test_direction_is_taken_from_the_line_and_not_from_the_document(self) -> None:
+        """The regression a document-level flag caused.
+
+        With `langList=['ar']` the Turkish page of a mixed filing came back as
+        `Belge Taranmis Turkce` — every word recognised correctly and every
+        sentence backwards. A Latin page inside an Arabic document reads left to
+        right, and the only thing that knows so is the line itself.
+        """
+        latin = group_lines(line_at(100, ["Konusbitr", "Scanned", "Fixture"]), rtl=True)
+        arabic = group_lines(rtl_line_at(200, ["تم", "توقيع", "العقد"]), rtl=False)
+
+        assert [line.text for line in latin] == ["Konusbitr Scanned Fixture"]
+        assert [line.text for line in arabic] == ["تم توقيع العقد"]
+
+    def test_a_line_of_digits_takes_the_document_direction(self) -> None:
+        """Numbers and punctuation have no direction of their own.
+
+        A row of figures inside an Arabic table belongs to that table's
+        direction, and the language plan is the only thing left that knows it.
+        """
+        digits = ["4,120", "5,860", "42%"]
+
+        assert group_lines(rtl_line_at(100, digits), rtl=True)[0].text == "4,120 5,860 42%"
+        assert group_lines(line_at(100, digits), rtl=False)[0].text == "4,120 5,860 42%"
+
+    def test_a_mixed_line_follows_its_majority(self) -> None:
+        """An Arabic sentence naming an English product is Arabic.
+
+        A majority vote rather than Unicode's first-strong rule, because
+        first-strong reads a storage order and the storage order of a line
+        assembled out of separate word boxes is not a property of the page.
+        """
+        line = group_lines(rtl_line_at(100, ["شروط", "العقد", "ACME", "بين", "الطرفين"]))[0]
+
+        assert line.rtl is True
+        assert line.text.startswith("شروط العقد")
+
+    def test_a_right_to_left_line_is_still_split_at_a_gutter(self) -> None:
+        """The gap is walked in the direction the line is read.
+
+        Measured the other way, every line splits at its first space and none at
+        its gutter — which is the same bug the left-to-right case has, mirrored.
+        """
+        right_column = rtl_line_at(100, ["شروط", "العقد"], right=900.0)
+        left_column = rtl_line_at(100, ["بين", "الطرفين"], right=400.0)
+
+        lines = group_lines([*right_column, *left_column], rtl=True)
+
+        assert [line.text for line in lines] == ["شروط العقد", "بين الطرفين"]
+
+    def test_a_right_to_left_page_reads_its_rightmost_column_first(self) -> None:
+        """Two columns, read down the right one and then down the left."""
+        blocks = group_blocks(
+            group_lines(
+                [
+                    *rtl_line_at(100, ["شروط", "العقد"], right=900.0),
+                    *rtl_line_at(130, ["بين", "الطرفين"], right=900.0),
+                    *rtl_line_at(100, ["المبلغ", "الإجمالي"], right=400.0),
+                    *rtl_line_at(130, ["أربعة", "آلاف"], right=400.0),
+                ],
+                rtl=True,
+            ),
+            rtl=True,
+        )
+
+        assert [block.text for block in blocks] == [
+            "شروط العقد بين الطرفين",
+            "المبلغ الإجمالي أربعة آلاف",
+        ]

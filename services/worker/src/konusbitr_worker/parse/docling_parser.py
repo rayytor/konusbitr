@@ -29,8 +29,10 @@ from konusbitr_worker.log import get_logger
 from konusbitr_worker.parse.artifact import (
     ElementType,
     ParsedElement,
+    TableCellData,
     TableData,
     element_id,
+    markdown_table,
 )
 from konusbitr_worker.parse.geometry import BBox, CoordOrigin, PageGeometry
 
@@ -201,7 +203,7 @@ def normalize_items(document: Any, *, geometries: dict[int, PageGeometry]) -> li
         page_no, bbox = placement
 
         element_type = _LABEL_TO_TYPE.get(label, ElementType.paragraph)
-        text, markdown, table = _render(item, document, element_type)
+        text, markdown, table = _render(item, document, element_type, geometries.get(page_no))
         if not text.strip() and table is None and element_type is not ElementType.figure:
             continue
 
@@ -290,11 +292,11 @@ def _push_heading(stack: list[tuple[int, str]], level: int, text: str) -> None:
 
 
 def _render(
-    item: Any, document: Any, element_type: ElementType
+    item: Any, document: Any, element_type: ElementType, geometry: PageGeometry | None = None
 ) -> tuple[str, str, TableData | None]:
     """An element's plain text, its own markdown, and its table data if it is one."""
     if element_type is ElementType.table:
-        table = _table_data(item)
+        table = _table_data(item, geometry)
         markdown = _table_markdown(item, document, table)
         # A table's "text" is its markdown: the cells are the content, and a
         # concatenation of them with the row structure discarded would embed
@@ -324,13 +326,20 @@ def _caption_of(item: Any, document: Any) -> str:
     return ""
 
 
-def _table_data(item: Any) -> TableData | None:
-    """Docling's table cells, flattened into headers plus rows.
+def _table_data(item: Any, geometry: PageGeometry | None = None) -> TableData | None:
+    """Docling's table cells, flattened into headers plus rows, plus the cells themselves.
 
     The grid is the source rather than the dataframe export: a dataframe would
     add pandas to the dependency set for a shape we immediately flatten back
     into strings, and it coerces cell values to types the original document
     never claimed.
+
+    `geometry` is what turns Docling's cell boxes into the Konusbitr convention.
+    It is optional because a table is still a table without per-cell boxes — an
+    older Docling, or a cell with no provenance, simply contributes no `bbox` —
+    and losing the whole table over a missing rectangle would be the wrong
+    trade. What the boxes buy is a citation that lands on *the number* rather
+    than on the table containing it.
     """
     data = getattr(item, "data", None)
     grid = getattr(data, "grid", None)
@@ -345,12 +354,75 @@ def _table_data(item: Any) -> TableData | None:
 
     first_row_cells = list(grid[0])
     header_row = all(bool(getattr(cell, "column_header", False)) for cell in first_row_cells)
+    cells = _table_cells(data, grid, geometry)
+
     if header_row:
-        return TableData(headers=rows[0], rows=rows[1:])
+        return TableData(headers=rows[0], rows=rows[1:], cells=cells)
     # No declared header row. An empty `headers` says so honestly; inventing
     # one from the first row of data would put a value where a column name goes
     # and Phase 13's `extract` would address the wrong cell.
-    return TableData(headers=[], rows=rows)
+    return TableData(headers=[], rows=rows, cells=cells)
+
+
+def _table_cells(data: Any, grid: Any, geometry: PageGeometry | None) -> list[TableCellData]:
+    """Every distinct cell of a Docling table, once, with its box where there is one.
+
+    `data.table_cells` rather than the grid, because the grid repeats a spanning
+    cell into every position it covers — which is what a markdown renderer wants
+    and exactly what a list of cells must not do, since a merged header would
+    otherwise appear three times with three identical boxes.
+    """
+    source = getattr(data, "table_cells", None)
+    if not source:
+        source = [cell for row in grid for cell in row]
+        seen: set[tuple[int, int]] = set()
+        deduped = []
+        for cell in source:
+            key = (
+                int(getattr(cell, "start_row_offset_idx", 0) or 0),
+                int(getattr(cell, "start_col_offset_idx", 0) or 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(cell)
+        source = deduped
+
+    cells: list[TableCellData] = []
+    for cell in source:
+        text = str(getattr(cell, "text", "") or "").strip()
+        if not text:
+            continue
+        row = int(getattr(cell, "start_row_offset_idx", 0) or 0)
+        col = int(getattr(cell, "start_col_offset_idx", 0) or 0)
+        row_end = int(getattr(cell, "end_row_offset_idx", row + 1) or row + 1)
+        col_end = int(getattr(cell, "end_col_offset_idx", col + 1) or col + 1)
+
+        cells.append(
+            TableCellData(
+                row_index=row,
+                col_index=col,
+                text=text,
+                bbox=_cell_bbox(cell, geometry),
+                row_span=max(row_end - row, 1),
+                col_span=max(col_end - col, 1),
+                header=bool(getattr(cell, "column_header", False)),
+            )
+        )
+    return cells
+
+
+def _cell_bbox(cell: Any, geometry: PageGeometry | None) -> BBox | None:
+    """One cell's box in the Konusbitr convention, or `None` when it has none."""
+    raw = getattr(cell, "bbox", None)
+    if raw is None or geometry is None:
+        return None
+    try:
+        box = (float(raw.l), float(raw.t), float(raw.r), float(raw.b))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    bbox = geometry.normalize(box, origin=_origin_of(raw), rotated=DOCLING_REPORTS_ROTATED_FRAME)
+    return None if bbox.is_degenerate else bbox
 
 
 def _table_markdown(item: Any, document: Any, table: TableData | None) -> str:
@@ -374,10 +446,4 @@ def _table_markdown(item: Any, document: Any, table: TableData | None) -> str:
 
     if table is None:
         return ""
-    header = table.headers or [""] * (len(table.rows[0]) if table.rows else 0)
-    lines = [
-        "| " + " | ".join(header) + " |",
-        "| " + " | ".join("---" for _ in header) + " |",
-        *("| " + " | ".join(row) + " |" for row in table.rows),
-    ]
-    return "\n".join(lines)
+    return markdown_table(table.headers, table.rows)

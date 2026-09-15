@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-__all__ = ["SourceElement", "elements_from_contents"]
+__all__ = ["FIGURE_CHUNK_TEMPLATE", "SourceElement", "elements_from_contents", "figure_elements"]
 
 #: Element types, matching `ElementType` in the parse artifact. Anything
 #: unrecognised is read as `paragraph`, which is the reading every consumer
@@ -22,14 +22,29 @@ __all__ = ["SourceElement", "elements_from_contents"]
 _KNOWN_TYPES = frozenset({"heading", "paragraph", "table", "list", "figure", "caption", "footnote"})
 
 
+#: How a captioned figure reads once it is in the index.
+#:
+#: The marker is in the chunk *text* and not only in its metadata, for the same
+#: reason `TRUNCATION_MARKER` is: whatever reads the passage — a model composing
+#: an answer, a person following a citation — has to be able to tell that it is
+#: reading a description of a picture rather than a sentence somebody wrote.
+FIGURE_CHUNK_TEMPLATE = "[Figure: {caption}]"
+
+
 @dataclass(frozen=True, slots=True)
 class SourceElement:
     """One located element of a document, in reading order."""
 
     #: Position in the artifact's `contents`, so that chunks built out of
-    #: separate streams — prose and tables are chunked apart — can be put back
-    #: into reading order before their ordinals are assigned.
-    order: int
+    #: separate streams — prose, tables and figures are chunked apart — can be
+    #: put back into reading order before their ordinals are assigned.
+    #:
+    #: A float, which looks odd for an index and is not one. A figure does not
+    #: come from `contents` at all — it comes from the artifact's `images` — so
+    #: it has no position in that array, and the only honest answer to "where in
+    #: the document is it?" is "just after the last element on its page". A half
+    #: step expresses that without renumbering anything.
+    order: float
     id: str
     type: str
     text: str
@@ -50,6 +65,10 @@ class SourceElement:
     @property
     def is_heading(self) -> bool:
         return self.type == "heading"
+
+    @property
+    def is_figure(self) -> bool:
+        return self.type == "figure"
 
     def part(self, suffix: int | str, text: str, markdown: str) -> SourceElement:
         """A slice of an oversized element, carrying its location unchanged.
@@ -95,7 +114,7 @@ def elements_from_contents(contents: Any) -> list[SourceElement]:
 
         elements.append(
             SourceElement(
-                order=index,
+                order=float(index),
                 id=str(raw.get("id") or f"el_{index:04d}"),
                 type=kind if kind in _KNOWN_TYPES else "paragraph",
                 text=text,
@@ -110,6 +129,75 @@ def elements_from_contents(contents: Any) -> list[SourceElement]:
             )
         )
     return elements
+
+
+def figure_elements(contents: Any) -> list[SourceElement]:
+    """Read the `images` array of a parse artifact as chunkable elements.
+
+    This is the Phase 08 bridge the figure work needed: a chart is extracted and
+    captioned during the parse, and it becomes retrievable here, as a chunk of
+    its own carrying the figure's page and its rectangle. Ask "which region grew
+    fastest in Q3?" and the chunk that answers is the description of the bar
+    chart, and the citation points at the chart.
+
+    Only captioned figures are returned. An uncaptioned one — no vision model
+    configured, `llm` not set, a provider that failed — has no text to embed and
+    nothing to retrieve on, and a chunk of it would be an empty passage that
+    dilutes the index. The figure is still in the artifact, still in storage and
+    still locatable; it is simply not searchable, which is the honest state.
+
+    Read from the same artifact JSON the elements are, so a `reindex` over a
+    cached parse re-creates the figure chunks with no model call and no
+    re-extraction — the same property that makes re-chunking a document free.
+    """
+    if not isinstance(contents, dict):
+        return []
+    images = contents.get("images")
+    if not isinstance(images, list):
+        return []
+
+    last_on_page = _last_order_per_page(contents)
+    elements: list[SourceElement] = []
+    for index, raw in enumerate(images):
+        if not isinstance(raw, dict):
+            continue
+        caption = str(raw.get("caption") or "").strip()
+        if not caption:
+            continue
+        bbox = _bbox(raw.get("bbox"))
+        page = raw.get("page")
+        if bbox is None or not isinstance(page, int) or page < 1:
+            continue
+
+        text = FIGURE_CHUNK_TEMPLATE.format(caption=caption)
+        elements.append(
+            SourceElement(
+                # A half step past the last element on the figure's page, so a
+                # figure chunk lands between the page it is on and the page
+                # after it rather than at the end of the document.
+                order=last_on_page.get(page, -1.0) + 0.5,
+                id=str(raw.get("id") or f"img_{index + 1:03d}"),
+                type="figure",
+                text=text,
+                markdown=text,
+                page=page,
+                bbox=bbox,
+                section_path=(),
+            )
+        )
+    return elements
+
+
+def _last_order_per_page(contents: dict[str, Any]) -> dict[int, float]:
+    """The index of the last `contents` entry on each page."""
+    positions: dict[int, float] = {}
+    entries = contents.get("contents")
+    if not isinstance(entries, list):
+        return positions
+    for index, raw in enumerate(entries):
+        if isinstance(raw, dict) and isinstance(raw.get("page"), int):
+            positions[raw["page"]] = float(index)
+    return positions
 
 
 def _bbox(value: Any) -> tuple[float, float, float, float] | None:

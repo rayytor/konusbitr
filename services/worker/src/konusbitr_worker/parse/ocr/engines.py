@@ -99,6 +99,15 @@ class OcrEngine(Protocol):
     """What the pipeline requires of a recogniser."""
 
     name: str
+    #: Which of the images :mod:`konusbitr_worker.parse.ocr.preprocess` produces
+    #: this engine is given, in the order they are tried. A property of the
+    #: *engine*, not of the slot it occupies: since Phase 12.2 either engine can
+    #: be the primary one, and a rule written as "the fallback gets the binary"
+    #: would hand the thresholded page to whichever engine happened to be second.
+    #:
+    #: An engine naming more than one is read from each of them and the better
+    #: reading is kept — see :meth:`OcrPipeline.read`.
+    preparations: tuple[str, ...]
 
     def available(self) -> bool:
         """Whether this engine can run here. Checked once, cached by the caller."""
@@ -172,12 +181,26 @@ class RapidOcrOptions:
     #: the same reason Docling's pool is: oversubscribing the cores makes a
     #: 50-page document slower rather than faster.
     threads: int = 4
+    #: An alternative recognition head and its character dictionary, resolved
+    #: by :mod:`konusbitr_worker.parse.ocr.languages` from `OCR_MODEL_DIR`.
+    #:
+    #: `None` is the shipped PP-OCRv4 Chinese/Latin pair, which is the only one
+    #: inside the wheel. The Japanese, Korean, Cyrillic and Devanagari heads are
+    #: separate downloads, and this module never fetches one — an operator puts
+    #: them on disk or the document is routed to Tesseract instead. That is what
+    #: keeps `OFFLINE_MODE` a property of the build rather than of the network.
+    rec_model_path: str | None = None
+    rec_keys_path: str | None = None
 
 
 class RapidOcrEngine:
     """PP-OCRv4 under `onnxruntime`, loaded once and reused across pages."""
 
     name = "rapidocr"
+    #: The denoised greyscale only. PP-OCRv4 is trained on photographs and reads
+    #: a hard black-and-white page slightly *worse* than the original, so there
+    #: is nothing for a second pass over the binary to recover.
+    preparations = ("image",)
 
     def __init__(self, options: RapidOcrOptions | None = None) -> None:
         self._options = options or RapidOcrOptions()
@@ -214,14 +237,23 @@ class RapidOcrEngine:
             # does not match a key in `config.yaml` is accepted and silently
             # ignored, so these are pinned by `tests/test_ocr_engines.py`
             # against the shipped config rather than trusted.
-            self._engine = RapidOCR(
-                text_score=self._options.text_score,
-                max_side_len=self._options.max_side_length,
-                use_cls=self._options.classify_orientation,
-                det_box_thresh=self._options.box_threshold,
-                det_unclip_ratio=self._options.unclip_ratio,
-                intra_op_num_threads=self._options.threads,
-            )
+            kwargs: dict[str, Any] = {
+                "text_score": self._options.text_score,
+                "max_side_len": self._options.max_side_length,
+                "use_cls": self._options.classify_orientation,
+                "det_box_thresh": self._options.box_threshold,
+                "det_unclip_ratio": self._options.unclip_ratio,
+                "intra_op_num_threads": self._options.threads,
+            }
+            # Both or neither. A recognition head and its character dictionary
+            # are one artifact in two files: loading v4 Japanese weights against
+            # the shipped Chinese dictionary decodes every CTC index to the
+            # wrong glyph, and does it silently and confidently.
+            if self._options.rec_model_path and self._options.rec_keys_path:
+                kwargs["rec_model_path"] = self._options.rec_model_path
+                kwargs["rec_keys_path"] = self._options.rec_keys_path
+
+            self._engine = RapidOCR(**kwargs)
         except Exception:
             logger.exception("could not initialise RapidOCR")
             self._unavailable = True
@@ -295,8 +327,12 @@ def _rapid_word(entry: Any) -> OcrWord | None:
 class TesseractOptions:
     """Tesseract's page-segmentation and engine modes, plus the language set."""
 
-    #: Traineddata names joined with `+`, e.g. `eng` or `eng+deu`. Script
-    #: auto-detection is Phase 12.2; this phase takes what it is configured with.
+    #: Traineddata names joined with `+`, e.g. `eng` or `tur+eng`.
+    #:
+    #: Resolved per document since Phase 12.2, by
+    #: :func:`konusbitr_worker.parse.ocr.languages.plan_languages`, from
+    #: `settings.langList` or from what the identifier made of the document's
+    #: text. `OCR_LANGUAGES` is the floor under both.
     languages: str = "eng"
     #: `--psm 3`: fully automatic page segmentation with no orientation
     #: detection. Orientation is the PDF's `/Rotate`, which PDFium applied
@@ -315,6 +351,21 @@ class TesseractEngine:
     """Tesseract 5 through `pytesseract`, on the binarised page."""
 
     name = "tesseract"
+    #: Both, in this order, and the reason is measured rather than assumed.
+    #:
+    #: Tesseract binarises internally and does better on a page somebody else
+    #: thresholded well — on the skewed, unevenly lit `scanned-skewed-photo.pdf`
+    #: fixture it reads seventy-five words off the Sauvola output and *none at
+    #: all* off the denoised greyscale, which is the whole reason the
+    #: binarisation exists. But Sauvola's window erodes hairline strokes, and on
+    #: the Arabic fixture the binary costs a whole line of connected script that
+    #: the greyscale returns cleanly, at an identical page confidence — so
+    #: neither the confidence nor a threshold would have caught it.
+    #:
+    #: Neither preparation dominates, so both are read and the better reading is
+    #: kept. It costs about a second a page, on a path that is already the slow
+    #: one, and it is the only thing that gets both fixtures right.
+    preparations = ("binary", "image")
 
     def __init__(self, options: TesseractOptions | None = None) -> None:
         self._options = options or TesseractOptions()

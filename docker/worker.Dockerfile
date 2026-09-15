@@ -94,19 +94,46 @@ ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models \
 # fails on the first import, at the first job — the worst place to discover a
 # missing library.
 #
-# `tesseract-ocr` is the OCR tier's fallback engine, reached when RapidOCR is
-# unsure about a page. `pytesseract` is only a wrapper around this binary, and
-# a deployment without it keeps working with the primary engine alone rather
-# than failing — but the default image should carry both, because "the fallback
-# exists" is a claim the phase makes. `tesseract-ocr-eng` is its English
-# traineddata; `OCR_LANGUAGES` names which sets are loaded, and adding a
-# language means adding its `tesseract-ocr-<lang>` package here.
+# `tesseract-ocr` is the OCR tier's second engine. Until Phase 12.2 it was only
+# the *fallback*, reached when RapidOCR was unsure about a page; it is now also
+# the **primary** engine for the languages RapidOCR's shipped weights cannot
+# read — Arabic and Hebrew, which are contextually shaped, and Turkish and
+# Japanese, whose PP-OCR recognition heads are separate downloads this image
+# deliberately does not fetch. `pytesseract` is only a wrapper around this
+# binary, and a deployment without it keeps working with the primary engine
+# alone rather than failing.
+#
+# The language packs below are the ones `konusbitr_worker.parse.ocr.languages`
+# routes to, and they are the difference between reading a Turkish contract and
+# reading a Turkish contract with every diacritic silently dropped. Together
+# they add roughly 60MB to the image, which is the price of the phase's headline
+# claim. Adding another language is one line here plus nothing else:
+# `OCR_LANGUAGES` and `settings.langList` both name traineddata that either is
+# installed or is not, and the router falls back rather than failing when it is
+# not.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libgl1 \
         libglib2.0-0 \
         tesseract-ocr \
         tesseract-ocr-eng \
+        tesseract-ocr-ara \
+        tesseract-ocr-chi-sim \
+        tesseract-ocr-chi-tra \
+        tesseract-ocr-deu \
+        tesseract-ocr-fra \
+        tesseract-ocr-heb \
+        tesseract-ocr-hin \
+        tesseract-ocr-ita \
+        tesseract-ocr-jpn \
+        tesseract-ocr-kor \
+        tesseract-ocr-nld \
+        tesseract-ocr-por \
+        tesseract-ocr-rus \
+        tesseract-ocr-spa \
+        tesseract-ocr-tur \
+        tesseract-ocr-ukr \
+        tesseract-ocr-vie \
     && rm -rf /var/lib/apt/lists/*
 
 # A dedicated unprivileged user; the slim image has no equivalent of node's.

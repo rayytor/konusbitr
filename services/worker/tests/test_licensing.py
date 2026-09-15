@@ -138,6 +138,13 @@ class TestDefaultBuildLicensing:
             ("deskew", "mit"),
             ("pypdfium2", "apache"),
             ("docling", "mit"),
+            ("pillow", "mit"),
+            # Phase 12.2's language identifier. MIT, and — the part that matters
+            # more than the licence — it carries its FastText model inside its
+            # own wheel, so identification costs no network call and works under
+            # OFFLINE_MODE. `langdetect`, the obvious alternative, is Apache-2.0
+            # and eighty times slower.
+            ("fast-langdetect", "mit"),
         ],
     )
     def test_the_ocr_stack_is_what_the_phase_claims_it_is(
@@ -146,8 +153,9 @@ class TestDefaultBuildLicensing:
         """Named individually, because these are the ones the phase promises about.
 
         The blanket audit above would still pass if `rapidocr-onnxruntime` were
-        swapped for something permissive but different, and the licensing claim
-        in `phases/12.1-4-ocr-pipeline.md` is about these specific packages.
+        swapped for something permissive but different, and the licensing claims
+        in `phases/12.1-4-ocr-pipeline.md` and `phases/12.2-4-*.md` are about
+        these specific packages.
         """
         entries = {entry["Name"].lower(): entry for entry in declared_licenses()}
         entry = entries.get(package.lower())

@@ -98,16 +98,19 @@ class Chunk:
     #: Position in the document, 0-based. The upsert key, with `document_id`.
     ordinal: int
     #: Where in the element stream this chunk's own content begins. Used only to
-    #: restore reading order across the prose and table streams.
-    start: int
+    #: restore reading order across the prose, table and figure streams. A float
+    #: because a figure sits *between* two elements of `contents` rather than at
+    #: one of their positions — see `SourceElement.order`.
+    start: float
     #: Breadcrumb plus body — what gets embedded and what a model reads.
     text: str
     token_count: int
     section_path: str | None
     #: One rectangle per page, ascending. Never empty.
     pages: list[dict[str, Any]]
-    #: `prose` or `table`. Only prose is held to the token band; a table's size
-    #: is the table's, not a choice the chunker made.
+    #: `prose`, `table` or `figure`. Only prose is held to the token band: a
+    #: table's size is the table's and a figure's is its caption's, neither
+    #: being a choice the chunker made.
     kind: str
     element_ids: list[str]
     truncated: bool = False
@@ -144,22 +147,35 @@ def chunk_elements(
     *,
     tokenizer: Tokenizer,
     options: ChunkingOptions,
+    figures: Sequence[SourceElement] = (),
 ) -> list[Chunk]:
-    """Turn a parse artifact's elements into chunks, in reading order."""
+    """Turn a parse artifact's elements into chunks, in reading order.
+
+    `figures` comes from the artifact's `images` rather than from its
+    `contents`, and is passed separately rather than merged into `elements` for
+    a reason worth stating: a Docling `figure` element is a picture's *caption
+    as the document printed it*, and belongs in the prose around it. One of
+    these is a vision model's description of the picture itself, and is a
+    passage in its own right. Two different things that happen to share a word,
+    kept apart by the caller that knows which is which rather than by a rule
+    inside here that would have to guess.
+    """
     usable = [element for element in elements if element.text.strip() or element.is_table]
-    if not usable:
+    captioned = [figure for figure in figures if figure.text.strip()]
+    if not usable and not captioned:
         return []
 
     chunks = [
         *_table_chunks([e for e in usable if e.is_table], tokenizer=tokenizer),
+        *_figure_chunks(captioned, tokenizer=tokenizer),
         *_prose_chunks([e for e in usable if not e.is_table], tokenizer=tokenizer, options=options),
     ]
 
     # Reading order is restored here rather than preserved throughout, because
-    # prose and tables are chunked by different rules over the same stream.
-    # Ordinals are assigned last, over the whole document: they are the upsert
-    # key, so they must be dense and stable for a given input, and a per-stream
-    # counter would collide.
+    # prose, tables and figures are chunked by different rules over the same
+    # document. Ordinals are assigned last, over the whole of it: they are the
+    # upsert key, so they must be dense and stable for a given input, and a
+    # per-stream counter would collide.
     chunks.sort(key=lambda chunk: chunk.start)
     for ordinal, chunk in enumerate(chunks):
         chunk.ordinal = ordinal
@@ -213,6 +229,58 @@ def _table_chunks(elements: Sequence[SourceElement], *, tokenizer: Tokenizer) ->
                 element_ids=[element.id],
                 truncated=truncated,
                 table_json=element.table_json,
+            )
+        )
+    return chunks
+
+
+# ── Figures ──────────────────────────────────────────────────────────────────
+
+
+def _figure_chunks(elements: Sequence[SourceElement], *, tokenizer: Tokenizer) -> list[Chunk]:
+    """One chunk per captioned figure, whatever its size.
+
+    Atomic for the same reason a table is, and the reason is the citation rather
+    than the size. A figure chunk exists so that a question about what a chart
+    shows retrieves *the chart* — and the rectangle it carries is the figure's
+    own box on its own page, so following the citation puts the reader in front
+    of the picture the answer came from. Packed in with the prose around it, the
+    passage would still retrieve and the highlight would land on a paragraph
+    beside the figure, which is a citation that does not survive being checked.
+
+    Small enough never to need truncating in practice — a caption is two or
+    three sentences — but the ceiling is applied anyway, because it is the
+    embedding model's and not ours to skip.
+    """
+    chunks: list[Chunk] = []
+    for element in elements:
+        body = element.markdown or element.text
+        if not body.strip():
+            continue
+
+        if tokenizer.count(body) > MAX_CHUNK_CONTEXT_TOKENS:  # pragma: no cover - a vast caption
+            suffix = f"\n{TRUNCATION_MARKER}"
+            body = (
+                tokenizer.truncate(body, MAX_CHUNK_CONTEXT_TOKENS - tokenizer.count(suffix))
+                + suffix
+            )
+            logger.warning("a figure caption was truncated", extra={"element": element.id})
+
+        chunks.append(
+            Chunk(
+                ordinal=0,
+                start=element.order,
+                text=body,
+                token_count=tokenizer.count(body),
+                # No breadcrumb. A figure is extracted from the page's object
+                # stream rather than from the element tree, so nothing knows
+                # which section it sits under — and an invented heading trail is
+                # a claim about the document's structure that the document does
+                # not support.
+                section_path=None,
+                pages=_union_pages([element]),
+                kind="figure",
+                element_ids=[element.id],
             )
         )
     return chunks

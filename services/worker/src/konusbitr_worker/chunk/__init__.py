@@ -21,7 +21,11 @@ from konusbitr_worker.chunk.chunker import (
     ChunkingOptions,
     chunk_elements,
 )
-from konusbitr_worker.chunk.elements import SourceElement, elements_from_contents
+from konusbitr_worker.chunk.elements import (
+    SourceElement,
+    elements_from_contents,
+    figure_elements,
+)
 
 __all__ = [
     "MAX_CHUNK_CONTEXT_TOKENS",
@@ -32,4 +36,5 @@ __all__ = [
     "SourceElement",
     "chunk_elements",
     "elements_from_contents",
+    "figure_elements",
 ]
