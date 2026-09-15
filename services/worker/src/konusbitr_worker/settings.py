@@ -105,16 +105,25 @@ DEFAULT_EMBEDDING_MODELS: dict[LlmProvider, str] = {
 #:
 #: Not simply ``DEFAULT_CHAT_MODELS``: the two roles diverge wherever a
 #: provider's cheapest chat model cannot see. Mistral's small model is
-#: text-only and Pixtral is the one that reads an image; Ollama's Llama 3.2 3B
-#: has no vision head and the 11B one does. Getting this wrong fails at the
-#: first figure with a provider error rather than at boot, which is why the
-#: table is explicit rather than inherited.
+#: text-only and Pixtral is the one that reads an image. Getting this wrong
+#: fails at the first figure with a provider error rather than at boot, which
+#: is why the table is explicit rather than inherited.
+#:
+#: Ollama's entry is Qwen2.5-VL rather than Llama 3.2 Vision because Phase 12.3
+#: asks the vision role to do two quite different jobs, and the second is what
+#: separates the models. Describing a figure needs a model that can see;
+#: *reading a page into structured elements with bounding boxes* needs one
+#: trained for document grounding that returns coordinates. Qwen2.5-VL is; Llama
+#: 3.2 Vision is not, and a local deployment asking for ``quality="advanced"``
+#: against it would get an empty parse rather than an error.
+#:
+#: Mirrors ``DEFAULT_VISION_MODELS`` in ``packages/shared/src/models.ts``.
 DEFAULT_VISION_MODELS: dict[LlmProvider, str] = {
     "openai": "gpt-4.1-mini",
     "anthropic": "claude-sonnet-4-5",
     "google": "gemini/gemini-2.5-flash",
     "mistral": "pixtral-12b-2409",
-    "ollama": "ollama/llama3.2-vision",
+    "ollama": "ollama/qwen2.5vl:7b",
 }
 
 DEFAULT_CHAT_MODELS: dict[LlmProvider, str] = {
@@ -309,6 +318,64 @@ class Settings(BaseSettings):
     #: Ceiling per document, so one pathological file cannot fill a bucket.
     figure_max_per_document: int = 200
 
+    # ── The advanced (VLM) tier (Phase 12.3) ─────────────────────────────────
+    #
+    # Tier 3. A page is *looked at* by a vision model, which is the only way to
+    # get reading order right on a multi-column magazine — and the only stage of
+    # this pipeline whose cost scales with page count times a provider's token
+    # price. Hence a hard page ceiling and an escalation threshold rather than
+    # an on/off switch.
+
+    #: Whether ``quality="advanced"`` may run at all.
+    #:
+    #: On, but it does nothing without a configured vision role, and the default
+    #: ``.env`` has none. What an operator gets out of the box is "advanced is
+    #: available, and asking for it says a vision model is not configured".
+    vlm_enabled: bool = True
+
+    #: Pages of one document the VLM tier will read before the job is refused.
+    #:
+    #: Enforced at intake *and* here, because a job payload arrives from a queue
+    #: rather than from the endpoint that validated it. Exceeding it is
+    #: ``too_many_pages``, which is terminal: no number of retries makes a
+    #: document shorter.
+    max_vlm_pages_per_job: int = 50
+
+    #: Recognition confidence below which a page is escalated to the VLM tier.
+    #:
+    #: The automatic half of tier 3, and it spends money, which is why it sits
+    #: well below ``ocr_low_confidence_threshold`` (0.85, where the viewer merely
+    #: warns a reader). A page read at 0.6 is one where roughly two words in five
+    #: are guesses. Zero disables escalation and makes the tier opt-in only.
+    tier_fallback_threshold: float = 0.6
+
+    #: What a page is rendered at before it is shown to a vision model.
+    #:
+    #: Lower than ``ocr_dpi`` on purpose. A recogniser needs 30-40 pixels of
+    #: glyph height to read a character; a VLM resamples whatever it is given
+    #: down to roughly 1568px on the long edge, so anything past that costs
+    #: tokens and buys nothing.
+    vlm_dpi: float = 180.0
+
+    #: Output tokens budgeted for one page. Also the ``max_tokens`` sent, so a
+    #: page cannot cost more than the estimate said it would.
+    vlm_max_tokens: int = 1500
+
+    #: How many pages are read concurrently. Small: these are whole page images
+    #: on the wire, and a worker that fires fifty at once rate-limits itself out
+    #: of the provider while holding fifty bitmaps in memory.
+    vlm_concurrency: int = 3
+
+    #: What one page costs on this deployment, overriding the built-in price
+    #: table. For an operator with a negotiated rate or a gateway of their own.
+    vlm_usd_per_page: float | None = None
+
+    #: Ceiling on one organization's advanced-tier spend per calendar month, USD.
+    #: Zero means no cap, which is right for a single-tenant instance where the
+    #: operator is the tenant. Enforced at intake; recorded here so the worker
+    #: and the web app read one ``.env``.
+    org_monthly_vlm_usd_cap: float = 0.0
+
     # ── The model router ─────────────────────────────────────────────────────
     #
     # Every model call goes through LiteLLM; nothing here imports a provider
@@ -446,6 +513,9 @@ class Settings(BaseSettings):
         "chunk_max_tokens",
         "figure_min_edge",
         "figure_max_per_document",
+        "max_vlm_pages_per_job",
+        "vlm_max_tokens",
+        "vlm_concurrency",
     )
     @classmethod
     def _check_positive_int(cls, value: int) -> int:
@@ -469,11 +539,30 @@ class Settings(BaseSettings):
         "text_coverage_threshold",
         "ocr_fallback_threshold",
         "ocr_low_confidence_threshold",
+        "tier_fallback_threshold",
     )
     @classmethod
     def _check_fraction(cls, value: float) -> float:
         if not 0.0 <= value <= 1.0:
             raise ValueError("must be a fraction between 0 and 1")
+        return value
+
+    @field_validator("vlm_dpi")
+    @classmethod
+    def _check_vlm_dpi(cls, value: float) -> float:
+        # Narrower than `ocr_dpi`'s band, because the ceiling is not memory but
+        # the resample every vision provider applies: past roughly 400 DPI a
+        # Letter page is scaled back down before the model sees it, and the only
+        # thing the extra pixels bought was the time spent rendering them.
+        if not 72.0 <= value <= 400.0:
+            raise ValueError("must be between 72 and 400 dots per inch")
+        return value
+
+    @field_validator("vlm_usd_per_page", "org_monthly_vlm_usd_cap")
+    @classmethod
+    def _check_non_negative_money(cls, value: float | None) -> float | None:
+        if value is not None and value < 0:
+            raise ValueError("must not be negative")
         return value
 
     @field_validator("ocr_dpi")

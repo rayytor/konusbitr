@@ -1,10 +1,19 @@
 """The vision role, through the router.
 
-One job in Phase 12.2: describing a figure. A bar chart is the answer to
-"which region grew fastest?" and is invisible to a text index, so the image is
-shown to a vision model and the description it returns is what gets embedded and
-retrieved. The citation still points at the figure's own rectangle on its own
-page, so a reader can check the claim against the picture.
+Two jobs, and the difference between them is the whole of Phase 12.3.
+
+**Describing a figure** (Phase 12.2). A bar chart is the answer to "which region
+grew fastest?" and is invisible to a text index, so the image is shown to a
+vision model and the description it returns is what gets embedded and retrieved.
+The citation still points at the figure's own rectangle on its own page, so a
+reader can check the claim against the picture.
+
+**Reading a whole page into structured elements** (Phase 12.3). The same
+transport, a different ask: a page image in, a JSON array of located blocks in
+reading order out. What it buys is the one thing no extractor recovers — the
+sequence a person reads a multi-column page in — and what it costs is a token
+bill per page, which is why :meth:`VisionRouter.read_page` sends a hard
+`max_tokens` and why the caller counts pages before it starts.
 
 Structurally identical to :mod:`konusbitr_worker.ai.chat` — role resolution,
 offline enforcement at the call site, retry with the shared breaker, usage
@@ -178,6 +187,43 @@ class VisionRouter:
         )
 
         return _first_message(response)
+
+    async def read_page(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        image: bytes,
+        media_type: str = "image/png",
+        max_tokens: int = 1500,
+    ) -> str:
+        """Read one page image, returning whatever the model answered, verbatim.
+
+        Deliberately returns the raw string rather than parsed elements.
+        Everything a model does wrong with a JSON contract — a code fence, a
+        sentence of preamble, an axis order of its own — is a *parsing* problem,
+        and it belongs in :mod:`konusbitr_worker.parse.vlm.response` where it
+        can be tested against recorded answers without a provider. The router's
+        job ends at the bytes.
+
+        No `response_format` is sent. LiteLLM emulates JSON mode differently
+        across the providers this router fronts and silently ignores it on
+        several, so a parser that could cope with prose was needed regardless —
+        and once it exists, the flag buys nothing but a provider-specific
+        failure mode. The prompt asks for JSON and the parser insists on it.
+
+        `temperature=0.0`, as everywhere else in the parse path: a document
+        re-parsed with the same settings must produce the same artifact, or the
+        docId cache is a lie and an eval score is unattributable.
+        """
+        return await self.describe(
+            system=system,
+            prompt=prompt,
+            image=image,
+            media_type=media_type,
+            max_tokens=max_tokens,
+            temperature=0.0,
+        )
 
     async def _request(
         self,
