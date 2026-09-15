@@ -34,6 +34,20 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+
+from fixture_text import (  # noqa: E402
+    ARABIC_LINES,
+    CHINESE_LINES,
+    FIGURE_CAPTION,
+    FIGURE_LABELS,
+    FIGURE_VALUES,
+    JAPANESE_LINES,
+    TABLE_HEADERS,
+    TABLE_ROWS,
+    TURKISH_LINES,
+)
+
 OUTPUT = Path(__file__).parent / "pdf"
 
 #: Pinned so regeneration is byte-stable. The date is arbitrary and the id is
@@ -659,6 +673,323 @@ def mixed_digital_scanned(path: Path, pages: int = 10, scanned_from: int = 8) ->
     pdf.save()
 
 
+# ── The multilingual, tabular and figure corpus (Phase 12.2) ─────────────────
+#
+# Three new shapes, and they are drawn with Pillow rather than typeset with
+# reportlab. That is not a stylistic preference: reportlab maps characters to
+# glyphs and does no text shaping, so Arabic comes out of it as a row of
+# disconnected isolated forms in left-to-right order — a page that is not
+# Arabic, that no recogniser could read, and that a test asserting Arabic would
+# never catch. Pillow's FreeType binding goes through HarfBuzz and FriBiDi,
+# which shape and reorder properly, and it is already a dependency.
+#
+# The fonts come from `fixtures/fonts/`, subset and committed by
+# `scripts/vendor-fixture-fonts.py`, so a regeneration does not depend on what
+# the person running it happens to have installed. See that script for why.
+
+FONTS = Path(__file__).parent / "fonts"
+
+#: Point size the fixture body text is drawn at, before the DPI scale. Roughly
+#: 13pt, matching the Latin scanned fixtures, so the recogniser meets glyphs the
+#: size it meets them at in a real document.
+SCAN_BODY_POINTS = 13
+SCAN_TITLE_POINTS = 22
+
+
+def _font(name: str, points: int):
+    """One of the vendored subsets, sized for a page rendered at `SCAN_DPI`."""
+    from PIL import ImageFont
+
+    path = FONTS / name
+    if not path.is_file():
+        raise SystemExit(
+            f"missing vendored font {path}. Run ./scripts/vendor-fixture-fonts.py first."
+        )
+    return ImageFont.truetype(str(path), int(points * SCAN_DPI / 72.0))
+
+
+def _draw_lines(
+    lines: list[str],
+    pagesize,
+    *,
+    font_name: str,
+    rtl: bool = False,
+    language: str | None = None,
+) -> "object":
+    """Draw a page of text as a greyscale raster, at `SCAN_DPI`.
+
+    Right-to-left pages are anchored to the right margin and drawn with
+    `direction="rtl"`, which is what makes Pillow run the bidi algorithm over
+    the line rather than laying the characters out in storage order.
+    """
+    from PIL import Image, ImageDraw
+
+    width_points, height_points = pagesize
+    scale = SCAN_DPI / 72.0
+    size = (round(width_points * scale), round(height_points * scale))
+
+    image = Image.new("L", size, 255)
+    draw = ImageDraw.Draw(image)
+
+    title = _font(font_name, SCAN_TITLE_POINTS)
+    body = _font(font_name, SCAN_BODY_POINTS)
+
+    margin = round(72 * scale)
+    cursor = round(96 * scale)
+    x = size[0] - margin if rtl else margin
+    anchor = "ra" if rtl else "la"
+
+    for index, line in enumerate(lines):
+        font = title if index == 0 else body
+        if line:
+            draw.text(
+                (x, cursor),
+                line,
+                font=font,
+                fill=0,
+                anchor=anchor,
+                direction="rtl" if rtl else "ltr",
+                language=language,
+            )
+        cursor += round((SCAN_TITLE_POINTS + 18 if index == 0 else 24) * scale)
+
+    return image
+
+
+def multilingual_scan(path: Path) -> None:
+    """Four scanned pages, one script each: Turkish, Arabic, Chinese, Japanese.
+
+    The fixture behind three of this phase's acceptance criteria, and it is one
+    document rather than four because the interesting case is the mixed one: a
+    pipeline that identifies the language per *document* has to pick, and the
+    `langList` escape hatch is what a caller uses when picking is wrong.
+
+    Turkish is first, and deliberately. It is Latin-script, so a pipeline with
+    no language routing at all will produce *plausible* output for it — `ı` read
+    as `l`, `ş` as `s` — which is the silent corruption the routing exists to
+    prevent, and the only one a test has to measure rather than merely observe.
+    """
+    from reportlab.lib.pagesizes import LETTER
+
+    pages = [
+        (TURKISH_LINES, "NotoSans-subset.ttf", False, "tr"),
+        (ARABIC_LINES, "NotoSansArabic-subset.ttf", True, "ar"),
+        (CHINESE_LINES, "NotoSansCJK-subset.ttf", False, "zh"),
+        (JAPANESE_LINES, "NotoSansCJK-subset.ttf", False, "ja"),
+    ]
+
+    pdf = _canvas(path, LETTER)
+    for index, (lines, font_name, rtl, language) in enumerate(pages, start=1):
+        raster = _draw_lines(lines, LETTER, font_name=font_name, rtl=rtl, language=language)
+        _embed(pdf, _degrade(raster, seed=300 + index, grain=6), LETTER)
+        pdf.showPage()
+    pdf.save()
+
+
+def scanned_table(path: Path) -> None:
+    """A scanned financial statement: a ruled grid with a header row.
+
+    Ruled, because that is what `konusbitr_worker.parse.ocr.tables` reconstructs
+    from and what a balance sheet, an invoice and a lab report all are. The
+    header row names columns and holds no number while every body row holds
+    several, which is the distinction the header heuristic turns on — a fixture
+    that blurred it would let a broken heuristic pass.
+
+    The second page carries a table with a **merged** header cell spanning two
+    columns, because the absent rule under a merge is how a span is detected and
+    a corpus with no merges never exercises that path.
+    """
+    from reportlab.lib.pagesizes import LETTER
+
+    pdf = _canvas(path, LETTER)
+
+    plain = _draw_table(
+        LETTER,
+        title="Annual Financial Summary",
+        headers=TABLE_HEADERS,
+        rows=TABLE_ROWS,
+    )
+    _embed(pdf, _degrade(plain, seed=401, grain=6), LETTER)
+    pdf.showPage()
+
+    merged = _draw_table(
+        LETTER,
+        title="Headcount by Region",
+        headers=["Region", "Engineering", "Sales", "Support"],
+        rows=[
+            ["Europe", "84", "31", "22"],
+            ["Americas", "126", "58", "40"],
+            ["Asia Pacific", "47", "19", "15"],
+        ],
+        # Spans the three numeric columns of the header: one cell where the
+        # grid has three, with no vertical rules beneath it.
+        header_span=(1, 4),
+        span_text="Employees",
+    )
+    _embed(pdf, _degrade(merged, seed=402, grain=6), LETTER)
+    pdf.showPage()
+
+    pdf.save()
+
+
+def _draw_table(
+    pagesize,
+    *,
+    title: str,
+    headers: list[str],
+    rows: list[list[str]],
+    header_span: tuple[int, int] | None = None,
+    span_text: str = "",
+):
+    """Draw a ruled table as a greyscale raster, rules and all.
+
+    The rules are drawn as real strokes rather than implied by alignment,
+    because the reconstruction reads them: a whitespace-aligned table is
+    explicitly out of scope for this tier and is read as prose. See the module
+    docstring of `konusbitr_worker.parse.ocr.tables`.
+    """
+    from PIL import Image, ImageDraw
+
+    width_points, height_points = pagesize
+    scale = SCAN_DPI / 72.0
+    size = (round(width_points * scale), round(height_points * scale))
+
+    image = Image.new("L", size, 255)
+    draw = ImageDraw.Draw(image)
+    body = _font("NotoSans-subset.ttf", SCAN_BODY_POINTS)
+    heading = _font("NotoSans-subset.ttf", SCAN_TITLE_POINTS)
+
+    margin = round(72 * scale)
+    draw.text((margin, round(72 * scale)), title, font=heading, fill=0, anchor="la")
+
+    top = round(150 * scale)
+    row_height = round(34 * scale)
+    column_width = (size[0] - 2 * margin) // len(headers)
+    rule = max(round(scale), 2)
+
+    body_rows = [headers, *rows]
+    bottom = top + row_height * len(body_rows)
+    right = margin + column_width * len(headers)
+
+    # Horizontal rules: one under every row, plus the top border.
+    for index in range(len(body_rows) + 1):
+        y = top + index * row_height
+        draw.line([(margin, y), (right, y)], fill=0, width=rule)
+
+    # Vertical rules: one at every column boundary. A merged header cell is
+    # drawn by *omitting* the rules inside its span on the header row only.
+    for index in range(len(headers) + 1):
+        x = margin + index * column_width
+        if header_span is not None and header_span[0] < index < header_span[1]:
+            draw.line([(x, top + row_height), (x, bottom)], fill=0, width=rule)
+        else:
+            draw.line([(x, top), (x, bottom)], fill=0, width=rule)
+
+    pad = round(8 * scale)
+    for row_index, row in enumerate(body_rows):
+        if row_index == 0 and header_span is not None:
+            first, last = header_span
+            cells = [(0, headers[0]), (first, span_text)]
+            for column_index, text in cells:
+                draw.text(
+                    (margin + column_index * column_width + pad, top + pad),
+                    text,
+                    font=body,
+                    fill=0,
+                    anchor="la",
+                )
+            continue
+        for column_index, text in enumerate(row):
+            draw.text(
+                (margin + column_index * column_width + pad, top + row_index * row_height + pad),
+                text,
+                font=body,
+                fill=0,
+                anchor="la",
+            )
+
+    return image
+
+
+def figures_chart(path: Path) -> None:
+    """A born-digital report with a real chart embedded as a raster.
+
+    Three images on the page and only one of them is a figure, which is the
+    point: a 40-pixel rule and a 64-pixel logo are the furniture every real PDF
+    carries, and the size filter in `konusbitr_worker.parse.images` has to
+    remove both. The chart is drawn rather than filled with grey, so that a
+    vision model asked to describe it has something to describe and so that a
+    caption can be asserted to mention a region and a percentage.
+    """
+    from io import BytesIO
+
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.utils import ImageReader
+
+    width, height = LETTER
+    pdf = _canvas(path, LETTER)
+
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(72, height - 72, "Quarterly Report")
+    pdf.setFont("Helvetica", 11)
+    cursor = height - 108
+    for line in _wrap(LOREM, 78):
+        pdf.drawString(72, cursor, line)
+        cursor -= 15
+
+    chart = BytesIO()
+    _bar_chart().save(chart, format="PNG")
+    chart.seek(0)
+    pdf.drawImage(ImageReader(chart), 72, 260, width=396, height=264)
+
+    pdf.setFont("Helvetica-Oblique", 10)
+    pdf.drawString(72, 244, FIGURE_CAPTION)
+
+    # The furniture. Both are below the 100-pixel floor and must be filtered
+    # out, and they are drawn *after* the chart so that a filter that simply
+    # kept the first image would be caught.
+    pdf.drawImage(ImageReader(_solid(64, 64, 40)), 468, 700, width=32, height=32)
+    pdf.drawImage(ImageReader(_solid(600, 4, 0)), 72, 230, width=468, height=2)
+
+    pdf.setFont("Helvetica", 9)
+    pdf.drawString(width / 2, 40, "1")
+    pdf.showPage()
+    pdf.save()
+
+
+def _bar_chart():
+    """A labelled bar chart, drawn from `FIGURE_VALUES`. RGB, 792 by 528."""
+    from PIL import Image, ImageDraw
+
+    width, height = 792, 528
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    label = _font("NotoSans-subset.ttf", 7)
+
+    left, bottom, top = 120, height - 90, 60
+    draw.line([(left, top), (left, bottom)], fill=(30, 30, 30), width=3)
+    draw.line([(left, bottom), (width - 60, bottom)], fill=(30, 30, 30), width=3)
+
+    span = (width - 60 - left) // len(FIGURE_VALUES)
+    for index, (name, value) in enumerate(zip(FIGURE_LABELS, FIGURE_VALUES, strict=True)):
+        x0 = left + index * span + span // 5
+        x1 = left + (index + 1) * span - span // 5
+        y0 = bottom - round((bottom - top) * value / 60.0)
+        draw.rectangle([x0, y0, x1, bottom], fill=(70, 100, 160))
+        draw.text(((x0 + x1) // 2, bottom + 12), name, font=label, fill=(20, 20, 20), anchor="ma")
+        draw.text(((x0 + x1) // 2, y0 - 26), f"{value}%", font=label, fill=(20, 20, 20), anchor="ma")
+
+    draw.text((left, 24), "Revenue by region, 2024", font=label, fill=(20, 20, 20), anchor="la")
+    return image
+
+
+def _solid(width: int, height: int, level: int):
+    """A plain block, standing in for a logo or a rule."""
+    from PIL import Image
+
+    return Image.new("RGB", (width, height), (level, level, level))
+
+
 def _page_bitmap():
     """A grey-on-white raster that looks like a scan and contains no glyphs."""
     from io import BytesIO
@@ -693,6 +1024,9 @@ FIXTURES = {
     "scanned-rotated.pdf": scanned_rotated,
     "scanned-skewed-photo.pdf": scanned_skewed,
     "mixed-digital-scanned-10p.pdf": mixed_digital_scanned,
+    "multilingual-scan-4p.pdf": multilingual_scan,
+    "scanned-table.pdf": scanned_table,
+    "figures-chart.pdf": figures_chart,
     "encrypted.pdf": encrypted,
     "adversarial-injection.pdf": adversarial_injection,
     # Last: it truncates one of the files above.
