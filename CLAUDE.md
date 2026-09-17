@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–11 and 12.1–12.2/4 are done; Phase 12.3/4 is next.** `cp .env.example .env &&
+**Phases 01–11, 12.1–12.2/4 and 12.4/4 are done; Phase 12.3/4 is the one
+remaining piece of Phase 12.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -77,6 +78,28 @@ router and that description becomes a chunk of its own carrying the figure's
 rectangle — so a question only a bar chart can answer retrieves the bar chart.
 `docs/adr/0006-multilingual-tables-figures.md` records all three decisions.
 
+**Phase 12.4/4 makes a long document survivable.** A document longer than
+`WORKER_PAGE_BATCH_SIZE` is no longer read in one pass: it is read, chunked,
+embedded and committed **a batch of pages at a time**, and a batch is a commit
+point. Only one batch's bitmaps are ever decoded, thumbnails spill to
+`/tmp/konusbitr_scratch/{jobId}/`, and a collection cycle runs between batches —
+so a 900-page scan stays inside the two-gigabyte ceiling the Compose file now
+declares. A worker killed at page 850 reads the checkpoint and resumes at 851
+rather than starting again. The first batch's chunks are embedded as part of
+that batch, so the document becomes `partially_ready` — the viewer opens and
+chat answers over the pages that are indexed while the rest is still being
+read. Progress is reported in pages, the browser estimates the remaining time
+from the rate pages actually arrive at, and `POST /api/documents/:id/cancel`
+stops a job within one poll plus one page — leaving a short document rather than
+a broken one, because everything committed was committed properly.
+`POST /api/documents/:id/retry` reads a document again, optionally at different
+settings. `docs/adr/0007-resumable-ingestion.md` records all of it, including
+the ordering bug the resume test caught.
+
+The load-bearing rule that came out of it: **a `parse_results` row carrying a
+checkpoint is a parse in progress, not a docId cache entry**, and every cache
+reader in both runtimes filters on `checkpoint IS NULL`.
+
 One thing to know before touching the pipeline: **with no embedding model
 configured — which is the default `.env` — chunks are written without vectors.**
 That is a supported state, not a half-finished one. The passages are stored and
@@ -91,7 +114,9 @@ What exists:
 - `docker-compose.yml` + `docker/` — Postgres 17 with pgvector, Redis, MinIO
   (bucket and dev access key created automatically), a `migrate` one-shot that
   applies the migrations before web and worker start, the web image and the
-  worker image, plus the `local-llm` profile for Ollama. `advanced` is declared
+  worker image — the last with a declared 2GB memory limit, so a regression in
+  the batching is an `OOMKilled` on somebody's laptop rather than a production
+  incident — plus the `local-llm` profile for Ollama. `advanced` is declared
   and deliberately empty until Phase 12.3. The worker image carries Tesseract
   and the language packs the Phase 12.2 routing sends documents to; adding
   another language is one line in `docker/worker.Dockerfile`.
@@ -213,6 +238,12 @@ What exists:
   image preparations are read when an engine wants both, why a scanned table is
   reconstructed from its ruling lines rather than through Docling's TableFormer,
   and why figures are extracted always and captioned only on request.
+- `docs/adr/0007-resumable-ingestion.md` — why a long document is read in
+  contiguous page batches rather than split into several jobs, why the
+  checkpoint lives on the `parse_results` row it is building rather than in a
+  table of its own, why it is written after the batch it describes and what went
+  wrong when it was not, and why a cancelled document is short rather than
+  broken.
 - `docs/adr/0003-retrieval.md` — why fusion is RRF over ranks rather than
   normalized scores, why the sparse leg ORs its terms and drops function words
   first, why `hnsw.ef_search` has to be set with `SET LOCAL` inside the query's
@@ -468,6 +499,30 @@ These cut across many files; violating one breaks the product rather than one fe
   endpoint subscribes to Redis *before* it replays the `jobs` row, and holds
   what arrives in between — reading the row first leaves a window in which a
   job finishes and publishes to nobody.
+- **A long document is read a batch of pages at a time, and the checkpoint is
+  written *after* the work it describes.** The order is the whole of
+  resumability's correctness. Written before, the checkpoint records the chunk
+  count from before the batch — and a resume then renumbers from there,
+  overwrites the previous batch's chunks and prunes the document's tail, leaving
+  a document that looks fully indexed and answers out of two thirds of itself.
+  Crashing in the gap between indexing and recording is harmless: every write is
+  an upsert and the pages are simply read again. **Ordinals continue across
+  batches and across a resume** for the same reason the prune and the embedding
+  model are deferred to the last batch — both are claims about the *document*,
+  and there is no "past the end" until there is an end.
+- **A `parse_results` row carrying a checkpoint is not a cache entry.** It holds
+  the pages read so far and is missing the rest, so handing it to a second
+  upload would return `ready` for a document that stops halfway. Every docId
+  cache reader in both runtimes filters on `checkpoint IS NULL` —
+  `Database.parse_artifact` and `globalParseResultByHashes` — and the partition
+  is exact: `resume_point` is the only reader of the other half.
+- **A cancellation is not a failure.** `JobCancelled` is deliberately not a
+  `JobFailure`, because every failure branch does something a cancellation must
+  not: spend a retry, write a dead letter, mark a document `failed` in red, file
+  a line in the operator's failed-jobs view. The flag is a Redis key polled
+  twice a second and consulted between pages — never mid-page, because half a
+  reading written is worse than a page that finishes — and an unreachable Redis
+  is *not* a cancellation.
 - **Delivery is at-least-once; "exactly once" is a property of the writes.**
   Every write the worker makes is an upsert, and the parse handler
   short-circuits when the parse it was about to produce already exists. A job

@@ -228,3 +228,29 @@ One thing that is **not** a figure chunk: a Docling `figure` element in
 `contents`. That is a picture's caption as the document printed it, and it
 belongs in the prose beside it. The two are kept apart by the caller that knows
 which is which rather than by a rule in the chunker that would have to guess.
+
+## One boundary the chunker does not choose (Phase 12.4)
+
+A document longer than `WORKER_PAGE_BATCH_SIZE` is read, chunked and committed a
+batch of pages at a time, and **a chunk is built from one batch's elements
+alone**. So the last paragraph of page 16 is never merged with the first of page
+17, however well they would have read together.
+
+That is a boundary the rules above would not have placed, and it is the price of
+the batch being a real commit point: everything in a batch is written durably
+together — elements, page rows, chunks, vectors — which is what makes a crash
+cost one batch rather than a whole document, and what makes the first sixteen
+pages of a nine-hundred-page filing answerable fourteen minutes before the last
+one is read. See `docs/adr/0007-resumable-ingestion.md`.
+
+The cost is bounded and small: one avoidable boundary per sixteen pages, on
+documents long enough to be batched at all. A passage split there is still
+citable, still carries its page and its box, and is retrieved from either side
+by the same overlap that covers every other boundary. A document shorter than a
+batch is chunked in one pass and is unaffected, which is almost every upload.
+
+**Ordinals continue across batches and across a resume**, and that is not
+cosmetic. Chunks are upserted on `(document_id, ordinal)` and the final prune
+deletes everything past the count, so a batch that restarted its numbering would
+overwrite its predecessor's rows and then delete the document's tail — leaving a
+document that looks fully indexed and answers out of a third of itself.
