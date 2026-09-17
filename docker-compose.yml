@@ -204,11 +204,31 @@ services:
       dockerfile: docker/worker.Dockerfile
       target: runtime
     restart: unless-stopped
-    # Scaled to zero by the `advanced` profile's instructions above. Declared
-    # here rather than left to `--scale` on the command line so that the
-    # setting lives in `.env` alongside every other operator decision.
+    # `replicas` is scaled to zero by the `advanced` profile's instructions
+    # above. Declared here rather than left to `--scale` on the command line so
+    # that the setting lives in `.env` alongside every other operator decision.
+    #
+    # `resources` is the Phase 12.4 memory ceiling, declared rather than hoped
+    # for. A 900-page scan must ingest without the worker's RSS passing two
+    # gigabytes, and the way that is achieved is architectural: pages are
+    # rendered on demand a batch at a time, thumbnails spill to a scratch
+    # directory instead of being held, and a collection cycle runs between
+    # batches. Stating the limit here is what turns a regression in any of
+    # those into an `OOMKilled` on somebody's laptop rather than into a
+    # production incident six months later.
+    #
+    # Both belong to the one `deploy` mapping: YAML rejects a duplicated key,
+    # so declaring them as two blocks makes the whole file unparseable rather
+    # than merging them.
+    #
+    # Compose applies the limit only under `deploy` with the v2 engine; it is
+    # ignored by older ones, which is acceptable — it is a guard rail, not a
+    # requirement for the stack to run.
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
+      resources:
+        limits:
+          memory: ${WORKER_MEMORY_LIMIT:-2g}
     depends_on:
       postgres:
         condition: service_healthy
@@ -233,23 +253,6 @@ services:
       # gives each container a stable hostname, which is the default.
     ports:
       - '${WORKER_PORT:-8081}:8081'
-    # The Phase 12.4 memory ceiling, declared rather than hoped for.
-    #
-    # A 900-page scan must ingest without the worker's RSS passing two
-    # gigabytes, and the way that is achieved is architectural: pages are
-    # rendered on demand a batch at a time, thumbnails spill to a scratch
-    # directory instead of being held, and a collection cycle runs between
-    # batches. Stating the limit here is what turns a regression in any of
-    # those into an `OOMKilled` on somebody's laptop rather than into a
-    # production incident six months later.
-    #
-    # Compose applies this only under `deploy` with the v2 engine; it is
-    # ignored by older ones, which is acceptable — it is a guard rail, not a
-    # requirement for the stack to run.
-    deploy:
-      resources:
-        limits:
-          memory: ${WORKER_MEMORY_LIMIT:-2g}
     healthcheck:
       # Probes the worker's own /health, which reports both the job loop's
       # heartbeat and Redis connectivity — so a process that is running but has
