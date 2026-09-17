@@ -37,6 +37,19 @@ export const parseResults = pgTable(
     markdown: text('markdown'),
     contents: jsonb('contents').$type<Record<string, unknown>>(),
     pageCount: integer('page_count'),
+    /**
+     * How far the ingest that is building this row has got, or NULL when it is
+     * finished. See `JobCheckpointSchema` in `@konusbitr/shared`.
+     *
+     * This column is what makes a long parse resumable *without* weakening the
+     * docId cache, and the rule is one sentence: **a row with a checkpoint is
+     * not a cache entry.** The worker writes its accumulated elements here
+     * after every page batch, so a container killed at page 850 of 900 finds
+     * 850 pages of parse waiting for it — and until the final batch sets this
+     * back to NULL, no other upload can hit the cache and be handed a document
+     * that is missing its last fifty pages.
+     */
+    checkpoint: jsonb('checkpoint').$type<Record<string, unknown>>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex('parse_results_cache_idx').on(table.contentHash, table.settingsHash)],

@@ -104,6 +104,25 @@ export async function recordParseResult(
 }
 
 /** Every job recorded for a document, so a test can assert none was created. */
+/**
+ * Put a document into a state a test needs without running the worker.
+ *
+ * Standing in for the pipeline having failed, finished or got halfway is a
+ * thing several integration tests want, and writing it through Drizzle in each
+ * of them would make `drizzle-orm` a direct dependency of the web app's test
+ * suite for a single `update`. This keeps the SQL where the schema is.
+ */
+export async function setDocumentState(
+  db: Database,
+  documentId: string,
+  patch: Partial<typeof schema.documents.$inferInsert>,
+): Promise<void> {
+  await db
+    .update(schema.documents)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(schema.documents.id, documentId));
+}
+
 export async function jobsForDocument(db: Database, documentId: string) {
   return db.select().from(schema.jobs).where(eq(schema.jobs.documentId, documentId));
 }

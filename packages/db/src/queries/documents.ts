@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { Database } from '../client.js';
 import * as schema from '../schema/index.js';
 
@@ -46,6 +46,12 @@ export async function globalParseResultByHashes(
       and(
         eq(schema.parseResults.contentHash, contentHash),
         eq(schema.parseResults.settingsHash, settingsHash),
+        // A row with a checkpoint is a parse in progress, not a cache entry:
+        // it holds the pages read so far and is missing the rest. Handing it
+        // to a second upload would return `ready` for a document that stops
+        // halfway through, which is precisely the silent emptiness the
+        // pipeline's refusals exist to prevent.
+        isNull(schema.parseResults.checkpoint),
       ),
     )
     .limit(1);

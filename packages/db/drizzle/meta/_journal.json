@@ -64,6 +64,13 @@
       "when": 1789322336569,
       "tag": "0008_dark_radioactive_man",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789617681597,
+      "tag": "0009_page_checkpoints",
+      "breakpoints": true
     }
   ]
 }

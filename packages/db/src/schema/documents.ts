@@ -77,6 +77,22 @@ export const documents = pgTable(
      */
     chunksReady: integer('chunks_ready'),
     chunksTotal: integer('chunks_total'),
+    /**
+     * Partial readiness, in pages — the unit a reader actually thinks in.
+     *
+     * `pagesReady` counts pages that have been parsed, chunked *and* written,
+     * not pages that have been rendered: it is the number the
+     * `partially_ready` status is an assertion about, and a count that ran
+     * ahead of the index would promise a reader answers over pages nothing has
+     * read yet.
+     *
+     * `pagesTotal` duplicates `pageCount` at first glance and does not: page
+     * count is a property of the file, set once the parse completes, while
+     * this is set by the structural pass before any page is read, and is what
+     * the progress UI divides by from the very first batch.
+     */
+    pagesReady: integer('pages_ready').notNull().default(0),
+    pagesTotal: integer('pages_total'),
     /** ~200-token abstract generated at ingest for two-stage retrieval. */
     summary: text('summary'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

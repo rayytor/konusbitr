@@ -1,4 +1,17 @@
-import { and, arrayContains, asc, desc, eq, gt, isNull, lt, or, type SQL, sql } from 'drizzle-orm';
+import {
+  and,
+  arrayContains,
+  asc,
+  desc,
+  eq,
+  gt,
+  isNull,
+  lt,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm';
 import type { Database } from './client.js';
 import { ID_PREFIXES, newId } from './id.js';
 import * as schema from './schema/index.js';
@@ -404,6 +417,82 @@ export function scopedDb(db: Database, orgId: string) {
       const [row] = await db
         .update(schema.documents)
         .set({ filename, updatedAt: new Date() })
+        .where(and(eq(schema.documents.id, documentId), eq(schema.documents.orgId, orgId)))
+        .returning();
+      return row;
+    },
+
+    /**
+     * Mark a document stopped at its reader's request.
+     *
+     * Written from the web app as well as by the worker, and both writes are
+     * idempotent, because the two answer different needs. The worker's write
+     * is the durable truth and lands when it reaches the next page boundary;
+     * this one is what makes the Cancel button feel like a button, within the
+     * two seconds the phase asks for rather than within a page of OCR.
+     *
+     * Guarded against `ready`, which is the race it exists to lose: a job that
+     * finished between the click and this statement produced a whole document,
+     * and calling it cancelled would throw away a parse that succeeded.
+     */
+    async markDocumentCancelled(documentId: string, message: string) {
+      const [row] = await db
+        .update(schema.documents)
+        .set({
+          status: 'cancelled',
+          error: message,
+          errorCode: 'cancelled',
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.documents.id, documentId),
+            eq(schema.documents.orgId, orgId),
+            ne(schema.documents.status, 'ready'),
+          ),
+        )
+        .returning();
+      return row;
+    },
+
+    /**
+     * Put a document back at the start of the pipeline, at given parse settings.
+     *
+     * Everything a previous run *asserted* is cleared, and nothing a previous
+     * run *produced* is touched. The two halves of that are the whole design:
+     *
+     * Cleared, because they are claims about a parse that is about to be
+     * replaced — the status, the error, the page and chunk counters, and the
+     * embedding model the old index was built with. A retry that left
+     * `pages_ready` at 140 would draw a progress bar starting at 140 of 900
+     * before the new run had read a page.
+     *
+     * Untouched, because they are still true or still useful — the bytes, the
+     * storage key, the content hash, and the chunks themselves. The old index
+     * stays answerable right up until the new one replaces it row by row,
+     * which is the same reason a reindex does not begin by deleting.
+     *
+     * `settingsHash` is rewritten because it is half the document's identity:
+     * the same PDF at `quality: 'advanced'` is a different parse with its own
+     * cache entry, and the caller has already checked that this org does not
+     * hold another document at the new pair.
+     */
+    async reparseDocument(documentId: string, settingsHash: string) {
+      const [row] = await db
+        .update(schema.documents)
+        .set({
+          settingsHash,
+          status: 'queued',
+          error: null,
+          errorCode: null,
+          pagesReady: 0,
+          pagesTotal: null,
+          chunksReady: null,
+          chunksTotal: null,
+          embeddingModel: null,
+          dims: null,
+          updatedAt: new Date(),
+        })
         .where(and(eq(schema.documents.id, documentId), eq(schema.documents.orgId, orgId)))
         .returning();
       return row;
