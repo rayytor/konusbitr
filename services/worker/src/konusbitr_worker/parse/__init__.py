@@ -23,6 +23,20 @@ page belongs to exactly one tier, Docling's output for a page outside its tier
 is dropped, and the merge below re-numbers the combined list so that element ids
 remain a reading-order sort across both.
 
+Since Phase 12.4 stages 3 through 6 run **per page batch** rather than once
+over the document. The order of the stages within a batch is unchanged and so
+is everything they do; what changes is that the loop around them has a commit
+point. A batch's elements, page rows and figures are handed to the caller, the
+caller writes them and records how far the job got, and the next batch starts
+where the last one stopped. That is the whole of the resumability story, the
+whole of the partial-readiness story, and — because a batch holds only its own
+pages' bitmaps — the whole of the memory story. Stages 1 and 2 stay outside the
+loop: they are about the file rather than about any page of it.
+
+A document smaller than one batch runs exactly one iteration and is byte-for-byte
+what Phase 12.2 produced, which is the overwhelming majority of uploads and the
+reason the loop is invisible in the ordinary case.
+
 Progress is reported between them rather than inside them: a stage boundary is
 something a person watching a spinner can be told about truthfully, and a
 percentage invented inside a parser is not.
@@ -40,22 +54,27 @@ import tempfile
 import time
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from konusbitr_worker.ai.vision import VisionRouter
 from konusbitr_worker.contracts import JobErrorCode, JobStage
-from konusbitr_worker.errors import JobFailure
+from konusbitr_worker.errors import JobCancelled, JobFailure
 from konusbitr_worker.log import get_logger
 from konusbitr_worker.parse.artifact import (
     PageTier,
     ParseArtifact,
     ParsedElement,
     ParsedPage,
-    element_id,
-    markdown_from_elements,
+)
+from konusbitr_worker.parse.batching import (
+    ParseAccumulator,
+    ResumeState,
+    page_batches,
 )
 from konusbitr_worker.parse.captions import caption_images
-from konusbitr_worker.parse.docling_parser import DoclingParse, convert
+from konusbitr_worker.parse.docling_parser import DoclingParse, build_converter, convert
 from konusbitr_worker.parse.geometry import PageGeometry
 from konusbitr_worker.parse.images import (
     IMAGE_CONTENT_TYPE,
@@ -77,9 +96,17 @@ from konusbitr_worker.parse.thumbnails import (
     render_thumbnails,
     thumbnail_key,
 )
+from konusbitr_worker.scratch import ScratchSpace, collect
 from konusbitr_worker.settings import Settings
 
-__all__ = ["ParseArtifact", "StageReporter", "parse_document"]
+__all__ = [
+    "BatchOutcome",
+    "BatchReporter",
+    "CancelCheck",
+    "ParseArtifact",
+    "StageReporter",
+    "parse_document",
+]
 
 #: How the pipeline is told a stage has begun. The parse decides *when*; the
 #: caller decides what a person is told and where it is published, because a
@@ -87,6 +114,43 @@ __all__ = ["ParseArtifact", "StageReporter", "parse_document"]
 StageReporter = Callable[[JobStage], Awaitable[None]]
 
 logger = get_logger("konusbitr.worker.parse")
+
+
+@dataclass(frozen=True, slots=True)
+class BatchOutcome:
+    """One committed page batch, handed to the caller so it can persist it.
+
+    Carries both halves on purpose. `elements` is what this batch produced and
+    is what the caller chunks; `artifact` is the document as it now stands and
+    is what the caller writes to `parse_results`. Deriving either from the
+    other would mean either re-chunking the whole document every batch or
+    storing a parse that only covers the last sixteen pages.
+    """
+
+    first_page: int
+    last_page: int
+    elements: list[ParsedElement]
+    artifact: ParseArtifact
+    #: Pages fully read so far, which is `last_page` — named separately because
+    #: it is what `documents.pages_ready` is set from and the two would drift if
+    #: the batching ever stopped being contiguous.
+    pages_done: int
+    page_count: int
+    #: Chunks the document had before this batch, which is where this batch's
+    #: ordinals begin. The caller returns the new total from `on_batch`, and
+    #: the accumulator carries it to the next one.
+    chunks_written: int
+
+
+#: Called once per committed batch. Returns how many chunks the document has
+#: after the caller has stored this batch, which is where the next batch's
+#: ordinals begin.
+BatchReporter = Callable[[BatchOutcome], Awaitable[int]]
+
+#: Asked between pages and between batches. Synchronous, because it is also
+#: consulted from inside the worker threads that do the recognition, where an
+#: awaitable would need a loop that is not there. It must not block.
+CancelCheck = Callable[[], bool]
 
 
 async def parse_document(
@@ -100,13 +164,22 @@ async def parse_document(
     lang_list: Sequence[str] = (),
     llm: bool = False,
     on_stage: StageReporter | None = None,
+    batch_size: int | None = None,
+    resume: ResumeState | None = None,
+    on_batch: BatchReporter | None = None,
+    should_cancel: CancelCheck | None = None,
+    scratch: ScratchSpace | None = None,
 ) -> ParseArtifact:
     """Run the whole parse and return the artifact. Writes thumbnails; writes no rows.
 
     Persistence is the caller's, deliberately. This function is a pure-ish
     function of the bytes it fetches, which is what lets the fixture tests run
     it end to end without a database — and what keeps the idempotency rules,
-    which are about *writes*, in the one place that does any.
+    which are about *writes*, in the one place that does any. `on_batch` does
+    not break that: it is a callback the caller supplies and this function never
+    touches the database. Supplying none still reads the document in batches —
+    that is how the memory ceiling is met — and simply commits nothing, which
+    is what the fixture tests do.
 
     `lang_list` and `llm` are `settings.langList` and `settings.llm` from the
     job payload, and they are here rather than in `Settings` because they are
@@ -114,12 +187,18 @@ async def parse_document(
     into `settings_hash`, so a document parsed with captions and the same
     document parsed without them are two cache entries and not one that quietly
     changed underneath a reader.
+
+    `resume` is a previous run's committed state, and `should_cancel` is asked
+    between pages. Both are the phase's two answers to the same question —
+    which pages this run is responsible for — and both leave everything already
+    committed exactly where it is.
     """
-    timings: dict[str, int] = {}
     ocr_options = _ocr_options(settings, lang_list=lang_list)
     recognizer = _recognizer(settings, ocr_options)
+    size = max(batch_size or settings.worker_page_batch_size, 1)
 
     with _temporary_pdf() as path:
+        timings: dict[str, int] = {}
         with _timed(timings, "fetch"):
             await _announce(on_stage, JobStage.fetching)
             await store.download(storage_key, path)
@@ -136,125 +215,229 @@ async def parse_document(
             )
 
         geometries = {page.page_no: page for page in inspection.pages}
-        scanned_pages = await _pages_to_recognize(inspection, recognizer, settings)
-        native_pages = {
-            page.page_no for page in inspection.pages if page.page_no not in set(scanned_pages)
-        }
+        scanned_pages = set(await _pages_to_recognize(inspection, recognizer, settings))
 
-        with _timed(timings, "convert"):
-            await _announce(on_stage, JobStage.parsing)
-            if native_pages:
-                parsed = await asyncio.to_thread(
-                    convert,
-                    path,
-                    geometries=geometries,
-                    threads=settings.worker_parse_threads,
-                    native_pages=native_pages,
-                )
-            else:
-                # Every page is a scan. Loading a layout model to find no text
-                # layer on any page of the document is the expensive way to
-                # learn what the inspection already measured.
-                logger.info("no born-digital pages; skipping the layout parser")
-                parsed = DoclingParse(markdown="", contents=[])
-
-        recognized: list[OcrPageResult] = []
-        with _timed(timings, "ocr"):
-            if scanned_pages and recognizer is not None:
-                await _announce(on_stage, JobStage.ocr)
-                recognized = await asyncio.to_thread(
-                    ocr_pages,
-                    path,
-                    scanned_pages,
-                    geometries=geometries,
-                    options=ocr_options,
-                    pipeline=recognizer,
-                    # The born-digital half of a mixed filing is what the
-                    # language identifier reads, and it is free — it has already
-                    # been parsed. A wholly scanned document has no such text
-                    # and `ocr_pages` falls back to probing its first page.
-                    sample=parsed.markdown,
-                )
-
-        contents, markdown = _merge(parsed, recognized)
-        _require_something_readable(contents, recognized=bool(scanned_pages))
-        recognized_pages = {result.page_no for result in recognized}
-
-        pages = [
-            ParsedPage(
-                page_no=geometry.page_no,
-                width=geometry.width,
-                height=geometry.height,
-                rotation=geometry.rotation,
-                # Tiered by what actually ran, not by what was measured. A page
-                # the inspection called `ocr` and that nothing then read is a
-                # page the standard parser handled, and recording it otherwise
-                # would badge it in the viewer as recognised text that no
-                # recogniser produced.
-                tier=PageTier.ocr if geometry.page_no in recognized_pages else PageTier.native,
-            )
-            for geometry in inspection.pages
-        ]
-        _apply_confidence(pages, recognized)
-
-        with _timed(timings, "figures"):
-            images = await _extract_figures(
-                path,
-                store=store,
-                settings=settings,
-                org_id=org_id,
-                document_id=document_id,
-                geometries=geometries,
-                # An imaged page's one image *is* the page. Extracting it would
-                # duplicate the document, and captioning it would ask a vision
-                # model to describe a photograph of text the OCR tier has
-                # already read properly.
-                #
-                # The set is every page the *inspection* tiered as imaged, not
-                # only the ones a recogniser reached: a scan on a deployment
-                # with no engine installed is still a scan, and the page-area
-                # filter downstream is a backstop rather than the rule.
-                skip_pages=set(inspection.pages_in_tier(PageTier.ocr)),
-                llm=llm,
+        accumulator = ParseAccumulator.resumed(inspection.page_count, resume)
+        accumulator.timings.update(timings)
+        if accumulator.last_processed_page:
+            logger.info(
+                "resuming a parse",
+                extra={
+                    "from_page": accumulator.last_processed_page + 1,
+                    "pages": inspection.page_count,
+                    "chunks": accumulator.chunks_written,
+                },
             )
 
-        with _timed(timings, "thumbnails"):
-            # No stage announcement. `ProgressReporter` clamps the percentage
-            # to be monotonic, so announcing `persisting` (95%) here — before
-            # `chunking` (70%) and `embedding` (85%) had happened — pinned the
-            # bar at 95% for the whole of the chunking and embedding that
-            # follow. Thumbnails belong to `parsing`, which is what the caller
-            # has already announced.
-            await _write_thumbnails(
-                path,
-                store=store,
-                settings=settings,
-                org_id=org_id,
-                document_id=document_id,
+        # Pages the inspection tiered as imaged, whether or not a recogniser
+        # reached them. An imaged page's one image *is* the page: extracting it
+        # would duplicate the document, and captioning it would ask a vision
+        # model to describe a photograph of text the OCR tier has already read.
+        figure_skip = set(inspection.pages_in_tier(PageTier.ocr))
+        # One converter for the document rather than one per batch: it holds
+        # TableFormer's weights, and rebuilding it fifty-six times on a
+        # 900-page filing costs minutes for an identical result.
+        converter: Any | None = None
+        # The language route is a document-level decision. Once `settings.
+        # langList` or the first batch's text has settled it, later batches
+        # inherit it rather than re-identifying from their own pages.
+        language_resolved = bool(ocr_options.requested_languages)
+        announced: set[JobStage] = set()
+
+        for batch in page_batches(
+            page_count=inspection.page_count,
+            scanned_pages=scanned_pages,
+            batch_size=size,
+            start_after=accumulator.last_processed_page,
+        ):
+            _raise_if_cancelled(should_cancel, accumulator, inspection.page_count)
+
+            batch_timings: dict[str, int] = {}
+            with _timed(batch_timings, "convert"):
+                if batch.native:
+                    if JobStage.parsing not in announced:
+                        announced.add(JobStage.parsing)
+                        await _announce(on_stage, JobStage.parsing)
+                    converter = converter or await asyncio.to_thread(
+                        build_converter, settings.worker_parse_threads
+                    )
+                    parsed = await asyncio.to_thread(
+                        convert,
+                        path,
+                        geometries=geometries,
+                        threads=settings.worker_parse_threads,
+                        native_pages=batch.native,
+                        converter=converter,
+                    )
+                else:
+                    # Every page in this batch is a scan. Loading a layout model
+                    # to find no text layer is the expensive way to learn what
+                    # the inspection already measured.
+                    parsed = DoclingParse(markdown="", contents=[])
+
+            recognized: list[OcrPageResult] = []
+            with _timed(batch_timings, "ocr"):
+                if batch.scanned and recognizer is not None:
+                    if JobStage.ocr not in announced:
+                        announced.add(JobStage.ocr)
+                        await _announce(on_stage, JobStage.ocr)
+                    recognized = await asyncio.to_thread(
+                        ocr_pages,
+                        path,
+                        sorted(batch.scanned),
+                        geometries=geometries,
+                        options=ocr_options,
+                        pipeline=recognizer,
+                        # The born-digital half of a mixed filing is what the
+                        # language identifier reads, and it is free — it has
+                        # already been parsed. A wholly scanned document has no
+                        # such text and `ocr_pages` falls back to probing its
+                        # first page.
+                        sample=parsed.markdown or accumulator.markdown(),
+                        resolved=language_resolved or None,
+                        should_cancel=should_cancel,
+                    )
+                    language_resolved = True
+
+            _raise_if_cancelled(should_cancel, accumulator, inspection.page_count)
+
+            recognized_pages = {result.page_no for result in recognized}
+            pages = [
+                ParsedPage(
+                    page_no=page_no,
+                    width=geometries[page_no].width,
+                    height=geometries[page_no].height,
+                    rotation=geometries[page_no].rotation,
+                    # Tiered by what actually ran, not by what was measured. A
+                    # page the inspection called `ocr` and that nothing then
+                    # read is a page the standard parser handled, and recording
+                    # it otherwise would badge it in the viewer as recognised
+                    # text that no recogniser produced.
+                    tier=PageTier.ocr if page_no in recognized_pages else PageTier.native,
+                )
+                for page_no in batch.pages
+                if page_no in geometries
+            ]
+            _apply_confidence(pages, recognized)
+
+            with _timed(batch_timings, "figures"):
+                images = await _extract_figures(
+                    path,
+                    store=store,
+                    settings=settings,
+                    org_id=org_id,
+                    document_id=document_id,
+                    geometries=geometries,
+                    skip_pages=figure_skip,
+                    only_pages=set(batch.pages),
+                    seen=accumulator.seen_images,
+                    start_index=len(accumulator.images),
+                    llm=llm,
+                )
+
+            with _timed(batch_timings, "thumbnails"):
+                # No stage announcement. `ProgressReporter` clamps the
+                # percentage to be monotonic, so announcing `persisting` (95%)
+                # here — before `chunking` (70%) and `embedding` (85%) had
+                # happened — pinned the bar at 95% for the whole of the chunking
+                # and embedding that follow. Thumbnails belong to `parsing`.
+                await _write_thumbnails(
+                    path,
+                    store=store,
+                    settings=settings,
+                    org_id=org_id,
+                    document_id=document_id,
+                    pages=pages,
+                    scratch=scratch,
+                )
+
+            for stage, milliseconds in batch_timings.items():
+                accumulator.add_timing(stage, milliseconds)
+            if recognized:
+                accumulator.any_recognized = True
+            if parsed.markdown:
+                accumulator.markdown_parts.append(parsed.markdown)
+
+            committed = accumulator.extend(
+                elements=_ordered(parsed, recognized),
                 pages=pages,
+                images=[image.to_json() for image in images],
+                last_page=batch.last_page,
             )
 
-    artifact = ParseArtifact(
-        markdown=markdown,
-        page_count=inspection.page_count,
-        contents=contents,
-        pages=pages,
-        images=[image.to_json() for image in images],
-        timings=timings,
-    )
+            if on_batch is not None:
+                accumulator.chunks_written = await on_batch(
+                    BatchOutcome(
+                        first_page=batch.first_page,
+                        last_page=batch.last_page,
+                        elements=committed,
+                        artifact=accumulator.artifact(),
+                        pages_done=batch.last_page,
+                        page_count=inspection.page_count,
+                        chunks_written=accumulator.chunks_written,
+                    )
+                )
+
+            # The bitmaps this batch decoded are unreachable from here, and
+            # large enough that waiting for the collector to notice is the
+            # difference between a worker that stays under two gigabytes on a
+            # 900-page scan and one the kernel kills at page 400.
+            collect()
+
+        _require_something_readable(accumulator.elements, recognized=bool(scanned_pages))
+
+    artifact = accumulator.artifact()
     logger.info(
         "parse finished",
         extra={
             "pages": artifact.page_count,
             "elements": len(artifact.contents),
-            "ocr_pages": len(recognized),
-            "tables": sum(result.tables for result in recognized),
-            "figures": len(images),
-            "captioned": sum(1 for image in images if image.caption),
-            "timings_ms": timings,
+            "ocr_pages": sum(1 for page in artifact.pages if page.tier is PageTier.ocr),
+            "figures": len(artifact.images),
+            "timings_ms": artifact.timings,
         },
     )
     return artifact
+
+
+def _raise_if_cancelled(
+    should_cancel: CancelCheck | None,
+    accumulator: ParseAccumulator,
+    page_count: int,
+) -> None:
+    """Stop the parse if somebody asked it to, keeping what is already committed.
+
+    Raised rather than returned, because there is no honest artifact to return:
+    a half-read document handed back as a complete one is precisely the silent
+    emptiness the pipeline's refusals exist to prevent. The pages already
+    committed stay committed — they were written properly, with their chunks
+    and their vectors — so a cancelled document is a short one rather than a
+    broken one.
+    """
+    if should_cancel is not None and should_cancel():
+        raise JobCancelled(
+            pages_done=accumulator.last_processed_page,
+            pages_total=page_count,
+        )
+
+
+def _ordered(parsed: DoclingParse, recognized: list[OcrPageResult]) -> list[ParsedElement]:
+    """One batch's two tiers, interleaved into a single reading order.
+
+    A page belongs to exactly one tier, so ordering by page number is enough to
+    interleave them and each page's own order survives a stable sort. Numbering
+    is not done here: the accumulator assigns ids from the running total so
+    that `element_id`'s promise — a lexical sort is a reading-order sort —
+    holds across every batch of the document rather than within one.
+    """
+    if not recognized:
+        return list(parsed.contents)
+
+    combined: list[ParsedElement] = list(parsed.contents)
+    for result in recognized:
+        combined.extend(result.elements_for_artifact(first_index=0))
+    combined.sort(key=lambda element: element.page)
+    return combined
 
 
 async def _pages_to_recognize(
@@ -356,47 +539,6 @@ def _ocr_options(settings: Settings, *, lang_list: Sequence[str] = ()) -> OcrOpt
     )
 
 
-def _merge(
-    parsed: DoclingParse,
-    recognized: list[OcrPageResult],
-) -> tuple[list[ParsedElement], str]:
-    """Interleave the two tiers' elements into one reading order, and re-number them.
-
-    A page belongs to exactly one tier, so ordering by page number is enough to
-    interleave them and each page's own order survives a stable sort. The ids
-    are then reassigned from zero: `element_id` is zero-padded precisely so that
-    a lexical sort is a reading-order sort, and two independently-numbered runs
-    concatenated would break that promise on every mixed document.
-    """
-    if not recognized:
-        return parsed.contents, parsed.markdown
-
-    combined: list[ParsedElement] = list(parsed.contents)
-    for result in recognized:
-        combined.extend(result.elements_for_artifact(first_index=0))
-    combined.sort(key=lambda element: element.page)
-
-    renumbered = [
-        ParsedElement(
-            id=element_id(index),
-            type=element.type,
-            text=element.text,
-            markdown=element.markdown,
-            page=element.page,
-            bbox=element.bbox,
-            section_path=element.section_path,
-            level=element.level,
-            table=element.table,
-        )
-        for index, element in enumerate(combined)
-    ]
-
-    # Composed rather than Docling's export: see `markdown_from_elements`. A
-    # document with no native pages has no Docling markdown at all, and a mixed
-    # one has markdown covering only half of itself.
-    return renumbered, markdown_from_elements(renumbered)
-
-
 def _apply_confidence(pages: list[ParsedPage], recognized: list[OcrPageResult]) -> None:
     """Record each recognised page's confidence and engine on its page row."""
     by_page = {page.page_no: page for page in pages}
@@ -417,7 +559,10 @@ async def _extract_figures(
     document_id: str,
     geometries: dict[int, PageGeometry],
     skip_pages: set[int],
-    llm: bool,
+    only_pages: set[int] | None = None,
+    seen: set[str] | None = None,
+    start_index: int = 0,
+    llm: bool = False,
 ) -> list[ExtractedImage]:
     """Extract, store and — when asked — caption the document's figures.
 
@@ -440,13 +585,23 @@ async def _extract_figures(
     if not settings.figures_enabled:
         return []
 
+    remaining = settings.figure_max_per_document - start_index
+    if remaining <= 0:
+        return []
+
     router = VisionRouter.configured(settings) if llm else None
     candidates = extract_images(
         path,
         geometries=geometries,
         skip_pages=skip_pages,
+        # One batch's pages, and the document's running digest set. The
+        # deduplication that stores a letterhead once has to span the whole
+        # document rather than restart every sixteen pages, and the per-document
+        # ceiling has to be a ceiling on the document rather than on each batch.
+        only_pages=only_pages,
+        seen=seen,
         min_edge=settings.figure_min_edge,
-        limit=settings.figure_max_per_document,
+        limit=remaining,
     )
 
     stored: list[ExtractedImage] = []
@@ -460,7 +615,7 @@ async def _extract_figures(
 
         batch.clear()
         for candidate in produced:
-            index = len(stored) + 1
+            index = start_index + len(stored) + 1
             key = image_key(org_id, document_id, index)
             try:
                 await store.put_bytes(key, candidate.data, content_type=IMAGE_CONTENT_TYPE)
@@ -499,25 +654,42 @@ async def _write_thumbnails(
     org_id: str,
     document_id: str,
     pages: list[ParsedPage],
+    scratch: ScratchSpace | None = None,
 ) -> None:
-    """Render and upload one thumbnail per page, in bounded batches.
+    """Render and upload a thumbnail for each of this batch's pages.
 
-    Rendered on a thread in batches and uploaded from the loop in between, so
-    that neither the whole document's bitmaps nor the whole document's uploads
-    are ever outstanding at once. A 500-page monster is the case this shape
-    exists for.
+    Rendered on a thread in small groups and uploaded from the loop in between,
+    so that neither a batch's bitmaps nor a batch's uploads are ever all
+    outstanding at once.
+
+    `scratch` is the disk-spill half of the memory ceiling. When it is given,
+    each encoded WebP is written to the job's scratch directory and uploaded
+    from there rather than being held in a list — so the bytes in memory at any
+    moment are one page's, not a group's. The file is unlinked as soon as it
+    has been uploaded, and the whole directory is removed however the job ends;
+    a scratch directory cleaned only in the happy path is a disk that fills
+    silently over a week and then fails at everything at once.
     """
     by_page = {page.page_no: page for page in pages}
-    renderer = render_thumbnails(path, max_edge=settings.worker_thumbnail_max_edge)
-    batch_size = max(settings.worker_parse_threads, 1)
+    renderer = render_thumbnails(
+        path,
+        max_edge=settings.worker_thumbnail_max_edge,
+        pages=sorted(by_page),
+    )
+    group_size = max(settings.worker_parse_threads, 1)
 
     while True:
-        batch = await asyncio.to_thread(_take, renderer, batch_size)
-        if not batch:
+        group = await asyncio.to_thread(_take_spilled, renderer, group_size, scratch)
+        if not group:
             return
-        for page_no, image in batch:
+        for page_no, image, spilled in group:
             key = thumbnail_key(org_id, document_id, page_no)
-            await store.put_bytes(key, image, content_type=THUMBNAIL_CONTENT_TYPE)
+            try:
+                payload = spilled.read_bytes() if spilled is not None else image
+                await store.put_bytes(key, payload, content_type=THUMBNAIL_CONTENT_TYPE)
+            finally:
+                if spilled is not None and scratch is not None:
+                    scratch.release(spilled)
             page = by_page.get(page_no)
             if page is not None:
                 page.thumbnail_key = key
@@ -531,6 +703,33 @@ def _take(iterator: Iterator[tuple[int, bytes]], count: int) -> list[tuple[int, 
             items.append(next(iterator))
         except StopIteration:
             break
+    return items
+
+
+def _take_spilled(
+    iterator: Iterator[tuple[int, bytes]],
+    count: int,
+    scratch: ScratchSpace | None,
+) -> list[tuple[int, bytes, Path | None]]:
+    """`_take`, but writing each rendered page to disk when there is a scratch space.
+
+    The returned `bytes` is empty whenever the third element is a path: the
+    whole point is that the encoded page is *not* in memory, and returning both
+    would defeat it. A caller with no scratch space gets the bytes and a `None`,
+    which is the shape the tests and any small document use.
+    """
+    items: list[tuple[int, bytes, Path | None]] = []
+    for _ in range(count):
+        try:
+            page_no, image = next(iterator)
+        except StopIteration:
+            break
+        if scratch is None:
+            items.append((page_no, image, None))
+            continue
+        spilled = scratch.page_path(page_no)
+        spilled.write_bytes(image)
+        items.append((page_no, b"", spilled))
     return items
 
 

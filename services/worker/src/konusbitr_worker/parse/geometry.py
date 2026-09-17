@@ -40,6 +40,25 @@ class BBox:
         """The wire form — four rounded floats, in the order the artifact stores."""
         return [round(value, 2) for value in (self.x0, self.y0, self.x1, self.y1)]
 
+    @classmethod
+    def from_list(cls, raw: object) -> BBox | None:
+        """A box read back out of a stored artifact, or `None` for anything else.
+
+        The inverse of :meth:`as_list`, and the only place in the codebase that
+        reads a box rather than writing one: a job resuming a long parse
+        reconstructs the pages it already committed from the incomplete
+        `parse_results` row. Returns `None` rather than raising, because the
+        caller's choice on a malformed element is to drop that element — a
+        resume that fails on one bad row is a resume that re-reads 850 pages.
+        """
+        if not isinstance(raw, list | tuple) or len(raw) != 4:
+            return None
+        try:
+            x0, y0, x1, y1 = (float(value) for value in raw)
+        except (TypeError, ValueError):
+            return None
+        return cls(x0=x0, y0=y0, x1=x1, y1=y1)
+
     @property
     def width(self) -> float:
         return self.x1 - self.x0

@@ -148,6 +148,7 @@ def chunk_elements(
     tokenizer: Tokenizer,
     options: ChunkingOptions,
     figures: Sequence[SourceElement] = (),
+    first_ordinal: int = 0,
 ) -> list[Chunk]:
     """Turn a parse artifact's elements into chunks, in reading order.
 
@@ -159,6 +160,13 @@ def chunk_elements(
     passage in its own right. Two different things that happen to share a word,
     kept apart by the caller that knows which is which rather than by a rule
     inside here that would have to guess.
+
+    `first_ordinal` is where this call's numbering starts, and is non-zero only
+    for the batched parse: a 900-page document is chunked sixteen pages at a
+    time, and ordinals have to stay dense and contiguous across the whole of it
+    because they are the upsert key and because the final prune deletes
+    everything past the count. A batch that restarted at zero would overwrite
+    its predecessor's rows and then delete the document's tail.
     """
     usable = [element for element in elements if element.text.strip() or element.is_table]
     captioned = [figure for figure in figures if figure.text.strip()]
@@ -177,8 +185,8 @@ def chunk_elements(
     # upsert key, so they must be dense and stable for a given input, and a
     # per-stream counter would collide.
     chunks.sort(key=lambda chunk: chunk.start)
-    for ordinal, chunk in enumerate(chunks):
-        chunk.ordinal = ordinal
+    for offset, chunk in enumerate(chunks):
+        chunk.ordinal = first_ordinal + offset
     return chunks
 
 

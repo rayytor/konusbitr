@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from konusbitr_worker.contracts import JobStage
+from konusbitr_worker.parse import BatchOutcome
 from konusbitr_worker.parse.artifact import (
     ElementType,
     ParseArtifact,
@@ -95,7 +96,16 @@ def artifact() -> ParseArtifact:
 
 @pytest.fixture
 def stub_parse(monkeypatch: pytest.MonkeyPatch, artifact: ParseArtifact) -> list[dict[str, Any]]:
-    """Replace the parse with a recorder, leaving the orchestration real."""
+    """Replace the parse with a recorder, leaving the orchestration real.
+
+    The double reports **one batch covering the whole document**, which is
+    exactly what the real parse does for anything shorter than
+    `WORKER_PAGE_BATCH_SIZE` — the shape almost every upload has. That matters
+    more than it looks: the commit callback is where the pipeline persists the
+    artifact, writes the page rows, indexes the chunks and clears the
+    checkpoint, so a double that skipped it would leave every orchestration
+    test asserting against a database nothing had written to.
+    """
     calls: list[dict[str, Any]] = []
 
     async def fake_parse(**kwargs: Any) -> ParseArtifact:
@@ -104,6 +114,20 @@ def stub_parse(monkeypatch: pytest.MonkeyPatch, artifact: ParseArtifact) -> list
         if on_stage is not None:
             for stage in (JobStage.fetching, JobStage.validating, JobStage.parsing):
                 await on_stage(stage)
+
+        on_batch = kwargs.get("on_batch")
+        if on_batch is not None:
+            await on_batch(
+                BatchOutcome(
+                    first_page=1,
+                    last_page=artifact.page_count,
+                    elements=list(artifact.contents),
+                    artifact=artifact,
+                    pages_done=artifact.page_count,
+                    page_count=artifact.page_count,
+                    chunks_written=0,
+                )
+            )
         return artifact
 
     monkeypatch.setattr("konusbitr_worker.pipeline.parse_document", fake_parse)

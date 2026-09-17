@@ -18,22 +18,31 @@ can mean on a transport that only promises "at least once".
 **A terminal failure never burns a retry.** The classification, not the number
 of attempts, decides: a corrupt PDF is dead-lettered on attempt one, while a
 Redis blip gets the full budget with exponential backoff in between.
+
+Phase 12.4 adds a fourth, which is a conclusion rather than an invariant: **a
+cancellation is not a failure.** It spends no retry, writes no dead letter, and
+leaves nothing in the operator's failed-jobs view — a person stopping their own
+upload is not an incident. What it does leave is everything the job had already
+committed, because a batched parse commits as it goes: a cancelled document is
+a short document rather than a broken one.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from typing import Any
 
 from konusbitr_worker.contracts import JobErrorCode, JobPayload, JobStage, JobType
 from konusbitr_worker.db import Database
-from konusbitr_worker.errors import JobFailure, classify_exception
+from konusbitr_worker.errors import JobCancelled, JobFailure, classify_exception
 from konusbitr_worker.log import get_logger, job_context
 from konusbitr_worker.parse.storage import ObjectStore
 from konusbitr_worker.pipeline import JobOutcome, run_job
 from konusbitr_worker.progress import ProgressReporter
 from konusbitr_worker.queue import Delivery, JobQueue, UndecodableEntry
+from konusbitr_worker.scratch import sweep_orphans
 from konusbitr_worker.settings import Settings
 
 __all__ = ["WorkerRuntime"]
@@ -45,6 +54,15 @@ READ_BLOCK_MS = 2_000
 
 #: How often the janitor promotes due retries and reclaims abandoned entries.
 JANITOR_INTERVAL_SECONDS = 1.0
+
+#: How often a running job re-reads its cancellation flag.
+#:
+#: The phase asks for a cancellation to take effect within two seconds, and the
+#: budget is spent in two places: this poll, and the page the job is in the
+#: middle of when it notices. Half a second leaves the rest of the budget for
+#: the page, and costs one `EXISTS` per running job per half second — which on
+#: a worker with `WORKER_CONCURRENCY=2` is four Redis round trips a second.
+CANCEL_POLL_SECONDS = 0.5
 
 
 class WorkerRuntime:
@@ -84,6 +102,10 @@ class WorkerRuntime:
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
+        # Before anything is read. A worker that was killed mid-parse left its
+        # spilled page bitmaps behind, and at startup — and only at startup —
+        # every directory under the scratch root belongs to a run that is over.
+        sweep_orphans()
         await self._queue.ensure_group()
         await self._recover_own_pending()
         self._tasks = [
@@ -241,12 +263,19 @@ class WorkerRuntime:
 
         logger.info("job started", extra={"type": payload.type.value, "attempt": payload.attempt})
 
+        watcher = _CancelWatcher(queue=self._queue, job_id=payload.jobId)
         try:
-            await self._database.start_job(payload.jobId, payload.attempt)
-            outcome = await asyncio.wait_for(
-                self._handle(payload, progress),
-                timeout=self._settings.worker_job_timeout_seconds,
+            await self._database.start_job(
+                payload.jobId, payload.attempt, document_id=payload.documentId
             )
+            async with watcher:
+                outcome = await asyncio.wait_for(
+                    self._handle(payload, progress, watcher.requested),
+                    timeout=self._settings.worker_job_timeout_seconds,
+                )
+        except JobCancelled as stopped:
+            await self._conclude_cancellation(delivery, stopped, progress)
+            return
         except Exception as error:
             await self._conclude_failure(delivery, classify_exception(error))
             return
@@ -275,7 +304,12 @@ class WorkerRuntime:
     #: dead-letter list.
     _HANDLED = frozenset({JobType.parse, JobType.chunk_embed, JobType.reindex})
 
-    async def _handle(self, payload: JobPayload, progress: ProgressReporter) -> JobOutcome:
+    async def _handle(
+        self,
+        payload: JobPayload,
+        progress: ProgressReporter,
+        cancelled: Callable[[], bool],
+    ) -> JobOutcome:
         if payload.type in self._HANDLED:
             return await run_job(
                 payload,
@@ -283,12 +317,47 @@ class WorkerRuntime:
                 progress=progress,
                 settings=self._settings,
                 store=self._store,
+                cancelled=cancelled,
             )
 
         raise JobFailure(
             JobErrorCode.unknown_job_type,
             f"This worker has no handler for {payload.type.value!r} jobs.",
         )
+
+    async def _conclude_cancellation(
+        self,
+        delivery: Delivery,
+        stopped: JobCancelled,
+        progress: ProgressReporter,
+    ) -> None:
+        """Conclude a job that was stopped on purpose.
+
+        Every line here is deliberately *not* what `_conclude_failure` does. No
+        retry is scheduled, because the job did not fail and re-running it
+        would undo the stop. No dead letter is written, because a dead letter
+        is a thing an operator is asked to look at. And the document is marked
+        `cancelled` rather than `failed`, because a library that badges a
+        deliberate stop in red is telling its reader something untrue.
+
+        The flag is cleared last. Left behind it would cancel the *next* job
+        for this document — including the retry a reader might start a second
+        later, which would look exactly like the product ignoring them.
+        """
+        payload = delivery.payload
+        logger.info(
+            "job cancelled",
+            extra={"pages_done": stopped.pages_done, "pages_total": stopped.pages_total},
+        )
+
+        await self._database.cancel_job(
+            job_id=payload.jobId,
+            document_id=payload.documentId,
+            message=stopped.message,
+        )
+        await progress.cancelled(message=stopped.message)
+        await self._queue.ack(delivery.entry_id)
+        await self._queue.clear_cancel(payload.jobId)
 
     async def _conclude_failure(self, delivery: Delivery, failure: JobFailure) -> None:
         payload = delivery.payload
@@ -346,3 +415,53 @@ class WorkerRuntime:
             "processed": self._processed,
             "queue": await self._queue.depth(),
         }
+
+
+class _CancelWatcher:
+    """Polls one job's cancellation flag while it runs.
+
+    A background poll rather than a check at each decision point, for one
+    reason: the predicate has to be answerable **synchronously**, from inside
+    the worker threads where recognition happens. There is no event loop on
+    those threads to await a Redis round trip on, so the loop caches the answer
+    and the threads read the cached boolean.
+
+    The cache is why the phase's two-second budget is reachable at all. A
+    cancellation is noticed within one poll interval plus one page, rather than
+    within one sixteen-page batch.
+
+    Failing to reach Redis is *not* a cancellation. Guessing wrong in that
+    direction stops a document halfway for no reason the reader can see, so an
+    unreachable Redis leaves the flag as it was and the job carries on.
+    """
+
+    __slots__ = ("_flag", "_job_id", "_queue", "_task")
+
+    def __init__(self, *, queue: JobQueue, job_id: str) -> None:
+        self._queue = queue
+        self._job_id = job_id
+        self._flag = False
+        self._task: asyncio.Task[None] | None = None
+
+    def requested(self) -> bool:
+        """Whether a stop has been asked for. Safe to call from any thread."""
+        return self._flag
+
+    async def __aenter__(self) -> _CancelWatcher:
+        # Asked once before the job starts, so a cancellation made while the
+        # job was queued is honoured immediately rather than a page in.
+        self._flag = await self._queue.is_cancelled(self._job_id)
+        self._task = asyncio.create_task(self._poll(), name=f"konusbitr-cancel-{self._job_id}")
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _poll(self) -> None:
+        while not self._flag:
+            await asyncio.sleep(CANCEL_POLL_SECONDS)
+            self._flag = await self._queue.is_cancelled(self._job_id)

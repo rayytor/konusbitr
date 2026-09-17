@@ -119,6 +119,21 @@ class TableCellData:
             payload["header"] = True
         return payload
 
+    @classmethod
+    def from_json(cls, raw: Any) -> TableCellData | None:
+        """Rebuild a cell from a stored artifact. See `ParsedElement.from_json`."""
+        if not isinstance(raw, dict):
+            return None
+        return cls(
+            row_index=int(raw.get("rowIndex") or 0),
+            col_index=int(raw.get("colIndex") or 0),
+            text=str(raw.get("text") or ""),
+            bbox=BBox.from_list(raw.get("bbox")),
+            row_span=int(raw.get("rowSpan") or 1),
+            col_span=int(raw.get("colSpan") or 1),
+            header=bool(raw.get("header")),
+        )
+
 
 @dataclass(slots=True)
 class TableData:
@@ -158,6 +173,19 @@ class TableData:
             "cells": [cell.to_json() for cell in self.cells],
         }
 
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> TableData:
+        """Rebuild a table from a stored artifact. See `ParsedElement.from_json`."""
+        return cls(
+            headers=[str(header) for header in raw.get("headers") or []],
+            rows=[[str(cell) for cell in row] for row in raw.get("rows") or []],
+            cells=[
+                cell
+                for cell in (TableCellData.from_json(entry) for entry in raw.get("cells") or [])
+                if cell is not None
+            ],
+        )
+
 
 @dataclass(slots=True)
 class ParsedElement:
@@ -192,6 +220,43 @@ class ParsedElement:
         if self.table is not None:
             payload["tableJson"] = self.table.to_json()
         return payload
+
+    @classmethod
+    def from_json(cls, raw: Any) -> ParsedElement | None:
+        """Rebuild an element from a stored artifact, or `None` if it cannot be.
+
+        The inverse of :meth:`to_json`, and it exists for exactly one caller:
+        a job resuming a long parse reads the pages it already committed back
+        out of the incomplete `parse_results` row. Everything else in the
+        codebase consumes the JSON directly.
+
+        Lenient by design, and returning `None` rather than raising. A stored
+        element that cannot be read is one element of a resumed document — the
+        alternative to dropping it is failing a 900-page job over a row written
+        by an older build, and a resume that has to be perfect is a resume
+        nobody will trust to run.
+        """
+        if not isinstance(raw, dict):
+            return None
+        bbox = BBox.from_list(raw.get("bbox"))
+        if bbox is None:
+            return None
+        try:
+            element_type = ElementType(raw.get("type", ElementType.paragraph.value))
+        except ValueError:
+            element_type = ElementType.paragraph
+        table_json = raw.get("tableJson")
+        return cls(
+            id=str(raw.get("id") or ""),
+            type=element_type,
+            text=str(raw.get("text") or ""),
+            markdown=str(raw.get("markdown") or ""),
+            page=int(raw.get("page") or 0),
+            bbox=bbox,
+            section_path=[str(entry) for entry in raw.get("sectionPath") or []],
+            level=raw.get("level"),
+            table=TableData.from_json(table_json) if isinstance(table_json, dict) else None,
+        )
 
 
 @dataclass(slots=True)
@@ -230,6 +295,27 @@ class ParsedPage:
             ),
             "ocrEngine": self.ocr_engine,
         }
+
+    @classmethod
+    def from_json(cls, raw: Any) -> ParsedPage | None:
+        """Rebuild a page row from a stored artifact. See `ParsedElement.from_json`."""
+        if not isinstance(raw, dict) or "pageNo" not in raw:
+            return None
+        try:
+            tier = PageTier(raw.get("tier") or PageTier.native.value)
+        except ValueError:
+            tier = PageTier.native
+        confidence = raw.get("ocrConfidence")
+        return cls(
+            page_no=int(raw["pageNo"]),
+            width=float(raw.get("width") or 0.0),
+            height=float(raw.get("height") or 0.0),
+            rotation=int(raw.get("rotation") or 0),
+            thumbnail_key=raw.get("thumbnailKey"),
+            tier=tier,
+            ocr_confidence=None if confidence is None else float(confidence),
+            ocr_engine=raw.get("ocrEngine"),
+        )
 
 
 @dataclass(slots=True)

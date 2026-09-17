@@ -148,7 +148,7 @@ def test_the_transport_key_names_are_the_generated_ones() -> None:
 
 
 def test_terminal_stages_and_codes_agree_with_is_retryable() -> None:
-    assert frozenset({JobStage.ready, JobStage.failed}) == TERMINAL_JOB_STAGES
+    assert frozenset({JobStage.ready, JobStage.failed, JobStage.cancelled}) == TERMINAL_JOB_STAGES
 
     for code in JobErrorCode:
         assert is_retryable(code) is (code not in TERMINAL_JOB_ERROR_CODES)

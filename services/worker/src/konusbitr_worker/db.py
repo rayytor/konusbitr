@@ -23,7 +23,7 @@ from typing import Any, Self
 
 import asyncpg
 
-from konusbitr_worker.contracts import DocumentStatus, JobStage
+from konusbitr_worker.contracts import DocumentStatus, JobErrorCode, JobStage
 
 __all__ = [
     "STAGE_TO_STATUS",
@@ -33,6 +33,15 @@ __all__ = [
     "PageRow",
     "ParseArtifactRow",
 ]
+
+#: Stages after which nothing more is published for a job.
+#:
+#: Mirrors `TERMINAL_JOB_STAGES` in the generated contract, and is spelled out
+#: here as a set of the values this module compares against rather than
+#: imported, because the comparison is in SQL and wants plain data.
+TERMINAL_STAGES: frozenset[JobStage] = frozenset(
+    (JobStage.ready, JobStage.failed, JobStage.cancelled)
+)
 
 #: How a pipeline stage is reported as a document status.
 #:
@@ -51,6 +60,7 @@ STAGE_TO_STATUS: dict[JobStage, DocumentStatus] = {
     JobStage.persisting: DocumentStatus.embedding,
     JobStage.ready: DocumentStatus.ready,
     JobStage.failed: DocumentStatus.failed,
+    JobStage.cancelled: DocumentStatus.cancelled,
 }
 
 
@@ -210,21 +220,63 @@ class Database:
             """
             SELECT markdown, contents, page_count
               FROM parse_results
-             WHERE content_hash = $1 AND settings_hash = $2
+             WHERE content_hash = $1
+               AND settings_hash = $2
+               AND checkpoint IS NULL
             """,
             content_hash,
             settings_hash,
         )
         if row is None:
             return None
-        contents = row["contents"]
         return ParseArtifactRow(
             markdown=row["markdown"],
             # asyncpg hands back `jsonb` as text unless a codec is registered,
             # and registering one globally would change every other query's
             # shape. Decoding here keeps the surprise local.
-            contents=json.loads(contents) if isinstance(contents, str) else contents,
+            contents=_decode_json(row["contents"]),
             page_count=row["page_count"],
+        )
+
+    async def resume_point(
+        self, content_hash: str, settings_hash: str
+    ) -> tuple[ParseArtifactRow, dict[str, Any]] | None:
+        """The half-finished parse for these bytes, and how far it got.
+
+        The mirror image of :meth:`parse_artifact`: that method returns only
+        rows *without* a checkpoint, this one only rows *with* one. Between
+        them they partition the table, which is the property the whole scheme
+        rests on — a row is either a finished cache entry or an ingest in
+        progress, and nothing has to decide which by inspecting its contents.
+
+        Returning it does not by itself mean the job may resume: the caller
+        still has to agree with the checkpoint's version and its batch size.
+        A checkpoint this build cannot read is a reason to start the document
+        again, not a reason to fail it.
+        """
+        row = await self._pool.fetchrow(
+            """
+            SELECT markdown, contents, page_count, checkpoint
+              FROM parse_results
+             WHERE content_hash = $1
+               AND settings_hash = $2
+               AND checkpoint IS NOT NULL
+            """,
+            content_hash,
+            settings_hash,
+        )
+        if row is None:
+            return None
+        checkpoint = _decode_json(row["checkpoint"])
+        if not isinstance(checkpoint, dict):  # pragma: no cover - hand-edited row
+            return None
+        return (
+            ParseArtifactRow(
+                markdown=row["markdown"],
+                contents=_decode_json(row["contents"]),
+                page_count=row["page_count"],
+            ),
+            checkpoint,
         )
 
     async def chunk_count(self, document_id: str) -> int:
@@ -268,22 +320,45 @@ class Database:
 
     # ── Job lifecycle ────────────────────────────────────────────────────────
 
-    async def start_job(self, job_id: str, attempt: int) -> None:
-        await self._pool.execute(
-            """
-            UPDATE jobs
-               SET status = 'running',
-                   stage = $2,
-                   attempts = GREATEST(attempts, $3),
-                   error = NULL,
-                   error_code = NULL,
-                   updated_at = now()
-             WHERE id = $1
-            """,
-            job_id,
-            JobStage.fetching.value,
-            attempt,
-        )
+    async def start_job(self, job_id: str, attempt: int, *, document_id: str | None = None) -> None:
+        """Mark a job running, and lift a terminal state off its document.
+
+        The second half is what makes "retry with different settings" work.
+        `record_stage` deliberately refuses to walk a `partially_ready` or
+        `cancelled` document backwards — a batch committing a moment late must
+        not reopen a document the reader has been told is finished — so a *new*
+        job over a document in one of those states would otherwise never be
+        able to report any progress at all. Starting a job is the one moment
+        that reset is unambiguous: somebody asked for this document to be
+        worked on again.
+        """
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """
+                UPDATE jobs
+                   SET status = 'running',
+                       stage = $2,
+                       attempts = GREATEST(attempts, $3),
+                       error = NULL,
+                       error_code = NULL,
+                       updated_at = now()
+                 WHERE id = $1
+                """,
+                job_id,
+                JobStage.fetching.value,
+                attempt,
+            )
+            if document_id is not None:
+                await connection.execute(
+                    """
+                    UPDATE documents
+                       SET status = $2, error = NULL, error_code = NULL, updated_at = now()
+                     WHERE id = $1
+                       AND status IN ('failed', 'cancelled')
+                    """,
+                    document_id,
+                    DocumentStatus.queued.value,
+                )
 
     async def record_stage(
         self,
@@ -312,13 +387,27 @@ class Database:
                 percent,
             )
             await connection.execute(
+                # A document that has reached `partially_ready` must not be
+                # walked back to `parsing` by the second batch's stages. The
+                # status is an assertion a reader is acting on — the viewer is
+                # open, chat is answering — and taking it away every twenty
+                # pages would close the document under them sixty times during
+                # a long ingest. Terminal stages still win, because those are
+                # the ones that end the assertion.
                 """
                 UPDATE documents
                    SET status = $2, updated_at = now()
                  WHERE id = $1
+                   AND (documents.status <> ALL($3::text[]) OR $4)
                 """,
                 document_id,
                 STAGE_TO_STATUS[stage].value,
+                # `cancelled` for the same reason as `partially_ready`, from
+                # the other direction: a cancellation is acted on between
+                # pages, and the batch that was in flight when it landed must
+                # not report its stage afterwards and un-cancel the document.
+                [DocumentStatus.partially_ready.value, DocumentStatus.cancelled.value],
+                stage in TERMINAL_STAGES,
             )
 
     async def complete_job(
@@ -435,25 +524,43 @@ class Database:
         markdown: str | None,
         contents: dict[str, Any] | None,
         page_count: int | None,
+        checkpoint: dict[str, Any] | None = None,
     ) -> None:
-        """Write the parse into the docId cache.
+        """Write the parse into the docId cache, complete or still being built.
 
-        `ON CONFLICT DO NOTHING` rather than an update, for two reasons. A
-        re-delivered job must be a no-op, which is the point of this phase. And
-        the unique key is `(content_hash, settings_hash)` with no organization
-        in it — so the row that is already there may belong to a *different*
-        tenant's document, and overwriting its `document_id` would mutate
-        provenance. `document_id` records initial provenance with ON DELETE
-        SET NULL, decoupling cache longevity from the document that produced it.
+        `checkpoint` is what separates the two. `None` means this is the whole
+        document and the row is now a cache entry; a dict means the row holds
+        the pages read so far and **is not** one — every reader of the cache,
+        in both runtimes, filters on `checkpoint IS NULL`.
+
+        The conflict clause is where the idempotency lives, and it is narrower
+        than it looks. A finished row is never touched: the unique key is
+        `(content_hash, settings_hash)` with no organization in it, so the row
+        already there may belong to a *different* tenant's document, and
+        overwriting it would both mutate provenance and let a re-delivered job
+        rewrite a parse other documents are already citing. A row that still
+        carries a checkpoint has no such readers by construction, so it is the
+        one case where an update is safe — and it is exactly the case a long
+        parse needs, because every batch has to extend what the last one wrote.
+
+        `document_id` records initial provenance with ON DELETE SET NULL,
+        decoupling cache longevity from the document that produced it, and is
+        deliberately not among the updated columns.
         """
         await self._pool.execute(
             """
             INSERT INTO parse_results (
                 id, document_id, content_hash, settings_hash,
-                quality, lang_list, llm_enabled, markdown, contents, page_count
+                quality, lang_list, llm_enabled, markdown, contents,
+                page_count, checkpoint
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
-            ON CONFLICT (content_hash, settings_hash) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
+            ON CONFLICT (content_hash, settings_hash) DO UPDATE
+               SET markdown = EXCLUDED.markdown,
+                   contents = EXCLUDED.contents,
+                   page_count = EXCLUDED.page_count,
+                   checkpoint = EXCLUDED.checkpoint
+             WHERE parse_results.checkpoint IS NOT NULL
             """,
             parse_result_id,
             document_id,
@@ -465,6 +572,7 @@ class Database:
             markdown,
             json.dumps(contents) if contents is not None else None,
             page_count,
+            json.dumps(checkpoint) if checkpoint is not None else None,
         )
 
     async def upsert_chunks(self, rows: list[ChunkRow]) -> None:
@@ -555,6 +663,91 @@ class Database:
             ready,
             total,
         )
+
+    async def set_page_counts(self, *, document_id: str, ready: int, total: int | None) -> None:
+        """Partial readiness in pages, written as each batch commits.
+
+        `total` is coalesced rather than assigned so that a `reindex` — which
+        never opens the PDF and so has no page count to offer — cannot blank
+        out a number the parse established. `ready` is assigned, because it is
+        the parse's own claim and a resume legitimately restates it.
+        """
+        await self._pool.execute(
+            """
+            UPDATE documents
+               SET pages_ready = $2,
+                   pages_total = COALESCE($3, pages_total),
+                   updated_at = now()
+             WHERE id = $1
+            """,
+            document_id,
+            ready,
+            total,
+        )
+
+    async def mark_partially_ready(self, *, document_id: str) -> None:
+        """Say that the first batch has landed and the document is answerable.
+
+        Guarded on the statuses it is allowed to leave, which matters because
+        progress is not the only thing writing this column. A batch committing
+        a moment after the job finished — or after it was cancelled — must not
+        walk a `ready` document back to `partially_ready`, and a reader who has
+        just been told a document is finished must not watch it un-finish.
+        """
+        await self._pool.execute(
+            """
+            UPDATE documents
+               SET status = $2, updated_at = now()
+             WHERE id = $1
+               AND status IN ('queued', 'parsing', 'ocr', 'embedding')
+            """,
+            document_id,
+            DocumentStatus.partially_ready.value,
+        )
+
+    async def cancel_job(self, *, job_id: str, document_id: str, message: str) -> None:
+        """Record that a job was stopped on purpose.
+
+        Deliberately not `fail_job` with a `cancelled` code. A cancellation is
+        not a failure: it does not belong in the operator's failed-jobs view,
+        it does not count against the rejection metrics, and a library that
+        badges it in red tells its reader something untrue about a thing they
+        did themselves.
+
+        Whatever the job managed to index stays indexed. The pages that were
+        committed were committed properly — chunks, vectors, page rows — so a
+        cancelled document is a short document rather than a broken one, and
+        `pages_ready` says exactly how short.
+        """
+        async with self._pool.acquire() as connection, connection.transaction():
+            await connection.execute(
+                """
+                UPDATE jobs
+                   SET status = 'cancelled',
+                       stage = $2,
+                       error = $3,
+                       error_code = $4,
+                       updated_at = now()
+                 WHERE id = $1
+                """,
+                job_id,
+                JobStage.cancelled.value,
+                message,
+                JobErrorCode.cancelled.value,
+            )
+            await connection.execute(
+                """
+                UPDATE documents
+                   SET status = $2, error = $3, error_code = $4, updated_at = now()
+                 WHERE id = $1
+                   AND status <> $5
+                """,
+                document_id,
+                DocumentStatus.cancelled.value,
+                message,
+                JobErrorCode.cancelled.value,
+                DocumentStatus.ready.value,
+            )
 
     async def set_document_embedding(
         self, *, document_id: str, model: str | None, dims: int | None
@@ -678,3 +871,14 @@ def _vector_literal(embedding: list[float] | None) -> str | None:
     if embedding is None:
         return None
     return f"[{','.join(repr(float(value)) for value in embedding)}]"
+
+
+def _decode_json(value: Any) -> Any:
+    """Whatever asyncpg handed back for a `jsonb` column, as Python.
+
+    asyncpg returns `jsonb` as text unless a codec is registered, and
+    registering one globally would change the shape of every other query in
+    this module. Decoding at the two call sites that need it keeps the surprise
+    local and the rest of the file literal.
+    """
+    return json.loads(value) if isinstance(value, str) else value

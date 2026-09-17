@@ -31,6 +31,8 @@ from urllib.parse import urlparse
 from pydantic import ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from konusbitr_worker.contracts import DEFAULT_PAGE_BATCH_SIZE
+
 __all__ = [
     "CLOUD_PROVIDERS",
     "DEFAULT_CHAT_MODELS",
@@ -422,6 +424,21 @@ class Settings(BaseSettings):
     #: Longest edge of a generated page thumbnail, in pixels.
     worker_thumbnail_max_edge: int = 1600
 
+    #: Pages read, chunked and committed per batch.
+    #:
+    #: The unit of both checkpointing and partial readiness, so it trades two
+    #: costs against each other: small batches mean more checkpoint commits and
+    #: more chunk boundaries landing on a batch edge, large ones mean more
+    #: pages re-read after a crash and a longer wait before the first of them
+    #: is answerable. The default comes from `DEFAULT_PAGE_BATCH_SIZE` in the
+    #: generated contract, so the two runtimes agree on it without either
+    #: having to be told.
+    #:
+    #: Changing it invalidates in-flight checkpoints — a resume must land on
+    #: the boundaries the run that was interrupted used — and the worker says
+    #: so in the log rather than resuming onto the wrong page.
+    worker_page_batch_size: int = DEFAULT_PAGE_BATCH_SIZE
+
     #: Identity in the Redis consumer group.
     #:
     #: It must be stable across restarts of *this* process and distinct from
@@ -437,6 +454,7 @@ class Settings(BaseSettings):
         "worker_max_attempts",
         "worker_parse_threads",
         "worker_thumbnail_max_edge",
+        "worker_page_batch_size",
         "embedding_dimensions",
         "embedding_batch_size",
         "model_max_retries",

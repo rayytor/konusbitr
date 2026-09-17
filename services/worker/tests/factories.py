@@ -97,6 +97,9 @@ class FakeDatabase:
         #: untyped column, which the schema forbids but a hand-altered database
         #: could still present.
         self.declared_dimensions: int | None = 1024
+        self.page_counts: list[tuple[int, int | None]] = []
+        self.partially_ready: list[str] = []
+        self.cancellations: list[dict[str, Any]] = []
 
     async def document(self, document_id: str, org_id: str) -> DocumentRecord | None:
         if self._document is None:
@@ -114,13 +117,38 @@ class FakeDatabase:
     async def parse_artifact(
         self, content_hash: str, settings_hash: str
     ) -> ParseArtifactRow | None:
+        row = self._row_for(content_hash, settings_hash)
+        # The real query filters on `checkpoint IS NULL`, because a row with a
+        # checkpoint is an ingest in progress rather than a cache entry. The
+        # double has to do the same, or a resume test would pass by being
+        # handed a half-finished parse as though it were finished.
+        if row is None or row.get("checkpoint") is not None:
+            return None
+        return ParseArtifactRow(
+            markdown=row["markdown"],
+            contents=row["contents"],
+            page_count=row["page_count"],
+        )
+
+    async def resume_point(
+        self, content_hash: str, settings_hash: str
+    ) -> tuple[ParseArtifactRow, dict[str, Any]] | None:
+        row = self._row_for(content_hash, settings_hash)
+        if row is None or row.get("checkpoint") is None:
+            return None
+        return (
+            ParseArtifactRow(
+                markdown=row["markdown"],
+                contents=row["contents"],
+                page_count=row["page_count"],
+            ),
+            row["checkpoint"],
+        )
+
+    def _row_for(self, content_hash: str, settings_hash: str) -> dict[str, Any] | None:
         for row in self.parse_results:
             if row["content_hash"] == content_hash and row["settings_hash"] == settings_hash:
-                return ParseArtifactRow(
-                    markdown=row["markdown"],
-                    contents=row["contents"],
-                    page_count=row["page_count"],
-                )
+                return row
         return None
 
     async def chunk_count(self, document_id: str) -> int:
@@ -129,7 +157,9 @@ class FakeDatabase:
     async def embedding_dimensions(self) -> int | None:
         return self.declared_dimensions
 
-    async def start_job(self, job_id: str, attempt: int) -> None:
+    async def start_job(
+        self, job_id: str, attempt: int, *, document_id: str | None = None
+    ) -> None:
         self.started.append((job_id, attempt))
 
     async def record_stage(
@@ -144,12 +174,18 @@ class FakeDatabase:
         self.failures.append(kwargs)
 
     async def upsert_parse_result(self, **kwargs: Any) -> None:
-        # The real statement is ON CONFLICT DO NOTHING on
-        # (content_hash, settings_hash); the double has to behave the same way
-        # or an idempotency test would pass for the wrong reason.
-        if await self.parse_result_exists(kwargs["content_hash"], kwargs["settings_hash"]):
+        # The real statement updates on conflict *only while the existing row
+        # still carries a checkpoint*, and does nothing otherwise. Both halves
+        # matter here: without the update a batched parse could never extend
+        # what the previous batch wrote, and without the guard a re-delivered
+        # job would rewrite a finished parse other documents may be citing.
+        existing = self._row_for(kwargs["content_hash"], kwargs["settings_hash"])
+        if existing is None:
+            self.parse_results.append(kwargs)
             return
-        self.parse_results.append(kwargs)
+        if existing.get("checkpoint") is None:
+            return
+        existing.update(kwargs)
 
     async def upsert_chunks(self, rows: list[ChunkRow]) -> None:
         # The real statement upserts on (document_id, ordinal); the double has
@@ -166,6 +202,17 @@ class FakeDatabase:
 
     async def set_chunk_counts(self, *, document_id: str, ready: int, total: int) -> None:
         self.chunk_counts.append((ready, total))
+
+    async def set_page_counts(self, *, document_id: str, ready: int, total: int | None) -> None:
+        self.page_counts.append((ready, total))
+
+    async def mark_partially_ready(self, *, document_id: str) -> None:
+        self.partially_ready.append(document_id)
+
+    async def cancel_job(self, *, job_id: str, document_id: str, message: str) -> None:
+        self.cancellations.append(
+            {"job_id": job_id, "document_id": document_id, "message": message}
+        )
 
     async def set_document_embedding(
         self, *, document_id: str, model: str | None, dims: int | None
@@ -239,6 +286,9 @@ class FakeQueue:
         self.dead: list[dict[str, Any]] = []
         self.published: list[JobProgress] = []
         self.enqueued: list[JobPayload] = []
+        #: Job ids somebody has asked to stop, and the ones that were cleared.
+        self.cancelled: set[str] = set()
+        self.cleared: list[str] = []
 
     async def ensure_group(self) -> None:
         return None
@@ -262,6 +312,16 @@ class FakeQueue:
 
     async def publish_progress(self, progress: JobProgress) -> None:
         self.published.append(progress)
+
+    async def is_cancelled(self, job_id: str) -> bool:
+        return job_id in self.cancelled
+
+    async def request_cancel(self, job_id: str) -> None:
+        self.cancelled.add(job_id)
+
+    async def clear_cancel(self, job_id: str) -> None:
+        self.cleared.append(job_id)
+        self.cancelled.discard(job_id)
 
     async def read_own_pending(self, *, count: int) -> list[Any]:
         return []

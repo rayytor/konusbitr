@@ -27,6 +27,7 @@ import redis.asyncio as redis
 from pydantic import ValidationError
 
 from konusbitr_worker.contracts import (
+    CANCEL_TTL_SECONDS,
     DEAD_LETTER_MAX_LENGTH,
     JOB_PAYLOAD_VERSION,
     JOBS_CONSUMER_GROUP,
@@ -38,6 +39,7 @@ from konusbitr_worker.contracts import (
     JobErrorCode,
     JobPayload,
     JobProgress,
+    cancel_key,
     progress_channel,
 )
 from konusbitr_worker.errors import JobFailure
@@ -240,6 +242,51 @@ class JobQueue:
     async def publish_progress(self, progress: JobProgress) -> None:
         """Broadcast on the document's channel. Relayed to the browser over SSE."""
         await self._redis.publish(progress_channel(progress.documentId), progress.model_dump_json())
+
+    # ── Cancellation ─────────────────────────────────────────────────────────
+
+    async def is_cancelled(self, job_id: str) -> bool:
+        """Whether somebody has asked this job to stop.
+
+        A key rather than a message, because the two runtimes share no control
+        channel and a cancellation has to survive the worker not having been
+        listening when it was made. Polled between pages, so the answer is
+        acted on within a page rather than within a batch — which is what makes
+        the phase's two-second budget reachable on a document whose batch takes
+        half a minute.
+
+        A Redis blip here is *not* a cancellation. The failure mode of guessing
+        wrong in that direction is a document that stops halfway for no reason
+        the reader can see, so an unreachable Redis means "carry on".
+        """
+        try:
+            return bool(await self._redis.exists(cancel_key(job_id)))
+        except Exception:
+            logger.warning("could not read the cancellation flag", exc_info=True)
+            return False
+
+    async def request_cancel(self, job_id: str) -> None:
+        """Ask a running job to stop. Used by the tests and by operator tooling.
+
+        The product path sets this key from the web app — see
+        `apps/web/src/app/api/documents/[documentId]/cancel/route.ts` — because
+        that is the side a person is talking to. It is here as well so the
+        worker's own tests can exercise the whole loop without a Next.js
+        process.
+        """
+        await self._redis.set(cancel_key(job_id), "1", ex=CANCEL_TTL_SECONDS)
+
+    async def clear_cancel(self, job_id: str) -> None:
+        """Consume the request, once the job has actually stopped.
+
+        Left behind, it would cancel the *retry* of a job that was cancelled —
+        or, worse, a new job that reused the id. Deleting it is the
+        acknowledgement.
+        """
+        try:
+            await self._redis.delete(cancel_key(job_id))
+        except Exception:  # pragma: no cover - best effort; the key expires anyway
+            logger.warning("could not clear the cancellation flag", exc_info=True)
 
     # ── Introspection ────────────────────────────────────────────────────────
 

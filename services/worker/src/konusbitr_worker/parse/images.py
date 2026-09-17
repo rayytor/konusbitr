@@ -166,6 +166,8 @@ def extract_images(
     *,
     geometries: dict[int, PageGeometry],
     skip_pages: set[int] | None = None,
+    only_pages: set[int] | None = None,
+    seen: set[str] | None = None,
     min_edge: int = MIN_IMAGE_EDGE,
     limit: int = MAX_IMAGES_PER_DOCUMENT,
 ) -> Iterator[ImageCandidate]:
@@ -176,13 +178,20 @@ def extract_images(
     deck before the first is uploaded makes peak memory a function of the
     document rather than of the page.
 
+    `only_pages` narrows the walk to one page batch, and `seen` is the caller's
+    own digest set carried across those batches. Both exist for the same
+    reason: a 900-page document is read a batch at a time, and the
+    deduplication that removes a letterhead repeated on every page has to span
+    the whole document rather than restart every sixteen pages — otherwise the
+    logo is stored fifty-six times, once per batch.
+
     Synchronous and CPU-bound — the caller runs it on a thread.
     """
     import pypdfium2 as pdfium
     import pypdfium2.raw as pdfium_raw
 
     skip = skip_pages or set()
-    seen: set[str] = set()
+    seen = seen if seen is not None else set()
     produced = 0
 
     document = pdfium.PdfDocument(str(path))
@@ -190,6 +199,8 @@ def extract_images(
         for index in range(len(document)):
             page_no = index + 1
             if page_no in skip:
+                continue
+            if only_pages is not None and page_no not in only_pages:
                 continue
             geometry = geometries.get(page_no)
             if geometry is None:  # pragma: no cover - the inspection produced these

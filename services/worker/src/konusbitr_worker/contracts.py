@@ -28,8 +28,10 @@ class DocumentStatus(StrEnum):
     parsing = "parsing"
     ocr = "ocr"
     embedding = "embedding"
+    partially_ready = "partially_ready"
     ready = "ready"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class JobStage(StrEnum):
@@ -47,6 +49,7 @@ class JobStage(StrEnum):
     persisting = "persisting"
     ready = "ready"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class JobType(StrEnum):
@@ -142,7 +145,25 @@ class JobProgress(BaseModel):
     percent: Annotated[float, Field(ge=0.0, le=100.0)]
     message: str | None = None
     errorCode: JobErrorCode | None = None
+    pagesReady: Annotated[int | None, Field(ge=0)] = None
+    pagesTotal: Annotated[int | None, Field(ge=0)] = None
     at: AwareDatetime
+
+
+class JobCheckpoint(BaseModel):
+    """
+    How far a long ingest has got; a parse_results row carrying one is incomplete.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    version: Literal[1]
+    lastProcessedPage: Annotated[int, Field(ge=0)]
+    totalPages: Annotated[int, Field(ge=0)]
+    batchSize: Annotated[int, Field(gt=0)]
+    chunksWritten: Annotated[int, Field(ge=0)]
+    updatedAt: AwareDatetime
 
 
 # ─── Transport constants ─────────────────────────────────────────────────────
@@ -178,10 +199,29 @@ PROGRESS_CHANNEL_PREFIX = "konusbitr:progress:"
 #: Envelope version this build understands. Anything else is dead-lettered.
 JOB_PAYLOAD_VERSION = 1
 
+#: Prefix of the key that asks a running job to stop. Set by the web app,
+#: polled by the worker between pages, deleted by whoever acts on it.
+CANCEL_KEY_PREFIX = "konusbitr:cancel:"
+
+#: How long an unconsumed cancellation request lives, in seconds.
+CANCEL_TTL_SECONDS = 3600
+
+#: Checkpoint envelope version. A worker that meets a different one restarts
+#: the document rather than guessing at a shape it does not know.
+JOB_CHECKPOINT_VERSION = 1
+
+#: Pages per batch, unless a deployment overrides it.
+DEFAULT_PAGE_BATCH_SIZE = 16
+
 
 def progress_channel(document_id: str) -> str:
     """The channel a document's progress is published on."""
     return f"{PROGRESS_CHANNEL_PREFIX}{document_id}"
+
+
+def cancel_key(job_id: str) -> str:
+    """The key whose presence asks a running job to stop."""
+    return f"{CANCEL_KEY_PREFIX}{job_id}"
 
 
 #: The percentage a stage is worth on entry, so a reconnecting browser that
@@ -197,6 +237,7 @@ STAGE_PERCENT: dict[JobStage, int] = {
     JobStage.persisting: 95,
     JobStage.ready: 100,
     JobStage.failed: 100,
+    JobStage.cancelled: 100,
 }
 
 #: Stages after which no further progress events are published.
@@ -204,6 +245,7 @@ TERMINAL_JOB_STAGES: frozenset[JobStage] = frozenset(
     (
         JobStage.ready,
         JobStage.failed,
+        JobStage.cancelled,
     )
 )
 

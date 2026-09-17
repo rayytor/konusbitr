@@ -22,6 +22,7 @@ import pytest
 from konusbitr_worker.ai.resilience import ModelCallError
 from konusbitr_worker.contracts import STAGE_PERCENT, JobErrorCode, JobStage
 from konusbitr_worker.errors import JobFailure
+from konusbitr_worker.parse import BatchOutcome
 from konusbitr_worker.parse.artifact import (
     ElementType,
     PageTier,
@@ -585,9 +586,12 @@ async def test_a_full_ingest_completes_offline_against_only_ollama(
         **BASE_ENV,
     )
 
-    # A document with enough prose to need several batches, so that "progress
-    # increments" is a claim this test can actually check.
-    monkeypatch.setattr("konusbitr_worker.pipeline.parse_document", _stub_returning(_wordy(24)))
+    # Enough prose to need several *embedding* batches inside one page batch,
+    # so that "the bar moves through the embedding band" is a claim this test
+    # can actually check. Kept under `WORKER_PAGE_BATCH_SIZE` on purpose: a
+    # document read in one pass is the case the named stages describe, and a
+    # longer one reports its progress in pages instead.
+    monkeypatch.setattr("konusbitr_worker.pipeline.parse_document", _stub_returning(_wordy(12)))
 
     calls: list[dict[str, Any]] = []
 
@@ -705,13 +709,32 @@ def _wordy(paragraphs: int) -> ParseArtifact:
 
 
 def _stub_returning(artifact: ParseArtifact):
-    """A `parse_document` stand-in that walks the stages and returns `artifact`."""
+    """A `parse_document` stand-in that walks the stages and returns `artifact`.
+
+    Reports one batch covering the whole document, as the real parse does for
+    anything shorter than `WORKER_PAGE_BATCH_SIZE`. The commit callback is
+    where the pipeline persists and indexes, so a stub that skipped it would
+    leave the orchestration tests asserting against an untouched database.
+    """
 
     async def fake_parse(**kwargs: Any) -> ParseArtifact:
         on_stage = kwargs.get("on_stage")
         if on_stage is not None:
             for stage in (JobStage.fetching, JobStage.validating, JobStage.parsing):
                 await on_stage(stage)
+        on_batch = kwargs.get("on_batch")
+        if on_batch is not None:
+            await on_batch(
+                BatchOutcome(
+                    first_page=1,
+                    last_page=artifact.page_count,
+                    elements=list(artifact.contents),
+                    artifact=artifact,
+                    pages_done=artifact.page_count,
+                    page_count=artifact.page_count,
+                    chunks_written=0,
+                )
+            )
         return artifact
 
     return fake_parse

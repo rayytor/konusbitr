@@ -67,6 +67,8 @@ async def embed_and_store(
     document_id: str,
     router: EmbeddingRouter | None,
     on_progress: ProgressCallback | None = None,
+    finalize: bool = True,
+    counts_from: int = 0,
 ) -> EmbedReport:
     """Write a document's chunks, with vectors when a model is configured.
 
@@ -77,16 +79,40 @@ async def embed_and_store(
     being unset — the feature degrades to something coherent and says so — and
     it is what keeps `cp .env.example .env && docker compose up` a working
     stack rather than one that needs an API key before it will finish a job.
+
+    `finalize` is false for one caller — the batched parse — and covers the two
+    statements that are about the *document* rather than about these chunks.
+
+    Pruning is "delete everything past the final count", and there is no final
+    count until the last batch: a prune after batch one would delete every
+    chunk the batches after it had already written, which on a resumed job is
+    most of the document.
+
+    Recording the embedding model is the same shape of mistake one level up. It
+    is a claim that this document's index was built by that model, and making
+    it after sixteen of nine hundred pages would tell a deployment looking for
+    documents to reindex that this one is already done.
+
+    The caller does both, once, when the document is whole.
+
+    `counts_from` is that same caller's running total, so that `chunks_ready`
+    counts the document rather than the batch. A reader watching a 900-page
+    ingest must not see the count restart at zero fifty-six times.
     """
     total = len(chunks)
     if total == 0:
-        await database.set_chunk_counts(document_id=document_id, ready=0, total=0)
+        await database.set_chunk_counts(
+            document_id=document_id, ready=counts_from, total=counts_from
+        )
         return EmbedReport(total=0, embedded=0, model=None, dims=None)
 
     if router is None:
         await _store(chunks, database=database, org_id=org_id, document_id=document_id)
-        await database.set_chunk_counts(document_id=document_id, ready=0, total=total)
-        await database.prune_chunks(document_id=document_id, keep=total)
+        await database.set_chunk_counts(
+            document_id=document_id, ready=0, total=counts_from + total
+        )
+        if finalize:
+            await database.prune_chunks(document_id=document_id, keep=total)
         logger.info(
             "stored chunks without vectors; no embedding model is configured",
             extra={"chunks": total},
@@ -121,14 +147,19 @@ async def embed_and_store(
         # Written after each batch, not at the end: it is what a reader of
         # `chunks_ready` is promised, and a count that only becomes true at the
         # end would make partial readiness a lie.
-        await database.set_chunk_counts(document_id=document_id, ready=written, total=total)
+        await database.set_chunk_counts(
+            document_id=document_id,
+            ready=counts_from + written,
+            total=counts_from + total,
+        )
         if on_progress is not None:
             await on_progress(written, total)
 
-    await database.prune_chunks(document_id=document_id, keep=total)
-    await database.set_document_embedding(
-        document_id=document_id, model=router.model_name, dims=router.dimensions
-    )
+    if finalize:
+        await database.prune_chunks(document_id=document_id, keep=total)
+        await database.set_document_embedding(
+            document_id=document_id, model=router.model_name, dims=router.dimensions
+        )
     logger.info(
         "embedded and stored chunks",
         extra={"chunks": total, "model": router.model_name, "dims": router.dimensions},

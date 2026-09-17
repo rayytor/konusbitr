@@ -18,7 +18,7 @@ import asyncio
 
 from konusbitr_worker.contracts import JobErrorCode, is_retryable
 
-__all__ = ["JobFailure", "classify_exception"]
+__all__ = ["JobCancelled", "JobFailure", "classify_exception"]
 
 
 class JobFailure(Exception):
@@ -40,6 +40,34 @@ class JobFailure(Exception):
 
     def __str__(self) -> str:
         return f"{self.code.value}: {self.message}"
+
+
+class JobCancelled(Exception):
+    """A job that stopped because somebody asked it to.
+
+    Deliberately not a :class:`JobFailure`. Every branch that handles a failure
+    does something a cancellation must not: it spends a retry, or it
+    dead-letters, or it marks a document `failed` in red and writes a line into
+    the operator's failed-jobs view. A person stopping their own upload is none
+    of those things, and the only way to keep the distinction honest is to make
+    it impossible to reach the failure path by accident.
+
+    It carries how far the job got, because that is what the reader is told:
+    "stopped after 140 of 900 pages" is a true and useful sentence, and those
+    140 pages remain indexed and answerable.
+    """
+
+    def __init__(self, *, pages_done: int = 0, pages_total: int | None = None) -> None:
+        super().__init__("cancelled")
+        self.pages_done = pages_done
+        self.pages_total = pages_total
+
+    @property
+    def message(self) -> str:
+        """What the person who cancelled it is shown."""
+        if self.pages_total:
+            return f"Stopped at your request, after {self.pages_done} of {self.pages_total} pages."
+        return "Stopped at your request."
 
 
 def classify_exception(error: BaseException) -> JobFailure:

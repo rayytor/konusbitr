@@ -36,7 +36,7 @@ from konusbitr_worker.parse.artifact import (
 )
 from konusbitr_worker.parse.geometry import BBox, CoordOrigin, PageGeometry
 
-__all__ = ["DoclingParse", "convert", "normalize_items"]
+__all__ = ["DoclingParse", "build_converter", "convert", "normalize_items"]
 
 logger = get_logger("konusbitr.worker.parse.docling")
 
@@ -82,34 +82,16 @@ class DoclingParse:
     contents: list[ParsedElement]
 
 
-def convert(
-    path: Path,
-    *,
-    geometries: dict[int, PageGeometry],
-    threads: int,
-    native_pages: set[int] | None = None,
-) -> DoclingParse:
-    """Run Docling over a PDF and normalize the result. Synchronous and CPU-bound.
+def build_converter(threads: int) -> Any:
+    """A configured `DocumentConverter`, built once and reused for a document.
 
-    `geometries` comes from the structural pass in
-    :mod:`konusbitr_worker.parse.inspect` and is what every bbox is measured
-    against — PDFium's view of the page, not Docling's. Two libraries agreeing
-    on a page size is not something to assume, and the `pages` row a viewer
-    scales by is written from PDFium's answer.
-
-    `native_pages` is the set of pages the inspection tiered as born-digital.
-    Anything Docling emits for a page outside it is dropped, because on a
-    scanned page Docling's text layer is a running header, a stamped page
-    number, or nothing — and the recogniser's reading of that page is about to
-    replace it. Two readings of one page in `contents` would be cited twice and
-    retrieved twice.
-
-    The set also narrows what Docling is asked to open. Docling takes a
-    contiguous `page_range` rather than a set, so the span from the first to the
-    last native page is the most that can be skipped — which happens to be the
-    common shape: a born-digital filing with scanned exhibits stapled to the
-    back. A document with one scanned page in the middle saves nothing here, and
-    the element filter is what keeps it correct.
+    Split out of :func:`convert` for the batched pipeline. A 900-page document
+    is parsed sixteen pages at a time, and a converter constructed per batch
+    would reload TableFormer's weights fifty-six times — seconds each, for a
+    result identical to keeping the object. The converter holds models, not
+    document state, so reusing one across batches of the same document is safe
+    and reusing one across *documents* would be too; it is scoped to a document
+    only because that is the lifetime the caller already manages.
     """
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -136,9 +118,42 @@ def convert(
     # slower rather than faster.
     options.accelerator_options.num_threads = threads
 
-    converter = DocumentConverter(
+    return DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
     )
+
+
+def convert(
+    path: Path,
+    *,
+    geometries: dict[int, PageGeometry],
+    threads: int,
+    native_pages: set[int] | None = None,
+    converter: Any | None = None,
+) -> DoclingParse:
+    """Run Docling over a PDF and normalize the result. Synchronous and CPU-bound.
+
+    `geometries` comes from the structural pass in
+    :mod:`konusbitr_worker.parse.inspect` and is what every bbox is measured
+    against — PDFium's view of the page, not Docling's. Two libraries agreeing
+    on a page size is not something to assume, and the `pages` row a viewer
+    scales by is written from PDFium's answer.
+
+    `native_pages` is the set of pages the inspection tiered as born-digital.
+    Anything Docling emits for a page outside it is dropped, because on a
+    scanned page Docling's text layer is a running header, a stamped page
+    number, or nothing — and the recogniser's reading of that page is about to
+    replace it. Two readings of one page in `contents` would be cited twice and
+    retrieved twice.
+
+    The set also narrows what Docling is asked to open. Docling takes a
+    contiguous `page_range` rather than a set, so the span from the first to the
+    last native page is the most that can be skipped — which happens to be the
+    common shape: a born-digital filing with scanned exhibits stapled to the
+    back. A document with one scanned page in the middle saves nothing here, and
+    the element filter is what keeps it correct.
+    """
+    converter = converter or build_converter(threads)
 
     try:
         result = converter.convert(str(path), **_page_range(native_pages))

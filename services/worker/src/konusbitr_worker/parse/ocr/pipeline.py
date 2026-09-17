@@ -44,6 +44,7 @@ that happens to contain numbers.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -623,6 +624,8 @@ def ocr_pages(
     options: OcrOptions,
     pipeline: OcrPipeline | None = None,
     sample: str = "",
+    resolved: bool | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> list[OcrPageResult]:
     """Recognise the named pages of a PDF. Synchronous and CPU-bound.
 
@@ -647,11 +650,25 @@ def ocr_pages(
     engine = pipeline or OcrPipeline(options)
     results: list[OcrPageResult] = []
 
-    resolved = bool(options.requested_languages) or bool(sample.strip())
-    if resolved:
-        engine.retune(engine.options.resolve(sample))
+    # `resolved` is an override for the batched caller. A long document is read
+    # sixteen pages at a time, and the language route is a *document*-level
+    # decision: re-identifying it on every batch would let one photocopied
+    # Arabic exhibit halfway through a Turkish filing swap the engine under the
+    # pages that follow it, which is the one thing `plan_languages` is built to
+    # be asked once.
+    if resolved is None:
+        resolved = bool(options.requested_languages) or bool(sample.strip())
+        if resolved:
+            engine.retune(engine.options.resolve(sample))
 
     for raster in render_pages(path, pages, dpi=options.dpi):
+        # Checked per page rather than per batch. A page is the smallest unit
+        # this loop can abandon without leaving half a reading behind, and a
+        # cancellation that waited for a sixteen-page batch would take half a
+        # minute to be felt.
+        if should_cancel is not None and should_cancel():
+            logger.info("recognition stopped at the caller's request")
+            break
         geometry = geometries.get(raster.page_no)
         if geometry is None:  # pragma: no cover - the inspection produced these
             continue

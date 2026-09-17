@@ -29,6 +29,7 @@ short-circuits apply:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from konusbitr_worker.ai import ChatRouter, EmbeddingRouter, Tokenizer
@@ -39,16 +40,30 @@ from konusbitr_worker.chunk import (
     figure_elements,
 )
 from konusbitr_worker.chunk.embed import EmbedReport, ProgressCallback, embed_and_store
-from konusbitr_worker.contracts import STAGE_PERCENT, JobErrorCode, JobPayload, JobStage, JobType
-from konusbitr_worker.db import Database, PageRow
+from konusbitr_worker.contracts import (
+    JOB_CHECKPOINT_VERSION,
+    STAGE_PERCENT,
+    JobErrorCode,
+    JobPayload,
+    JobStage,
+    JobType,
+)
+from konusbitr_worker.db import Database, DocumentRecord, PageRow
 from konusbitr_worker.errors import JobFailure
 from konusbitr_worker.ids import ID_PREFIXES, new_id
 from konusbitr_worker.log import get_logger
-from konusbitr_worker.parse import parse_document
+from konusbitr_worker.parse import (
+    BatchOutcome,
+    CancelCheck,
+    StageReporter,
+    parse_document,
+)
 from konusbitr_worker.parse.artifact import ParseArtifact
+from konusbitr_worker.parse.batching import ResumeState, resume_state_from
 from konusbitr_worker.parse.storage import ObjectStore
 from konusbitr_worker.progress import ProgressReporter
 from konusbitr_worker.prompts import load_prompt
+from konusbitr_worker.scratch import scratch_space
 from konusbitr_worker.settings import Settings
 
 __all__ = ["JobOutcome", "run_job"]
@@ -100,8 +115,15 @@ async def run_job(
     progress: ProgressReporter,
     settings: Settings,
     store: ObjectStore | None = None,
+    cancelled: CancelCheck | None = None,
 ) -> JobOutcome:
-    """Take a document from `queued` to `ready`, doing only what is not done."""
+    """Take a document from `queued` to `ready`, doing only what is not done.
+
+    `cancelled` is asked between pages and between batches. It is a plain
+    synchronous predicate rather than an event or a token because it is also
+    consulted from inside the worker threads that do the recognition, where
+    there is no event loop to await on.
+    """
     document = await database.document(payload.documentId, payload.orgId)
     if document is None:
         # Terminal, not retryable: the row was deleted, or the payload named a
@@ -124,6 +146,11 @@ async def run_job(
         await progress.stage(stage, message=STAGE_MESSAGES.get(stage))
 
     cached = await database.parse_artifact(document.content_hash, document.settings_hash)
+    #: Chunks written by the batched parse, or `None` when this job did not run
+    #: one — a cache hit, a reindex, or a chunk_embed. The distinction decides
+    #: whether the index still has to be built after the parse or has already
+    #: been built during it.
+    indexed: int | None = None
 
     if payload.type is JobType.parse and cached is not None:
         # The docId cache hit. In Phase 07 this completed the job outright,
@@ -141,24 +168,15 @@ async def run_job(
             artifact_contents=artifact_contents,
         )
     elif payload.type is JobType.parse:
-        artifact = await parse_document(
-            store=store or ObjectStore.from_settings(settings),
-            settings=settings,
-            org_id=document.org_id,
-            document_id=document.id,
-            storage_key=document.storage_key,
-            content_hash=document.content_hash,
-            lang_list=list(payload.settings.langList),
-            llm=payload.settings.llm,
-            on_stage=announce,
-        )
-        await _persist_parse(
-            artifact,
+        artifact, indexed = await _parse_in_batches(
             payload=payload,
+            document=document,
             database=database,
-            document_id=document.id,
-            content_hash=document.content_hash,
-            settings_hash=document.settings_hash,
+            progress=progress,
+            settings=settings,
+            store=store or ObjectStore.from_settings(settings),
+            announce=announce,
+            cancelled=cancelled,
         )
         artifact_contents = artifact.to_json(include_markdown=False)
         page_count = artifact.page_count
@@ -178,16 +196,28 @@ async def run_job(
         reused = True
     markdown: str | None = cached.markdown if cached is not None else artifact.markdown
 
-    embed = await _chunk_and_embed(
-        artifact_contents,
-        payload=payload,
-        database=database,
-        progress=progress,
-        settings=settings,
-        org_id=document.org_id,
-        document_id=document.id,
-        force=payload.type is JobType.reindex,
-    )
+    if indexed is None:
+        embed = await _chunk_and_embed(
+            artifact_contents,
+            payload=payload,
+            database=database,
+            progress=progress,
+            settings=settings,
+            org_id=document.org_id,
+            document_id=document.id,
+            force=payload.type is JobType.reindex,
+        )
+    else:
+        # The batched parse indexed as it went, so there is nothing left to
+        # chunk — only the two statements that are about the document as a
+        # whole and therefore could not be made until it was whole.
+        embed = await _finalize_index(
+            database=database,
+            settings=settings,
+            document_id=document.id,
+            progress=progress,
+            total=indexed,
+        )
 
     await _summarize_and_embed(
         markdown,
@@ -198,6 +228,311 @@ async def run_job(
     )
 
     return JobOutcome(page_count=page_count, reused=reused, embed=embed)
+
+
+async def _parse_in_batches(
+    *,
+    payload: JobPayload,
+    document: DocumentRecord,
+    database: Database,
+    progress: ProgressReporter,
+    settings: Settings,
+    store: ObjectStore,
+    announce: StageReporter,
+    cancelled: CancelCheck | None,
+) -> tuple[ParseArtifact, int]:
+    """Parse a document, committing after every page batch.
+
+    This is where Phase 12.4's three claims are actually made good, and each is
+    one line of the callback below.
+
+    **Resumable.** The incomplete `parse_results` row is read first; if it
+    holds a checkpoint this build agrees with, the parse starts at the page
+    after it and the pages before are never opened again.
+
+    **Durable.** After every batch the artifact so far, its page rows, its
+    chunks and its checkpoint are written. Each of those writes is an upsert
+    keyed on something stable, so a batch redelivered after a crash overwrites
+    rather than doubles — the at-least-once rule, applied at a finer grain than
+    Phase 06 needed it.
+
+    **Answerable early.** The chunks of a batch are embedded as part of that
+    batch, so after the first one the document really can be searched. That is
+    what lets the status become `partially_ready` honestly: a chunk exists only
+    because the page it came from was read, so an answer over a partially-ready
+    document cites pages that have genuinely been parsed.
+
+    The one thing to keep in mind when changing this: **the callback must
+    return the running chunk total.** Ordinals have to stay contiguous across
+    batches and across a resume, because `upsert_chunks` keys on
+    `(document_id, ordinal)` and the final prune deletes everything past the
+    count — a batch that restarted its numbering would overwrite its
+    predecessor's rows and then delete the document's tail.
+    """
+    resume = await _resume_state(database, document, settings)
+    batch_size = max(settings.worker_page_batch_size, 1)
+    router = EmbeddingRouter.configured(settings)
+    tokenizer = router.tokenizer if router is not None else _fallback_tokenizer(settings)
+    batches = 0
+    indexed = resume.chunks_written if resume is not None and resume.is_useful else 0
+
+    async def commit(outcome: BatchOutcome) -> int:
+        nonlocal batches, indexed
+        batches += 1
+        final = outcome.pages_done >= outcome.page_count
+        # Named stages, but only for a document read in one pass — which is
+        # almost every upload. In a batched ingest the stages *interleave*:
+        # page 17 is being recognised while pages 1 to 16 are being embedded,
+        # so announcing `embedding` at the first batch would pin the bar at 85%
+        # for the remaining fourteen minutes and announcing it per batch would
+        # flip the label fifty-six times. There, `progress.pages` carries the
+        # report instead, spread across the same span.
+        single = outcome.page_count <= batch_size
+        # Held before anything is announced, so every frame this batch produces
+        # carries them — including the stage frames below.
+        progress.note_pages(ready=outcome.pages_done, total=outcome.page_count)
+        if single and batches == 1:
+            await progress.stage(JobStage.chunking, message=STAGE_MESSAGES[JobStage.chunking])
+            await progress.stage(JobStage.embedding, message=STAGE_MESSAGES[JobStage.embedding])
+
+        written = await _embed_batch(
+            outcome,
+            database=database,
+            org_id=document.org_id,
+            document_id=document.id,
+            router=router,
+            tokenizer=tokenizer,
+            settings=settings,
+            first_ordinal=outcome.chunks_written,
+            # Only for a document read in one pass. There, `embedding` is a
+            # real stage with a beginning and an end and the bar can move
+            # through its band as chunks land. In a batched ingest the band
+            # would be traversed once per batch, which is a bar that resets
+            # fifty-six times — `progress.pages` reports that case instead.
+            on_progress=_embedding_progress(progress) if single else None,
+        )
+
+        # **The checkpoint is written after the work it describes, never
+        # before.** It was the other way round once, and the bug it caused is
+        # the exact bug checkpointing exists to prevent: the row recorded
+        # "pages 1-8 done, 2 chunks written" while four chunks were in the
+        # table, so the resumed run began numbering at 2, overwrote the chunks
+        # for pages 5-8, and then pruned the document's tail — a document that
+        # looked fully indexed and answered out of two thirds of itself.
+        #
+        # Crashing in the gap between the two is harmless and is the case this
+        # order is chosen for: the chunks for the batch exist at ordinals the
+        # resume will write again, every write is an upsert, and the pages are
+        # simply read once more.
+        await _persist_parse(
+            outcome.artifact,
+            payload=payload,
+            database=database,
+            document_id=document.id,
+            content_hash=document.content_hash,
+            settings_hash=document.settings_hash,
+            # NULL on the last batch and only then. A row carrying a checkpoint
+            # is by definition an ingest in progress and is filtered out of
+            # every docId cache lookup in both runtimes, so this is the
+            # statement that turns a partial parse into a cache entry.
+            checkpoint=(
+                None
+                if final
+                else {
+                    "version": JOB_CHECKPOINT_VERSION,
+                    "lastProcessedPage": outcome.pages_done,
+                    "totalPages": outcome.page_count,
+                    "batchSize": batch_size,
+                    "chunksWritten": written,
+                    "updatedAt": datetime.now(UTC).isoformat(),
+                }
+            ),
+        )
+
+        await database.set_page_counts(
+            document_id=document.id,
+            ready=outcome.pages_done,
+            total=outcome.page_count,
+        )
+        # Announced only while there is more to come. On the last batch the job
+        # is about to report `ready`, and telling a reader their document is
+        # partly available a moment before telling them it is finished is a
+        # flicker rather than information.
+        if not final:
+            await database.mark_partially_ready(document_id=document.id)
+        if not single:
+            await progress.pages(
+                ready=outcome.pages_done,
+                total=outcome.page_count,
+                message=_batch_message(outcome),
+            )
+
+        logger.info(
+            "batch committed",
+            extra={
+                "pages": f"{outcome.first_page}-{outcome.last_page}",
+                "of": outcome.page_count,
+                "chunks": written,
+                "final": final,
+            },
+        )
+        indexed = written
+        return written
+
+    with scratch_space(payload.jobId) as scratch:
+        artifact = await parse_document(
+            store=store,
+            settings=settings,
+            org_id=document.org_id,
+            document_id=document.id,
+            storage_key=document.storage_key,
+            content_hash=document.content_hash,
+            lang_list=list(payload.settings.langList),
+            llm=payload.settings.llm,
+            on_stage=announce,
+            batch_size=batch_size,
+            resume=resume,
+            on_batch=commit,
+            should_cancel=cancelled,
+            scratch=scratch,
+        )
+
+    logger.info(
+        "parse committed",
+        extra={"batches": batches, "pages": artifact.page_count, "chunks": indexed},
+    )
+    return artifact, indexed
+
+
+async def _resume_state(
+    database: Database,
+    document: DocumentRecord,
+    settings: Settings,
+) -> ResumeState | None:
+    """What an interrupted run of this job already committed, if anything.
+
+    Read from the database rather than from the queue message, because a stream
+    entry is redelivered exactly as it was written — it cannot know what
+    happened after it was read. The incomplete `parse_results` row is the only
+    thing that saw the work.
+    """
+    found = await database.resume_point(document.content_hash, document.settings_hash)
+    if found is None:
+        return None
+    row, checkpoint = found
+    return resume_state_from(
+        checkpoint,
+        row.contents,
+        markdown=row.markdown,
+        batch_size=max(settings.worker_page_batch_size, 1),
+    )
+
+
+async def _embed_batch(
+    outcome: BatchOutcome,
+    *,
+    database: Database,
+    org_id: str,
+    document_id: str,
+    router: EmbeddingRouter | None,
+    tokenizer: Tokenizer,
+    settings: Settings,
+    first_ordinal: int,
+    on_progress: ProgressCallback | None = None,
+) -> int:
+    """Chunk and embed one batch's elements, continuing the document's ordinals.
+
+    Deliberately does **not** prune. Pruning is "delete everything past the
+    final count", and there is no final count until the last batch — a prune
+    after batch one would delete every chunk a resumed job had already written
+    for the batches after it. The prune happens once, in `_chunk_and_embed`,
+    when the document is whole.
+
+    Figures are read out of this batch's own elements only. A figure chunk
+    carries the figure's rectangle, so it belongs to the batch whose pages the
+    figure is on, and re-deriving them from the accumulated artifact each batch
+    would write the same figure chunk once per remaining batch.
+    """
+    chunks = chunk_elements(
+        elements_from_contents({"contents": [element.to_json() for element in outcome.elements]}),
+        tokenizer=tokenizer,
+        options=_chunking_options(settings),
+        figures=figure_elements(
+            {
+                "images": [
+                    image
+                    for image in outcome.artifact.images
+                    if outcome.first_page <= int(image.get("page") or 0) <= outcome.last_page
+                ]
+            }
+        ),
+        first_ordinal=first_ordinal,
+    )
+    if not chunks:
+        return first_ordinal
+
+    report = await embed_and_store(
+        chunks,
+        database=database,
+        org_id=org_id,
+        document_id=document_id,
+        router=router,
+        finalize=False,
+        counts_from=first_ordinal,
+        on_progress=on_progress,
+    )
+    return first_ordinal + report.total
+
+
+async def _finalize_index(
+    *,
+    database: Database,
+    settings: Settings,
+    document_id: str,
+    progress: ProgressReporter,
+    total: int,
+) -> EmbedReport:
+    """The two index statements that can only be made once the document is whole.
+
+    **The prune.** `embed_and_store` deletes every chunk past the count it just
+    wrote, which is the right rule for a document chunked in one pass and the
+    wrong one for a document chunked in fifty-six: after batch one there is no
+    "past the end" yet. So the batches do not prune and this does, once, with
+    the real count. It is what makes a re-parse that produces four hundred
+    chunks where there were five hundred leave four hundred rows rather than
+    four hundred fresh ones and a hundred stale ones with stale vectors that
+    retrieval would happily return.
+
+    **The embedding model.** Which model produced a document's vectors is a
+    property of the index rather than of a batch, and recording it before the
+    last batch would claim a document was fully embedded by a model that had
+    only seen the first sixteen pages of it.
+    """
+    await database.prune_chunks(document_id=document_id, keep=total)
+    router = EmbeddingRouter.configured(settings)
+    if router is not None:
+        await database.set_document_embedding(
+            document_id=document_id, model=router.model_name, dims=router.dimensions
+        )
+    await progress.stage(JobStage.persisting, message=STAGE_MESSAGES[JobStage.persisting])
+    return EmbedReport(
+        total=total,
+        embedded=total if router is not None else 0,
+        model=router.model_name if router is not None else None,
+        dims=router.dimensions if router is not None else None,
+    )
+
+
+def _batch_message(outcome: BatchOutcome) -> str:
+    """What a person watching a long ingest is told after a batch.
+
+    Pages rather than a percentage, because a reader knows how long their
+    document is: "142 of 900 pages read" is something they can estimate from,
+    and 23% is not. Never contains a word of the document.
+    """
+    if outcome.pages_done >= outcome.page_count:
+        return "Saving the result"
+    return f"Read {outcome.pages_done} of {outcome.page_count} pages"
 
 
 async def _chunk_and_embed(
@@ -311,6 +646,7 @@ async def _persist_parse(
     document_id: str,
     content_hash: str,
     settings_hash: str,
+    checkpoint: dict[str, Any] | None = None,
 ) -> None:
     """Write the parse into the docId cache and the page geometry beside it.
 
@@ -330,6 +666,11 @@ async def _persist_parse(
         markdown=artifact.markdown,
         contents=artifact.to_json(include_markdown=False),
         page_count=artifact.page_count,
+        # `None` only on the final batch. A row carrying a checkpoint is an
+        # ingest in progress and is filtered out of every docId cache lookup in
+        # both runtimes, so this argument is what decides whether the row is
+        # yet a cache entry at all.
+        checkpoint=checkpoint,
     )
 
     await database.upsert_pages(
