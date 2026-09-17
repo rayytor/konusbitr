@@ -1,4 +1,13 @@
-import { CheckCircle2, CircleAlert, CircleDashed, Loader, ScanLine, Sparkles } from 'lucide-react';
+import {
+  BookOpen,
+  CheckCircle2,
+  CircleAlert,
+  CircleDashed,
+  CircleSlash,
+  Loader,
+  ScanLine,
+  Sparkles,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -14,8 +23,15 @@ const STATUSES = {
   parsing: { label: 'Parsing', icon: Loader, className: 'text-foreground-muted' },
   ocr: { label: 'Reading text', icon: ScanLine, className: 'text-foreground-muted' },
   embedding: { label: 'Indexing', icon: Sparkles, className: 'text-foreground-muted' },
+  // Named for what the reader can do rather than for what the pipeline is
+  // doing. "Partly indexed" describes the machine; "Ready to read" is the
+  // thing that changed for them — the viewer opens and chat answers.
+  partially_ready: { label: 'Ready to read', icon: BookOpen, className: 'text-foreground-muted' },
   ready: { label: 'Ready', icon: CheckCircle2, className: 'text-success' },
   failed: { label: 'Failed', icon: CircleAlert, className: 'text-danger' },
+  // Not `text-danger`. A reader who stopped their own upload is not looking at
+  // a problem, and badging their own decision in red says otherwise.
+  cancelled: { label: 'Stopped', icon: CircleSlash, className: 'text-foreground-muted' },
 } as const;
 
 type KnownStatus = keyof typeof STATUSES;
@@ -43,6 +59,7 @@ const STAGE_LABELS: Record<string, KnownStatus> = {
   persisting: 'embedding',
   ready: 'ready',
   failed: 'failed',
+  cancelled: 'cancelled',
 };
 
 export function DocumentStatus({
@@ -66,7 +83,10 @@ export function DocumentStatus({
 
   // Shown only while something is actually happening: "Ready 100%" is noise,
   // and a percentage next to "Failed" reads as a bug.
-  const isWorking = resolved !== 'ready' && resolved !== 'failed';
+  // `partially_ready` counts as working: pages are still arriving, and a
+  // percentage next to "Ready to read" is the honest picture of a document
+  // that can be read now and is not finished.
+  const isWorking = resolved !== 'ready' && resolved !== 'failed' && resolved !== 'cancelled';
   const showPercent = percent !== undefined && isWorking && percent > 0;
 
   return (

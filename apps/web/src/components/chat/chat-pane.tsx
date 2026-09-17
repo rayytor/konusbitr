@@ -58,8 +58,14 @@ export function ChatPane({
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
 
-  const ready = doc.status === 'ready';
-  const failed = doc.status === 'failed';
+  // `partially_ready` answers. That is the whole of partial readiness on this
+  // side: a chunk exists only because the page it came from was read, so an
+  // answer over a partially indexed document is grounded in pages that have
+  // genuinely been parsed and its citations verify against real page text
+  // exactly as they would at the end. The viewer's banner says which pages are
+  // covered; the composer does not need to refuse.
+  const ready = doc.status === 'ready' || doc.status === 'partially_ready';
+  const failed = doc.status === 'failed' || doc.status === 'cancelled';
   const busy = chat.status === 'retrieving' || chat.status === 'generating';
 
   // Starter questions, once, and only for a document that can answer them.

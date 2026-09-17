@@ -217,6 +217,12 @@ async function currentProgress(
     // own it lags the stage by one step and a reconnect would show a bar
     // behind where the document actually is.
     percent: Math.max(job?.progress ?? 0, STAGE_PERCENT[stage]),
+    // Carried on the replay as well as on the live frames, so a browser that
+    // reconnects during a long ingest draws "142 of 900 pages" immediately
+    // rather than a bare percentage until the next batch commits — which on a
+    // scan can be half a minute away.
+    pagesReady: document.pagesReady,
+    pagesTotal: document.pagesTotal,
     at: (job?.updatedAt ?? document.updatedAt).toISOString(),
     ...(document.error ? { message: document.error } : {}),
     ...(document.errorCode ? { errorCode: asErrorCode(document.errorCode) } : {}),
@@ -233,7 +239,15 @@ async function currentProgress(
 function stageOf(status: string, stage: string | null): JobStage {
   if (status === 'ready') return 'ready';
   if (status === 'failed') return 'failed';
+  // A cancellation is terminal and is decided by the document, never by the
+  // job row: the web app marks the document the moment the button is pressed,
+  // and the worker's job row catches up a page later. Reading the job first
+  // here would replay `ocr` to a browser whose document has already stopped.
+  if (status === 'cancelled') return 'cancelled';
   if (stage && stage in STAGE_PERCENT) return stage as JobStage;
+  // `partially_ready` is not a stage — the job is still in `parsing` or
+  // `embedding` — so it deliberately falls through to the job's own stage
+  // above and to `queued` only when there is no job at all.
   if (status in STAGE_PERCENT) return status as JobStage;
   return 'queued';
 }

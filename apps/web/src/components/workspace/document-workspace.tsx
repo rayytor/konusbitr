@@ -7,6 +7,7 @@ import {
   Eraser,
   FileText,
   Library,
+  Loader,
   MessageSquare,
   Moon,
   Pencil,
@@ -20,6 +21,7 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatPane } from '@/components/chat/chat-pane';
 import { DocumentStatus } from '@/components/library/document-status';
+import { IngestionPanel } from '@/components/library/ingestion-panel';
 import { useTheme } from '@/components/theme-provider';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Button } from '@/components/ui/button';
@@ -33,12 +35,23 @@ import { useToast } from '@/components/ui/toast';
 import { Viewer } from '@/components/viewer';
 import type { PageGeometry } from '@/components/viewer/geometry';
 import type { ViewerHandle } from '@/components/viewer/types';
-import { useDocumentProgress } from '@/lib/use-document-progress';
+import { type DocumentProgress, formatEta, useDocumentProgress } from '@/lib/use-document-progress';
 import { usePersistedNumber } from '@/lib/use-persisted-state';
 import { cn } from '@/lib/utils';
 
 const SPLIT_KEY = 'konusbitr.workspace.split';
 const DEFAULT_SPLIT = 0.58;
+
+/**
+ * Whether the document has pages the viewer can render.
+ *
+ * `partially_ready` is in on purpose: pages, geometry, chunks and vectors all
+ * exist for everything read so far, so the viewer opens and chat answers over
+ * the indexed part while the rest is still being read.
+ */
+function readableStatus(status: string | undefined): boolean {
+  return status === 'ready' || status === 'partially_ready';
+}
 
 /**
  * The document workspace: the viewer, the chat, and the line between them.
@@ -93,22 +106,47 @@ export function DocumentWorkspace({
   const progress = useDocumentProgress(watched);
   const live = progress[doc.id];
 
+  const documentId = doc.id;
+
+  const refresh = useCallback(() => {
+    fetch(`/api/documents/${documentId}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { document?: DocumentView } | null) => {
+        if (payload?.document) setDoc(payload.document);
+      })
+      .catch(() => undefined);
+  }, [documentId]);
+
+  // Whether the live stream says there is something new to read out of the row.
+  //
+  // Two occasions, not one. A terminal stage is the Phase 06 case: the pipeline
+  // finished and the row is the source of truth for everything else about the
+  // document. The second is Phase 12.4's — the first batch of a long ingest has
+  // landed, which is the moment the status becomes `partially_ready` and the
+  // viewer may open. Waiting for `ready` there would keep a reader on a spinner
+  // for the fifteen minutes partial readiness exists to give back to them.
+  const finished =
+    live !== undefined &&
+    (live.stage === 'ready' || live.stage === 'failed' || live.stage === 'cancelled');
+  const firstPagesLanded = (live?.pagesReady ?? 0) > 0;
+  const shouldReread = finished || (firstPagesLanded && !readableStatus(doc.status));
+
   useEffect(() => {
-    if (!live || (live.stage !== 'ready' && live.stage !== 'failed')) return;
-    // The stream says the pipeline finished; the row is the source of truth for
-    // everything else about the document, so re-read it rather than patching a
-    // status onto stale local state.
-    fetch(`/api/documents/${doc.id}`)
+    if (!shouldReread) return;
+
+    fetch(`/api/documents/${documentId}`)
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: { document?: DocumentView } | null) => {
         if (payload?.document) setDoc(payload.document);
         // Pages, and therefore page geometry, only exist once the parse has
-        // run — so a document that became ready in this session needs a real
-        // reload rather than a patched object.
-        if (live.stage === 'ready') router.refresh();
+        // written them — so a document that became readable in this session
+        // needs a real reload rather than a patched object. That includes the
+        // first batch of a long one: `partially_ready` means there are pages
+        // to render that this render pass has never seen.
+        if (readableStatus(payload?.document?.status)) router.refresh();
       })
       .catch(() => undefined);
-  }, [live, doc.id, router]);
+  }, [shouldReread, documentId, router]);
 
   // ── Citations ──────────────────────────────────────────────────────────────
 
@@ -295,22 +333,42 @@ export function DocumentWorkspace({
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const stage = live?.stage;
-  const isProcessing =
+  // Openable rather than finished. A `partially_ready` document has pages,
+  // geometry, chunks and vectors for everything read so far — so the viewer
+  // opens on page one and chat answers over the indexed part while the rest is
+  // still being read, which is the whole point of Phase 12.4's partial
+  // readiness. Holding a 900-page filing behind a spinner for fifteen minutes
+  // when the answer is on page four is the failure it exists to remove.
+  const readable = readableStatus(doc.status);
+  const terminal =
     stage !== undefined
-      ? stage !== 'ready' && stage !== 'failed'
-      : doc.status !== 'ready' && doc.status !== 'failed';
+      ? stage === 'ready' || stage === 'failed' || stage === 'cancelled'
+      : doc.status === 'failed' || doc.status === 'cancelled';
+  const isProcessing = !readable && !terminal;
+  // Shown *over* an open document rather than instead of it: a reader browsing
+  // the pages that are ready is entitled to know the rest is still coming, and
+  // to be able to stop it, without losing the document they are reading.
+  const stillIndexing = doc.status === 'partially_ready';
 
   const viewerPane = isProcessing ? (
-    <WorkspaceProcessingView filename={doc.filename} live={live} />
-  ) : (
-    <Viewer
-      url={viewUrl}
-      pages={pages}
+    <WorkspaceProcessingView
       filename={doc.filename}
-      downloadUrl={downloadUrl}
-      handleRef={viewer}
-      className="h-full"
+      document={doc}
+      live={live}
+      onChanged={refresh}
     />
+  ) : (
+    <div className="flex h-full min-h-0 flex-col">
+      {stillIndexing ? <IndexingBanner document={doc} progress={live} onChanged={refresh} /> : null}
+      <Viewer
+        url={viewUrl}
+        pages={pages}
+        filename={doc.filename}
+        downloadUrl={downloadUrl}
+        handleRef={viewer}
+        className="min-h-0 flex-1"
+      />
+    </div>
   );
 
   const chatPane = (
@@ -505,51 +563,80 @@ export function DocumentWorkspace({
 
 function WorkspaceProcessingView({
   filename,
+  document,
   live,
+  onChanged,
 }: {
   filename: string;
-  live?: { stage: string; percent: number; message?: string } | undefined;
+  document: DocumentView;
+  live?: DocumentProgress | undefined;
+  onChanged?: () => void;
 }) {
-  const percent = live?.percent;
-  const stage = live?.stage ?? 'queued';
-
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center p-8 text-center">
-      <div className="mx-auto flex max-w-md flex-col items-center gap-4 rounded-[var(--radius-md)] border border-border-subtle bg-surface p-8 shadow-sm">
-        <div className="flex size-12 items-center justify-center rounded-full bg-surface-muted text-foreground">
-          <FileText className="size-6" />
-        </div>
+    <div className="flex h-full min-h-0 flex-col items-center justify-center p-8">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-5">
         <div className="flex flex-col gap-1">
           <h2 className="font-serif text-[20px] leading-snug text-foreground">
-            Processing “{filename}”
+            Reading “{filename}”
           </h2>
           <p className="text-[14px] leading-relaxed text-foreground-muted">
-            Konusbitr is reading pages and indexing passages for search and answers.
+            Konusbitr is reading pages and indexing passages for search and answers. This screen
+            opens the document as soon as the first pages are ready.
           </p>
         </div>
 
-        <div className="w-full pt-2">
-          <div className="mb-2 flex items-center justify-between text-[13px] text-foreground-muted">
-            <span className="capitalize">{stage}</span>
-            <span className="tabular-nums font-medium text-foreground">
-              {percent !== undefined && percent > 0 ? `${Math.round(percent)}%` : 'In queue'}
-            </span>
-          </div>
-          <progress
-            max={100}
-            value={percent !== undefined && percent > 0 ? percent : undefined}
-            aria-label={`Processing progress: ${percent !== undefined ? Math.round(percent) : 0}%`}
-            className="h-2 w-full overflow-hidden rounded-full bg-surface-muted [&::-webkit-progress-bar]:bg-surface-muted [&::-webkit-progress-value]:bg-accent [&::-moz-progress-bar]:bg-accent"
-          />
-          {live?.message ? (
-            <p className="mt-2 text-[13px] text-foreground-subtle">{live.message}</p>
-          ) : null}
-        </div>
-
-        <p className="text-[12px] text-foreground-subtle">
-          This screen updates automatically as soon as indexing completes.
-        </p>
+        <IngestionPanel document={document} progress={live} onChanged={onChanged} />
       </div>
+    </div>
+  );
+}
+
+function IndexingBanner({
+  document,
+  progress,
+  onChanged,
+}: {
+  document: DocumentView;
+  progress?: DocumentProgress | undefined;
+  onChanged?: () => void;
+}) {
+  const [stopping, setStopping] = useState(false);
+  const ready = progress?.pagesReady ?? document.pagesReady ?? 0;
+  const total = progress?.pagesTotal ?? document.pagesTotal ?? 0;
+
+  async function cancel() {
+    setStopping(true);
+    try {
+      await fetch(`/api/documents/${document.id}/cancel`, { method: 'POST' });
+      onChanged?.();
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  return (
+    <div
+      // Unobtrusive by construction: a line of text on the page's own ground
+      // rather than a coloured bar. The document is what the reader came for
+      // and this is a footnote about it, so it takes one row, keeps the
+      // viewer's full height underneath, and says nothing in colour that it
+      // does not also say in words.
+      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border-subtle px-3 py-2 text-[13px] text-foreground-muted"
+      aria-live="polite"
+    >
+      <Loader aria-hidden className="size-3.5 shrink-0" />
+      <span>
+        {total > 0
+          ? `Indexing in progress: ${ready} of ${total} pages processed.`
+          : 'Indexing in progress.'}{' '}
+        You can search and chat with the pages that are ready.
+      </span>
+      {progress?.etaSeconds !== undefined ? (
+        <span className="tabular-nums">{formatEta(progress.etaSeconds)} left</span>
+      ) : null}
+      <Button variant="tertiary" size="sm" onClick={cancel} disabled={stopping} className="ml-auto">
+        {stopping ? 'Stopping' : 'Cancel'}
+      </Button>
     </div>
   );
 }

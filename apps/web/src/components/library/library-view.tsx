@@ -1,6 +1,13 @@
 'use client';
 
-import type { DocumentView } from '@konusbitr/shared';
+import {
+  // Aliased: `DocumentStatus` is also the name of the badge component this
+  // file renders, and the two would collide.
+  type DocumentStatus as DocumentStatusValue,
+  type DocumentView,
+  isTerminalDocumentStatus,
+  isTerminalJobStage,
+} from '@konusbitr/shared';
 import {
   type ColumnDef,
   getCoreRowModel,
@@ -31,7 +38,7 @@ import { Input } from '@/components/ui/field';
 import { Menu } from '@/components/ui/menu';
 import { Segmented } from '@/components/ui/segmented';
 import { useToast } from '@/components/ui/toast';
-import { useDocumentProgress } from '@/lib/use-document-progress';
+import { type DocumentProgress, formatEta, useDocumentProgress } from '@/lib/use-document-progress';
 import { usePersistedState } from '@/lib/use-persisted-state';
 import { cn } from '@/lib/utils';
 
@@ -121,13 +128,15 @@ export function LibraryView({ initialDocuments }: { initialDocuments: DocumentVi
     setDocuments((current) => [document, ...current.filter((row) => row.id !== document.id)]);
   }, []);
 
-  // When an in-progress document finishes via SSE (ready or failed), update the document row
-  // from the server so pageCount, status, and thumbnails are populated automatically.
+  // When an in-progress document reaches a terminal stage via SSE, update the
+  // row from the server so pageCount, status and thumbnails are populated
+  // automatically. `cancelled` is terminal too, and a row left showing
+  // "Parsing" after the reader stopped it is the product ignoring them.
   useEffect(() => {
     for (const [id, frame] of Object.entries(progress)) {
-      if (frame && (frame.stage === 'ready' || frame.stage === 'failed')) {
+      if (frame && isTerminalJobStage(frame.stage)) {
         const current = documents.find((doc) => doc.id === id);
-        if (current && current.status !== 'ready' && current.status !== 'failed') {
+        if (current && !isTerminalDocumentStatus(current.status as DocumentStatusValue)) {
           fetch(`/api/documents/${id}`)
             .then((res) => (res.ok ? res.json() : null))
             .then((payload: { document?: DocumentView } | null) => {
@@ -173,9 +182,21 @@ export function LibraryView({ initialDocuments }: { initialDocuments: DocumentVi
   const rows = useMemo(() => {
     const all = rowModel.rows.map((row) => row.original);
     if (statusFilter === 'all') return all;
-    if (statusFilter === 'ready') return all.filter((row) => row.status === 'ready');
-    if (statusFilter === 'failed') return all.filter((row) => row.status === 'failed');
-    return all.filter((row) => row.status !== 'ready' && row.status !== 'failed');
+    // A partially ready document is filed under "Ready": the filter is a
+    // reader asking "which of these can I use?", and the answer for one whose
+    // first pages are indexed is yes. It still shows its own badge and its own
+    // bar in the row, so nothing is hidden by being listed here.
+    if (statusFilter === 'ready') {
+      return all.filter((row) => row.status === 'ready' || row.status === 'partially_ready');
+    }
+    // "Failed" collects the documents that need a decision, which a
+    // cancellation does: the reader stopped it and may want to start again.
+    if (statusFilter === 'failed') {
+      return all.filter((row) => row.status === 'failed' || row.status === 'cancelled');
+    }
+    return all.filter(
+      (row) => row.status !== 'ready' && row.status !== 'failed' && row.status !== 'cancelled',
+    );
   }, [rowModel, statusFilter]);
 
   // ── Virtualization ─────────────────────────────────────────────────────────
@@ -452,17 +473,50 @@ export function LibraryView({ initialDocuments }: { initialDocuments: DocumentVi
 
 type RowProps = {
   document: DocumentView;
-  live?: { stage: string; percent: number; message?: string } | undefined;
+  live?: DocumentProgress | undefined;
   actions: { label: string; icon: typeof Pencil; onSelect: () => void; destructive?: boolean }[];
 };
 
-function DocumentRow({ document, live, actions }: RowProps) {
+/**
+ * Whether a row is still moving, in the one place both layouts read it.
+ *
+ * `partially_ready` counts as working, which is the whole of Phase 12.4 in one
+ * predicate: the document can be opened and asked questions *and* pages are
+ * still arriving, so the row shows a badge that says it is readable and a bar
+ * that says it is not finished.
+ */
+function isRowWorking(document: DocumentView, live?: DocumentProgress): boolean {
   const stage = live?.stage;
-  const isWorking =
-    stage !== undefined
-      ? stage !== 'ready' && stage !== 'failed'
-      : document.status !== 'ready' && document.status !== 'failed';
+  if (stage !== undefined) {
+    return stage !== 'ready' && stage !== 'failed' && stage !== 'cancelled';
+  }
+  return (
+    document.status !== 'ready' && document.status !== 'failed' && document.status !== 'cancelled'
+  );
+}
+
+/**
+ * How far a long document has got, as a phrase — or nothing.
+ *
+ * Nothing is the common case and is deliberate: a ten-page PDF is read in one
+ * batch and never reports a page count, and "Page 10 of 10" beside a bar that
+ * is about to disappear is noise. The phrase only appears where it earns its
+ * place, on a document long enough that a percentage alone is a spinner.
+ */
+function pageProgress(document: DocumentView, live?: DocumentProgress): string | undefined {
+  const ready = live?.pagesReady ?? document.pagesReady ?? 0;
+  const total = live?.pagesTotal ?? document.pagesTotal ?? 0;
+  if (!total || ready <= 0 || ready >= total) return undefined;
+  const eta = live?.etaSeconds;
+  return eta === undefined
+    ? `page ${ready} of ${total}`
+    : `page ${ready} of ${total} · ${formatEta(eta)} left`;
+}
+
+function DocumentRow({ document, live, actions }: RowProps) {
+  const isWorking = isRowWorking(document, live);
   const percent = live?.percent;
+  const pages = pageProgress(document, live);
 
   return (
     <div
@@ -498,6 +552,7 @@ function DocumentRow({ document, live, actions }: RowProps) {
               />
             </div>
           ) : null}
+          {pages ? <span className="tabular-nums">{pages}</span> : null}
           <span>{formatSize(document.byteSize)}</span>
           {document.pageCount ? <span>{document.pageCount} pages</span> : null}
           <span>{formatDate(document.createdAt)}</span>
@@ -524,11 +579,7 @@ function DocumentRow({ document, live, actions }: RowProps) {
 }
 
 function DocumentCard({ document, live, actions }: RowProps) {
-  const stage = live?.stage;
-  const isWorking =
-    stage !== undefined
-      ? stage !== 'ready' && stage !== 'failed'
-      : document.status !== 'ready' && document.status !== 'failed';
+  const isWorking = isRowWorking(document, live);
   const percent = live?.percent;
 
   return (

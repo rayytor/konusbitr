@@ -186,6 +186,11 @@ export function presentDocument(row: DocumentRow, cached?: boolean): DocumentVie
     // spaces in one search silently returns nonsense rather than failing.
     chunksReady: row.chunksReady,
     chunksTotal: row.chunksTotal,
+    // In pages as well as in chunks: the progress UI divides by this, and a
+    // reader who knows their filing is 900 pages long can estimate from "142
+    // of 900" in a way they never could from a chunk count.
+    pagesReady: row.pagesReady,
+    pagesTotal: row.pagesTotal,
     embeddingModel: row.embeddingModel,
     dims: row.dims,
     ...(cached === undefined ? {} : { cached }),

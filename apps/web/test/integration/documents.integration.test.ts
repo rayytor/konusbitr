@@ -10,8 +10,9 @@ import {
   parseResultsForDocument,
   recordParseResult,
   seedChunk,
+  setDocumentState,
 } from '@konusbitr/db/testing';
-import type { DocumentView } from '@konusbitr/shared';
+import { cancelKey, type DocumentView } from '@konusbitr/shared';
 import type { StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import type { StartedRedisContainer } from '@testcontainers/redis';
 import Redis from 'ioredis';
@@ -48,6 +49,8 @@ let documents: { GET: Handler; POST: Handler };
 let document: { GET: Handler; DELETE: Handler };
 let fromUrl: Handler;
 let reindex: Handler;
+let cancel: Handler;
+let retry: Handler;
 
 /** An organization and a key that authenticates as it. */
 type Tenant = { orgId: string; token: string };
@@ -116,6 +119,8 @@ beforeAll(async () => {
   };
   fromUrl = (await import('@/app/api/documents/from-url/route')).POST as Handler;
   reindex = (await import('@/app/api/documents/[documentId]/reindex/route')).POST as Handler;
+  cancel = (await import('@/app/api/documents/[documentId]/cancel/route')).POST as Handler;
+  retry = (await import('@/app/api/documents/[documentId]/retry/route')).POST as Handler;
 
   alpha = await tenant('Alpha', 'alpha');
   beta = await tenant('Beta', 'beta');
@@ -570,6 +575,164 @@ describe('reindexing a document', () => {
 
     // A 403 would confirm the id exists. An attacker enumerating ids must
     // learn nothing from the difference.
+    expect(response.status).toBe(404);
+  });
+});
+
+// ─── Cancelling and retrying an ingest (Phase 12.4) ──────────────────────────
+
+describe('cancelling an ingest', () => {
+  it('sets the flag the worker polls and marks the document immediately', async () => {
+    // Two writes, and both matter. The Redis key is how the request crosses
+    // the runtime seam — the two halves share no control channel, so a
+    // cancellation has to survive the worker not having been listening when it
+    // was made. The row is how the button feels like a button: the phase asks
+    // for a cancellation to take effect within two seconds, and a reader
+    // should not wait for a page of OCR to finish before the screen admits
+    // they pressed it.
+    const result = await upload(pdfWith('long enough to cancel', 4));
+    const uploaded = result.body.document as DocumentView;
+
+    const [job] = await jobsForDocument(db, uploaded.id);
+    expect(job).toBeDefined();
+
+    const response = await call(cancel, {
+      method: 'POST',
+      as: alpha,
+      params: { documentId: uploaded.id },
+    });
+
+    // 202: recorded, not yet acted on. Saying 200 would claim the worker had
+    // already stopped, which is not knowable from here.
+    expect(response.status).toBe(202);
+
+    expect(await redis.exists(cancelKey(job?.id as string))).toBe(1);
+
+    const row = await scopedDb(db, alpha.orgId).documentById(uploaded.id);
+    expect(row?.status).toBe('cancelled');
+    expect(row?.errorCode).toBe('cancelled');
+  });
+
+  it('is a no-op on a document that has already finished', async () => {
+    // A double-click, not an error. Answering one with a 4xx is noise, and
+    // calling a completed parse cancelled would throw away a document that
+    // succeeded.
+    const result = await upload(pdfWith('already done', 2));
+    const uploaded = result.body.document as DocumentView;
+    await setDocumentState(db, uploaded.id, { status: 'ready' });
+
+    const response = await call(cancel, {
+      method: 'POST',
+      as: alpha,
+      params: { documentId: uploaded.id },
+    });
+
+    expect(response.status).toBe(202);
+    expect((await response.json()).status).toBe('ready');
+    expect((await scopedDb(db, alpha.orgId).documentById(uploaded.id))?.status).toBe('ready');
+  });
+
+  it('is 404 for another organization, not 403', async () => {
+    const result = await upload(pdfWith('alpha only, cancellable'), { as: alpha });
+    const mine = result.body.document as DocumentView;
+
+    const response = await call(cancel, {
+      method: 'POST',
+      as: beta,
+      params: { documentId: mine.id },
+    });
+
+    expect(response.status).toBe(404);
+    // And Beta's attempt changed nothing.
+    expect((await scopedDb(db, alpha.orgId).documentById(mine.id))?.status).not.toBe('cancelled');
+  });
+});
+
+describe('retrying an ingest', () => {
+  it('queues a fresh parse and clears what the failure left behind', async () => {
+    const result = await upload(pdfWith('worth another attempt', 3));
+    const uploaded = result.body.document as DocumentView;
+
+    // Stand in for the worker having failed it.
+    await setDocumentState(db, uploaded.id, {
+      status: 'failed',
+      error: 'That document has no text layer.',
+      errorCode: 'needs_ocr',
+      pagesReady: 2,
+      pagesTotal: 3,
+    });
+
+    const before = await queuedJobs();
+    const response = await call(retry, {
+      method: 'POST',
+      as: alpha,
+      params: { documentId: uploaded.id },
+    });
+
+    expect(response.status).toBe(202);
+    expect(await queuedJobs()).toBe(before + 1);
+
+    const row = await scopedDb(db, alpha.orgId).documentById(uploaded.id);
+    // Everything the failed run *asserted* is cleared; a bar that started at
+    // "2 of 3 pages" before the new run had read a page would be a lie.
+    expect(row?.status).toBe('queued');
+    expect(row?.error).toBeNull();
+    expect(row?.errorCode).toBeNull();
+    expect(row?.pagesReady).toBe(0);
+    expect(row?.pagesTotal).toBeNull();
+  });
+
+  it('changes the document identity when the settings change', async () => {
+    // `settings_hash` is half the docId cache key: the same PDF at
+    // `quality: 'advanced'` is a different parse with its own cache entry, so
+    // a retry at new settings has to rewrite the hash on the row or the job it
+    // queues would look up the old parse.
+    const result = await upload(pdfWith('retried at a higher tier', 2));
+    const uploaded = result.body.document as DocumentView;
+    const before = await scopedDb(db, alpha.orgId).documentById(uploaded.id);
+
+    const response = await call(retry, {
+      method: 'POST',
+      as: alpha,
+      params: { documentId: uploaded.id },
+      body: { settings: { quality: 'advanced', langList: [], llm: false } },
+    });
+
+    expect(response.status).toBe(202);
+    const after = await scopedDb(db, alpha.orgId).documentById(uploaded.id);
+    expect(after?.settingsHash).not.toBe(before?.settingsHash);
+    expect(after?.contentHash).toBe(before?.contentHash);
+    // The bytes never move: a retry re-reads what is already in storage.
+    expect(after?.storageKey).toBe(before?.storageKey);
+  });
+
+  it('refuses malformed settings rather than quietly using the defaults', async () => {
+    // Parsing at `standard` because the client misspelled `advanced` would
+    // bill somebody for a parse they did not ask for.
+    const result = await upload(pdfWith('bad settings'));
+    const uploaded = result.body.document as DocumentView;
+
+    const response = await call(retry, {
+      method: 'POST',
+      as: alpha,
+      params: { documentId: uploaded.id },
+      body: { settings: { quality: 'superb', langList: [], llm: false } },
+    });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe('invalid_settings');
+  });
+
+  it('is 404 for another organization, not 403', async () => {
+    const result = await upload(pdfWith('alpha only, retryable'), { as: alpha });
+    const mine = result.body.document as DocumentView;
+
+    const response = await call(retry, {
+      method: 'POST',
+      as: beta,
+      params: { documentId: mine.id },
+    });
+
     expect(response.status).toBe(404);
   });
 });
