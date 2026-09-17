@@ -1,4 +1,4 @@
-# 0007 — Resumable ingestion: page batches, checkpoints, partial readiness
+# 0008 — Resumable ingestion: page batches, checkpoints, partial readiness
 
 **Status:** accepted (Phase 12.4/4)
 **Supersedes nothing.** Extends `0001-queue.md` (delivery) and `0005-ocr.md` (tiering).

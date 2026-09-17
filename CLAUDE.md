@@ -93,7 +93,7 @@ from the rate pages actually arrive at, and `POST /api/documents/:id/cancel`
 stops a job within one poll plus one page — leaving a short document rather than
 a broken one, because everything committed was committed properly.
 `POST /api/documents/:id/retry` reads a document again, optionally at different
-settings. `docs/adr/0007-resumable-ingestion.md` records all of it, including
+settings. `docs/adr/0008-resumable-ingestion.md` records all of it, including
 the ordering bug the resume test caught.
 
 The load-bearing rule that came out of it: **a `parse_results` row carrying a
@@ -238,7 +238,7 @@ What exists:
   image preparations are read when an engine wants both, why a scanned table is
   reconstructed from its ruling lines rather than through Docling's TableFormer,
   and why figures are extracted always and captioned only on request.
-- `docs/adr/0007-resumable-ingestion.md` — why a long document is read in
+- `docs/adr/0008-resumable-ingestion.md` — why a long document is read in
   contiguous page batches rather than split into several jobs, why the
   checkpoint lives on the `parse_results` row it is building rather than in a
   table of its own, why it is written after the batch it describes and what went

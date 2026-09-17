@@ -241,7 +241,7 @@ the batch being a real commit point: everything in a batch is written durably
 together — elements, page rows, chunks, vectors — which is what makes a crash
 cost one batch rather than a whole document, and what makes the first sixteen
 pages of a nine-hundred-page filing answerable fourteen minutes before the last
-one is read. See `docs/adr/0007-resumable-ingestion.md`.
+one is read. See `docs/adr/0008-resumable-ingestion.md`.
 
 The cost is bounded and small: one avoidable boundary per sixteen pages, on
 documents long enough to be batched at all. A passage split there is still
