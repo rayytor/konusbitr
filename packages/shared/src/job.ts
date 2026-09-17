@@ -34,6 +34,16 @@ export const JOB_STAGES = [
   'persisting',
   'ready',
   'failed',
+  /**
+   * Stopped on purpose, by the person who uploaded the document.
+   *
+   * A stage of its own rather than `failed` with an error code, because the
+   * two are different events to everybody downstream: a failure is something
+   * to report, retry and count against a health metric, and a cancellation is
+   * something the reader already knows about and does not want told back to
+   * them in red.
+   */
+  'cancelled',
 ] as const;
 
 export const JobStageSchema = z.enum(JOB_STAGES);
@@ -41,7 +51,11 @@ export const JobStageSchema = z.enum(JOB_STAGES);
 export type JobStage = z.infer<typeof JobStageSchema>;
 
 /** Stages after which no further progress events are published. */
-export const TERMINAL_JOB_STAGES = ['ready', 'failed'] as const satisfies readonly JobStage[];
+export const TERMINAL_JOB_STAGES = [
+  'ready',
+  'failed',
+  'cancelled',
+] as const satisfies readonly JobStage[];
 
 export function isTerminalJobStage(stage: JobStage): boolean {
   return (TERMINAL_JOB_STAGES as readonly JobStage[]).includes(stage);
@@ -191,6 +205,23 @@ export const JobProgressSchema = z.object({
   message: z.string().nullish(),
   /** Set only on `failed`, so a client can distinguish "try again" from "don't". */
   errorCode: JobErrorCodeSchema.nullish(),
+  /**
+   * How many of the document's pages have been parsed, chunked and indexed,
+   * and how many there are in total.
+   *
+   * Both `nullish`, and for two different reasons. `pagesTotal` is unknown
+   * until the structural pass has opened the file, so every frame before
+   * `validating` legitimately has neither. And a `reindex` never touches
+   * pages at all, so a job that is only rebuilding an index reports neither
+   * rather than reporting zero — which a progress bar would draw as a
+   * document that had lost its pages.
+   *
+   * They are here rather than left to the client to fetch because they are
+   * what turns a percentage into a sentence: "142 of 900 pages" is a thing a
+   * person can estimate from, and 23% is not.
+   */
+  pagesReady: z.number().int().nonnegative().nullish(),
+  pagesTotal: z.number().int().nonnegative().nullish(),
   /** When the worker emitted this. ISO 8601, UTC. */
   at: z.iso.datetime(),
 });
@@ -216,4 +247,67 @@ export const STAGE_PERCENT: Readonly<Record<JobStage, number>> = Object.freeze({
   persisting: 95,
   ready: 100,
   failed: 100,
+  cancelled: 100,
 });
+
+/**
+ * Version of the checkpoint envelope. See {@link JobCheckpointSchema}.
+ *
+ * Separate from {@link JOB_PAYLOAD_VERSION} because the two age
+ * independently: a checkpoint is written and read by the worker alone, lives
+ * for the duration of one ingest, and a worker that meets a checkpoint it does
+ * not understand simply starts the document again rather than dead-lettering
+ * it. Restarting a 900-page parse is expensive; guessing at a shape you do not
+ * know is worse.
+ */
+export const JOB_CHECKPOINT_VERSION = 1;
+
+/**
+ * Default pages per batch.
+ *
+ * The number trades two costs against each other. Small batches mean more
+ * checkpoint commits and more chunk boundaries landing on a batch edge;
+ * large ones mean more pages re-done after a crash and a longer wait before
+ * the first of them is answerable. Sixteen is about four seconds of OCR on a
+ * four-core CPU, which is a tolerable amount of work to lose and a tolerable
+ * wait before a reader can ask their first question.
+ */
+export const DEFAULT_PAGE_BATCH_SIZE = 16;
+
+/**
+ * How far a long ingest has got, durably.
+ *
+ * Stored on the `parse_results` row the job is building — **a row carrying a
+ * checkpoint is by definition incomplete and is therefore not a docId cache
+ * entry** — and mirrored into `jobs.payload.checkpoint` for an operator
+ * reading the job table. The first of those is the one the worker reads on
+ * resume; the second is for people.
+ *
+ * The contract is deliberately small. Everything else a resume needs is
+ * already durable somewhere better: the elements parsed so far are in the
+ * partial artifact, the chunks written are rows in `chunks`, and the pages are
+ * rows in `pages`. A checkpoint that tried to carry the work rather than point
+ * at it would be a second copy of the document in a JSONB column.
+ */
+export const JobCheckpointSchema = z.object({
+  version: z.literal(JOB_CHECKPOINT_VERSION),
+  /** The last page fully parsed, chunked and committed. 0 before the first batch. */
+  lastProcessedPage: z.number().int().nonnegative(),
+  /** Pages in the document, as the structural pass counted them. */
+  totalPages: z.number().int().nonnegative(),
+  /** Pages per batch this run used, so a resume keeps the same boundaries. */
+  batchSize: z.number().int().positive(),
+  /**
+   * Chunks written so far, which is where the next batch's ordinals start.
+   *
+   * Ordinals must stay contiguous across a resume: retrieval upserts on
+   * `(document_id, ordinal)` and prunes everything past the final count, so a
+   * batch that restarted its numbering would overwrite the previous batch's
+   * rows and then delete the document's tail.
+   */
+  chunksWritten: z.number().int().nonnegative(),
+  /** When this checkpoint was committed. ISO 8601, UTC. */
+  updatedAt: z.iso.datetime(),
+});
+
+export type JobCheckpoint = z.infer<typeof JobCheckpointSchema>;

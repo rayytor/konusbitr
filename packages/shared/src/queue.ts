@@ -56,3 +56,32 @@ export function progressChannel(documentId: string): string {
 
 /** The literal prefix of {@link progressChannel}, for the generated Python half. */
 export const PROGRESS_CHANNEL_PREFIX = 'konusbitr:progress:';
+
+/**
+ * The key that asks a running job to stop.
+ *
+ * A Redis key rather than a message, because the two runtimes do not share a
+ * control channel and a cancellation has to survive the worker not being the
+ * one that was listening. The web app sets it; the worker polls it between
+ * pages and drops the job at the next boundary.
+ *
+ * It is a *request*, not a command: a job that has already finished ignores it,
+ * and a job that is mid-batch finishes that page first so that nothing is left
+ * half-written. What the key guarantees is that the job stops soon, not that it
+ * stops instantly.
+ */
+export const CANCEL_KEY_PREFIX = 'konusbitr:cancel:';
+
+export function cancelKey(jobId: string): string {
+  return `${CANCEL_KEY_PREFIX}${jobId}`;
+}
+
+/**
+ * How long a cancellation request lives if nothing consumes it.
+ *
+ * Longer than the longest job may run, so a request set while a worker is
+ * restarting is still there when it comes back — and finite, so a key for a job
+ * that will never run again does not outlive the Redis instance. The worker
+ * deletes it when it acts on it.
+ */
+export const CANCEL_TTL_SECONDS = 3600;

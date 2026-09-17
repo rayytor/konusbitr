@@ -23,7 +23,10 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { DocumentStatusSchema } from '../src/document.js';
 import {
+  DEFAULT_PAGE_BATCH_SIZE,
+  JOB_CHECKPOINT_VERSION,
   JOB_PAYLOAD_VERSION,
+  JobCheckpointSchema,
   JobErrorCodeSchema,
   JobPayloadSchema,
   JobProgressSchema,
@@ -35,6 +38,8 @@ import {
 } from '../src/job.js';
 import { ParseQualitySchema, ParseSettingsSchema } from '../src/parse-settings.js';
 import {
+  CANCEL_KEY_PREFIX,
+  CANCEL_TTL_SECONDS,
   DEAD_LETTER_MAX_LENGTH,
   JOBS_CONSUMER_GROUP,
   JOBS_DEAD_LETTER,
@@ -71,6 +76,11 @@ const NAMED = [
     JobProgressSchema,
     'JobProgress',
     'A progress event published on konusbitr:progress:{documentId} and relayed over SSE.',
+  ],
+  [
+    JobCheckpointSchema,
+    'JobCheckpoint',
+    'How far a long ingest has got; a parse_results row carrying one is incomplete.',
   ],
 ] as const satisfies readonly (readonly [z.ZodType, string, string])[];
 
@@ -124,16 +134,58 @@ function simplify<T>(node: T): T {
   if (Array.isArray(node)) return node.map((entry) => simplify(entry)) as T;
   if (node === null || typeof node !== 'object') return node;
 
-  const source = node as Record<string, unknown>;
+  const source = collapseNullable(node as Record<string, unknown>);
   const out: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(source)) {
     if (key === 'pattern' && source.format === 'date-time') continue;
-    if (key === 'maximum' && source.type === 'integer' && value === MAX_SAFE_INTEGER) continue;
+    if (key === 'maximum' && isInteger(source.type) && value === MAX_SAFE_INTEGER) continue;
     out[key] = key === 'items' ? withoutElementConstraints(simplify(value)) : simplify(value);
   }
 
   return out as T;
+}
+
+/**
+ * Rewrite `anyOf: [{ type: 'integer', … }, { type: 'null' }]` as
+ * `type: ['integer', 'null']` with the constraints kept as siblings.
+ *
+ * The two say the same thing, and Zod itself already emits the second form for
+ * an *unconstrained* nullish field — `z.string().nullish()` comes out as
+ * `type: ['string', 'null']`. The `anyOf` only appears once a constraint is
+ * attached, and `datamodel-code-generator` reacts to it by wrapping the branch
+ * in a `RootModel`: `pagesReady` would arrive in the worker as an object with
+ * a `.root` rather than as an `int | None`, for a rule ("a page count is not
+ * negative") that says nothing a reader of the generated file needs.
+ *
+ * So the collapse is not a loosening. It is making every nullish scalar cross
+ * the seam in the one shape, which is what the contract already promised.
+ */
+function collapseNullable(node: Record<string, unknown>): Record<string, unknown> {
+  const branches = node.anyOf;
+  if (!Array.isArray(branches) || branches.length !== 2) return node;
+
+  const isNullBranch = (branch: unknown): boolean =>
+    typeof branch === 'object' &&
+    branch !== null &&
+    Object.keys(branch).length === 1 &&
+    (branch as { type?: unknown }).type === 'null';
+
+  const value = branches.find((branch) => !isNullBranch(branch));
+  const nulls = branches.filter(isNullBranch);
+  if (nulls.length !== 1 || value === undefined) return node;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return node;
+
+  const inner = value as Record<string, unknown>;
+  if (typeof inner.type !== 'string') return node;
+
+  const { anyOf: _dropped, ...rest } = node;
+  return { ...inner, ...rest, type: [inner.type, 'null'] };
+}
+
+/** True for `type: 'integer'` and for the nullable `type: ['integer', 'null']`. */
+function isInteger(type: unknown): boolean {
+  return type === 'integer' || (Array.isArray(type) && type.includes('integer'));
 }
 
 function withoutElementConstraints(items: unknown): unknown {
@@ -195,10 +247,29 @@ PROGRESS_CHANNEL_PREFIX = ${py(PROGRESS_CHANNEL_PREFIX)}
 #: Envelope version this build understands. Anything else is dead-lettered.
 JOB_PAYLOAD_VERSION = ${py(JOB_PAYLOAD_VERSION)}
 
+#: Prefix of the key that asks a running job to stop. Set by the web app,
+#: polled by the worker between pages, deleted by whoever acts on it.
+CANCEL_KEY_PREFIX = ${py(CANCEL_KEY_PREFIX)}
+
+#: How long an unconsumed cancellation request lives, in seconds.
+CANCEL_TTL_SECONDS = ${py(CANCEL_TTL_SECONDS)}
+
+#: Checkpoint envelope version. A worker that meets a different one restarts
+#: the document rather than guessing at a shape it does not know.
+JOB_CHECKPOINT_VERSION = ${py(JOB_CHECKPOINT_VERSION)}
+
+#: Pages per batch, unless a deployment overrides it.
+DEFAULT_PAGE_BATCH_SIZE = ${py(DEFAULT_PAGE_BATCH_SIZE)}
+
 
 def progress_channel(document_id: str) -> str:
     """The channel a document's progress is published on."""
     return f"{PROGRESS_CHANNEL_PREFIX}{document_id}"
+
+
+def cancel_key(job_id: str) -> str:
+    """The key whose presence asks a running job to stop."""
+    return f"{CANCEL_KEY_PREFIX}{job_id}"
 
 
 #: The percentage a stage is worth on entry, so a reconnecting browser that

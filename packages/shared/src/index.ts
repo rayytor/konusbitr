@@ -52,9 +52,11 @@ export {
   RejectedCitationSchema,
 } from './citation.js';
 export {
+  ANSWERABLE_DOCUMENT_STATUSES,
   DOCUMENT_STATUSES,
   type DocumentStatus,
   DocumentStatusSchema,
+  isAnswerableDocumentStatus,
   isTerminalDocumentStatus,
   TERMINAL_DOCUMENT_STATUSES,
 } from './document.js';
@@ -73,12 +75,16 @@ export {
   roleProvider,
 } from './env.js';
 export {
+  DEFAULT_PAGE_BATCH_SIZE,
   isRetryableJobError,
   isTerminalJobStage,
+  JOB_CHECKPOINT_VERSION,
   JOB_ERROR_CODES,
   JOB_PAYLOAD_VERSION,
   JOB_STAGES,
   JOB_TYPES,
+  type JobCheckpoint,
+  JobCheckpointSchema,
   type JobErrorCode,
   JobErrorCodeSchema,
   type JobPayload,
@@ -124,6 +130,9 @@ export {
   parseSettingsHashInput,
 } from './parse-settings.js';
 export {
+  CANCEL_KEY_PREFIX,
+  CANCEL_TTL_SECONDS,
+  cancelKey,
   DEAD_LETTER_MAX_LENGTH,
   JOBS_CONSUMER_GROUP,
   JOBS_DEAD_LETTER,

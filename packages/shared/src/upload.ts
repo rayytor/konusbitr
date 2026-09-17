@@ -184,6 +184,16 @@ export const DocumentViewSchema = z.object({
   chunksReady: z.number().int().nonnegative().nullable(),
   chunksTotal: z.number().int().nonnegative().nullable(),
   /**
+   * How much of the document has been read, in pages.
+   *
+   * The counterpart to `chunksReady` and the one a person can reason about: a
+   * reader knows how long their document is and can estimate from "142 of 900"
+   * in a way they cannot from a chunk count. Both are `null` until the
+   * structural pass has opened the file and counted.
+   */
+  pagesReady: z.number().int().nonnegative().nullable(),
+  pagesTotal: z.number().int().nonnegative().nullable(),
+  /**
    * The model the stored vectors were produced by, and their width.
    *
    * On the wire because a client cannot otherwise tell a document indexed with
