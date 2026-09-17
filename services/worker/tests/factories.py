@@ -158,9 +158,7 @@ class FakeDatabase:
     async def embedding_dimensions(self) -> int | None:
         return self.declared_dimensions
 
-    async def start_job(
-        self, job_id: str, attempt: int, *, document_id: str | None = None
-    ) -> None:
+    async def start_job(self, job_id: str, attempt: int, *, document_id: str | None = None) -> None:
         self.started.append((job_id, attempt))
 
     async def record_stage(

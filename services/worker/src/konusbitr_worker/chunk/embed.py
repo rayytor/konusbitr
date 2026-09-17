@@ -108,9 +108,7 @@ async def embed_and_store(
 
     if router is None:
         await _store(chunks, database=database, org_id=org_id, document_id=document_id)
-        await database.set_chunk_counts(
-            document_id=document_id, ready=0, total=counts_from + total
-        )
+        await database.set_chunk_counts(document_id=document_id, ready=0, total=counts_from + total)
         if finalize:
             await database.prune_chunks(document_id=document_id, keep=total)
         logger.info(
