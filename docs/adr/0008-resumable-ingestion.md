@@ -212,6 +212,28 @@ of the stream, and because computing it in the worker would put a rate estimate
 in a durable row that a reconnecting browser would then have to decide whether
 to trust.
 
+### The VLM tier runs inside a batch, and its budget had to follow
+
+Phase 12.3's vision tier is a third reading of the same pages, and it moves
+into the loop with the other two: its page selection is evaluated against the
+pages in hand, and its reading of a page still supersedes whichever tier read
+it first.
+
+Two things needed care. **The heading trail crosses batches.** A section title
+the model finds on page 3 scopes the born-digital pages 4 and 5 that follow it,
+so `_apply_section_paths` is recomputed over everything accumulated so far
+rather than over the batch — the elements handed to the caller are the same
+objects, so the batch sees its own corrected trail before it is chunked.
+
+**And the escalation cap is a document budget asked once per batch, which is
+not a cap at all.** Passing the whole ceiling to each batch would let a
+900-page filing with two badly-recognised pages in each of its fifty-six
+batches buy a hundred and twelve model calls against a ceiling of fifty, one
+batch at a time, with nothing in the log to say so. What remains of the budget
+is threaded through instead. The `advanced` route is unaffected: its page count
+is checked against the ceiling once, before the loop starts, and refused rather
+than truncated.
+
 ## Alternatives considered
 
 **Keep the single pass and raise the worker's memory limit.** Moves the cliff

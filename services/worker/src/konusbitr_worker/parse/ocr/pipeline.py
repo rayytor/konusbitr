@@ -72,7 +72,14 @@ from konusbitr_worker.parse.ocr.preprocess import Preprocessed, preprocess
 from konusbitr_worker.parse.ocr.raster import RasterPage, render_pages
 from konusbitr_worker.parse.ocr.tables import TableGrid, assign_words, detect_tables
 
-__all__ = ["OcrElement", "OcrOptions", "OcrPageResult", "OcrPipeline", "ocr_pages"]
+__all__ = [
+    "OcrElement",
+    "OcrOptions",
+    "OcrPageResult",
+    "OcrPipeline",
+    "RecognizedWord",
+    "ocr_pages",
+]
 
 logger = get_logger("konusbitr.worker.parse.ocr")
 
@@ -145,6 +152,25 @@ class OcrElement:
 
 
 @dataclass(slots=True)
+class RecognizedWord:
+    """One recognised token, converted into the Konusbitr convention.
+
+    The words survive the grouping into paragraphs for one consumer: Phase
+    12.3's hybrid reconciliation, which needs *located characters* to correct a
+    vision model's reading of the same page against. A paragraph's box is far
+    too coarse for that — it is the block the model was describing, not the
+    token inside it that the model got wrong.
+
+    Kept alongside the elements rather than instead of them: the elements are
+    the artifact, and these are the evidence.
+    """
+
+    text: str
+    bbox: BBox
+    confidence: float
+
+
+@dataclass(slots=True)
 class OcrPageResult:
     """One page's recognised content, in the Konusbitr coordinate convention."""
 
@@ -159,6 +185,8 @@ class OcrPageResult:
     deskew_degrees: float = 0.0
     #: How many ruled tables were reconstructed on this page. Diagnostic.
     tables: int = 0
+    #: Every token this page yielded, located. See :class:`RecognizedWord`.
+    words: list[RecognizedWord] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -387,6 +415,14 @@ class OcrPipeline:
             engine=result.engine,
             deskew_degrees=prepared.deskew_degrees,
             tables=len(grids),
+            # Every word, not only the ones that landed in a paragraph: a token
+            # the table pass claimed is exactly as good a piece of evidence
+            # about what is printed on the page as one that did not.
+            words=[
+                located
+                for word in result.words
+                if (located := _located_word(word, prepared, raster, geometry)) is not None
+            ],
         )
 
 
@@ -431,6 +467,22 @@ def _to_points(
     # `rotated=True`: PDFium applied `/Rotate` when it rendered the bitmap, so
     # this box is already in the visible frame and must not be turned again.
     return geometry.normalize(points, origin=CoordOrigin.top_left, rotated=True)
+
+
+def _located_word(
+    word: Any,
+    prepared: Preprocessed,
+    raster: RasterPage,
+    geometry: PageGeometry,
+) -> RecognizedWord | None:
+    """One recognised token in the convention, or `None` if it encloses nothing."""
+    text = word.text.strip()
+    if not text:
+        return None
+    bbox = _to_points(word.box, prepared, raster, geometry)
+    if bbox.is_degenerate:
+        return None
+    return RecognizedWord(text=text, bbox=bbox, confidence=word.confidence)
 
 
 def _paragraph(

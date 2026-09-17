@@ -56,8 +56,16 @@ export async function uploadAndWait(page: Page, filename: string): Promise<void>
   // The status word inside *this* document's row, not a colour and not any
   // row's: the library renders "Ready" beside an icon, and the SSE stream from
   // `/api/documents/:id/events` is what moves it there.
+  //
+  // `exact`, because Phase 12.4 added a second badge whose label begins with
+  // the same word: a long document reads "Ready to read" while it is still
+  // being indexed. A substring match would settle for that and then ask a
+  // question of a document that is not finished — which is a supported thing
+  // to do and not what this test is waiting for.
   const container = row.locator('xpath=ancestor::*[@data-document-id][1]');
-  await expect(container.getByText('Ready')).toBeVisible({ timeout: 180_000 });
+  await expect(container.getByText('Ready', { exact: true })).toBeVisible({
+    timeout: 180_000,
+  });
 }
 
 /** Open a document's workspace from the library. */

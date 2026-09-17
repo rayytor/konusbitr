@@ -100,6 +100,7 @@ beforeAll(async () => {
     MAX_UPLOAD_BYTES: String(64 * 1024 * 1024),
     MAX_PAGES: '0',
     ALLOW_GLOBAL_PARSE_CACHE: 'false',
+    LLM_API_KEY: 'sk-test',
   });
 
   // Imported only now: the modules read the environment as they load, which is

@@ -664,6 +664,47 @@ class Database:
             total,
         )
 
+    async def record_checkpoint(self, *, job_id: str, checkpoint: dict[str, Any] | None) -> None:
+        """Mirror the checkpoint into the job row, for whoever is reading it.
+
+        The authoritative copy is on the `parse_results` row the job is
+        building, because the checkpoint and the partial parse have to be
+        written together or the whole scheme is unsound — a checkpoint saying
+        "page 850 done" beside an artifact holding 800 pages resumes into a
+        document with a hole in it. Nothing reads this copy to make a decision;
+        it is here so that an operator looking at a stuck job in `jobs` can see
+        how far it got without joining to a cache table keyed on hashes.
+
+        `jsonb_set` with `create_if_missing` rather than a whole-payload
+        rewrite, so a job whose payload carries anything else keeps it — and
+        `COALESCE` so a row with a null payload is still writable. Passing
+        `None` removes the key, which is what the final batch does.
+        """
+        if checkpoint is None:
+            await self._pool.execute(
+                """
+                UPDATE jobs
+                   SET payload = COALESCE(payload, '{}'::jsonb) - 'checkpoint',
+                       updated_at = now()
+                 WHERE id = $1
+                """,
+                job_id,
+            )
+            return
+
+        await self._pool.execute(
+            """
+            UPDATE jobs
+               SET payload = jsonb_set(
+                       COALESCE(payload, '{}'::jsonb), '{checkpoint}', $2::jsonb, true
+                   ),
+                   updated_at = now()
+             WHERE id = $1
+            """,
+            job_id,
+            json.dumps(checkpoint),
+        )
+
     async def set_page_counts(self, *, document_id: str, ready: int, total: int | None) -> None:
         """Partial readiness in pages, written as each batch commits.
 

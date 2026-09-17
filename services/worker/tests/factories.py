@@ -100,6 +100,7 @@ class FakeDatabase:
         self.page_counts: list[tuple[int, int | None]] = []
         self.partially_ready: list[str] = []
         self.cancellations: list[dict[str, Any]] = []
+        self.job_checkpoints: list[tuple[str, dict[str, Any] | None]] = []
 
     async def document(self, document_id: str, org_id: str) -> DocumentRecord | None:
         if self._document is None:
@@ -205,6 +206,9 @@ class FakeDatabase:
 
     async def set_page_counts(self, *, document_id: str, ready: int, total: int | None) -> None:
         self.page_counts.append((ready, total))
+
+    async def record_checkpoint(self, *, job_id: str, checkpoint: dict[str, Any] | None) -> None:
+        self.job_checkpoints.append((job_id, checkpoint))
 
     async def mark_partially_ready(self, *, document_id: str) -> None:
         self.partially_ready.append(document_id)

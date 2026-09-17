@@ -11,6 +11,7 @@ the middle looks exactly like a document that came back whole.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from konusbitr_worker.contracts import JOB_CHECKPOINT_VERSION
 from konusbitr_worker.parse.artifact import (
@@ -245,3 +246,40 @@ def test_a_resumed_accumulator_continues_the_numbering() -> None:
     committed = second.extend(elements=[element(17)], pages=[page(17)], images=[], last_page=32)
     assert committed[0].id == "el_0002"
     assert [item.page for item in second.elements] == [1, 2, 17]
+
+
+# ── The VLM budget across batches (Phase 12.3 meets Phase 12.4) ─────────────
+
+
+def test_the_escalation_budget_is_a_document_budget_not_a_batch_one() -> None:
+    """A cap asked once per batch is not a cap.
+
+    The vision tier's escalation path is capped rather than refused: a filing
+    with two hundred illegible pages gets its best fifty. But the batched loop
+    asks the question once per page batch, and passing the whole ceiling each
+    time would let a 900-page document with two bad pages in each of its
+    fifty-six batches spend a hundred and twelve model calls against a ceiling
+    of fifty — one batch at a time, with nothing in the log to say so. What is
+    left of the budget is passed down instead.
+    """
+    from konusbitr_worker.parse import _pages_to_look_at
+
+    inspection = SimpleNamespace(pages=[SimpleNamespace(page_no=n) for n in range(1, 13)])
+    settings = SimpleNamespace(tier_fallback_threshold=0.6, max_vlm_pages_per_job=3)
+    badly_read = [SimpleNamespace(page_no=n, confidence=0.2) for n in (1, 2, 3, 4, 5)]
+
+    spent_whole_ceiling = _pages_to_look_at(
+        inspection, badly_read, settings, advanced=False, enabled=True
+    )
+    assert len(spent_whole_ceiling) == 3
+
+    # Two already spent by earlier batches leaves one.
+    assert _pages_to_look_at(
+        inspection, badly_read, settings, advanced=False, enabled=True, budget=1
+    ) == [1]
+    # And an exhausted budget buys nothing rather than wrapping round to the
+    # full ceiling.
+    assert (
+        _pages_to_look_at(inspection, badly_read, settings, advanced=False, enabled=True, budget=0)
+        == []
+    )

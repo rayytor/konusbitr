@@ -159,6 +159,50 @@ export async function openPdf(
 }
 
 /**
+ * How many pages a file has, read in the browser before it is uploaded.
+ *
+ * Phase 12.3's cost confirmation needs a page count, and needs it *before* the
+ * bytes leave the machine — the whole point of showing somebody a price for a
+ * 400-page advanced parse is that they can decline without having transferred
+ * 400 pages first. The server's own scanner cannot help: it reads the object
+ * the browser has not sent yet.
+ *
+ * Returns `null` rather than raising for a file PDF.js cannot open. This runs
+ * to decorate a confirmation dialog, and a file that is not a readable PDF has
+ * a refusal waiting for it at intake with a far better message than anything
+ * this function could invent.
+ *
+ * The worker is spawned and terminated per call, for the reason the module note
+ * above gives at length: a shared `workerPort` is destroyed by the first
+ * cancelled load and poisons every load after it.
+ */
+export async function countPdfPages(file: Blob): Promise<number | null> {
+  const pdfjs = await loadPdfjs();
+  const port = spawnWorkerPort();
+  const task = pdfjs.getDocument({
+    data: new Uint8Array(await file.arrayBuffer()),
+    worker: pdfjs.PDFWorker.create({ port, name: 'konusbitr-pdf' }),
+    // No rendering happens here, so none of the asset paths a display load
+    // needs are wired up: a page count comes out of the catalogue, and the
+    // cMaps and fonts are only consulted when glyphs are drawn.
+    disableStream: true,
+  });
+
+  try {
+    const document = await task.promise;
+    return document.numPages;
+  } catch {
+    return null;
+  } finally {
+    // `task.destroy()` tears down the document with it, so the document is
+    // never destroyed separately — and the port is ours to terminate, because
+    // a `PDFWorker` built from one did not create it.
+    void task.destroy().catch(() => {});
+    port.terminate();
+  }
+}
+
+/**
  * Why a PDF would not open, in a sentence a reader can act on.
  *
  * `design.md` §23 is explicit that an error names the problem and offers a next

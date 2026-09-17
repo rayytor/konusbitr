@@ -142,8 +142,11 @@ async def run_job(
             "That job refers to a version of the document that is no longer stored.",
         )
 
-    async def announce(stage: JobStage) -> None:
-        await progress.stage(stage, message=STAGE_MESSAGES.get(stage))
+    async def announce(stage: JobStage, message: str | None = None) -> None:
+        # The parse may override the wording for a stage two tiers share — see
+        # `StageReporter`. It never invents a *stage*, which is the part of this
+        # that crosses the runtime boundary.
+        await progress.stage(stage, message=message or STAGE_MESSAGES.get(stage))
 
     cached = await database.parse_artifact(document.content_hash, document.settings_hash)
     #: Chunks written by the batched parse, or `None` when this job did not run
@@ -324,6 +327,19 @@ async def _parse_in_batches(
         # order is chosen for: the chunks for the batch exist at ordinals the
         # resume will write again, every write is an upsert, and the pages are
         # simply read once more.
+        checkpoint = (
+            None
+            if final
+            else {
+                "version": JOB_CHECKPOINT_VERSION,
+                "lastProcessedPage": outcome.pages_done,
+                "totalPages": outcome.page_count,
+                "batchSize": batch_size,
+                "chunksWritten": written,
+                "updatedAt": datetime.now(UTC).isoformat(),
+            }
+        )
+
         await _persist_parse(
             outcome.artifact,
             payload=payload,
@@ -335,19 +351,12 @@ async def _parse_in_batches(
             # is by definition an ingest in progress and is filtered out of
             # every docId cache lookup in both runtimes, so this is the
             # statement that turns a partial parse into a cache entry.
-            checkpoint=(
-                None
-                if final
-                else {
-                    "version": JOB_CHECKPOINT_VERSION,
-                    "lastProcessedPage": outcome.pages_done,
-                    "totalPages": outcome.page_count,
-                    "batchSize": batch_size,
-                    "chunksWritten": written,
-                    "updatedAt": datetime.now(UTC).isoformat(),
-                }
-            ),
+            checkpoint=checkpoint,
         )
+        # Mirrored for whoever reads the job table. Nothing branches on this
+        # copy — the resume reads the one on `parse_results`, which is written
+        # in the same breath as the partial parse it describes.
+        await database.record_checkpoint(job_id=payload.jobId, checkpoint=checkpoint)
 
         await database.set_page_counts(
             document_id=document.id,
@@ -389,6 +398,11 @@ async def _parse_in_batches(
             content_hash=document.content_hash,
             lang_list=list(payload.settings.langList),
             llm=payload.settings.llm,
+            # Phase 12.3's tier selector. It is part of `settings_hash`, so an
+            # advanced parse and a standard one of the same bytes are two cache
+            # entries — and therefore two checkpoint lineages, which is why a
+            # retry at a different quality reads the whole document again.
+            quality=payload.settings.quality.value,
             on_stage=announce,
             batch_size=batch_size,
             resume=resume,

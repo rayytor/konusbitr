@@ -4,8 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–11, 12.1–12.2/4 and 12.4/4 are done; Phase 12.3/4 is the one
-remaining piece of Phase 12.** `cp .env.example .env &&
+**Phases 01–12 are done; Phase 13 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -78,6 +77,51 @@ router and that description becomes a chunk of its own carrying the figure's
 rectangle — so a question only a bar chart can answer retrieves the bar chart.
 `docs/adr/0006-multilingual-tables-figures.md` records all three decisions.
 
+**Phase 12.3/4 reads a page by looking at it, and then makes it tell the
+truth.** Tier 3 is a vision model: a page is rendered at `VLM_DPI`, shown to the
+vision role through the router, and comes back as located blocks **in reading
+order** — which is the one thing neither Docling nor a recogniser can supply,
+and the reason a three-column newsletter has been unparseable until now.
+Headings on a scan, explicitly deferred from Phase 12.1, arrive here.
+
+The model is not trusted with the characters. **Hybrid reconciliation** aligns
+every block against the page's own text layer (PDFium, word by word) or against
+the confidently-recognised OCR words, and the verbatim sequence from that source
+wins inside any box the model drew. A model reads `1,284,567` as `1,234,567` and
+is entirely certain about it; so it will read a date, a case number and a
+dosage. Prose takes the truth outright, a table takes it cell by cell so the
+grid survives, and a block whose box landed on the wrong column is detected and
+left unreconciled rather than overwritten with a neighbouring passage. Every
+element carries `grounded` and a count of what was matched, substituted and
+ungrounded.
+
+The tier is reached two ways and the two are deliberately different shapes.
+`quality: "advanced"` reads **every** page, and a document past
+`MAX_VLM_PAGES_PER_JOB` (50) is **refused** with `too_many_pages` rather than
+truncated — at intake, where a person sees it, and again in the worker, because
+a payload arrives from a queue. A page a recogniser read below
+`TIER_FALLBACK_THRESHOLD` (0.60) is escalated on its own, and that path is
+*capped* rather than refused, because nobody asked for it and nobody is waiting
+to confirm a price. `POST /api/documents/estimate-cost` quotes the bill before a
+byte is uploaded — the browser counts the pages with PDF.js — and the library's
+confirmation dialog is where somebody agrees to it. `ORG_MONTHLY_VLM_USD_CAP`
+refuses a document that would cross an organization's monthly allowance, which
+is recorded in the credit ledger when the job is created rather than when the
+invoice arrives.
+
+**And the licensing boundary is now a property something checks.**
+`docs/licensing.md` accounts for every package on both sides of it;
+`pnpm audit:licenses` runs the Python and Node audits together; and the
+restrictively-licensed parsers are pinned in `docker/advanced-requirements.txt`,
+installed only by the `worker-advanced` Docker stage — which *fails the build*
+without `ENABLE_ADVANCED_PARSERS=true` — and reached only through
+`konusbitr_worker.parse.advanced`. They are **not** a `pyproject.toml` extra,
+and that is the phase's sharpest finding: uv resolves extras together with the
+base dependencies, both packages pin `pillow<11`, and the default build needs
+`pillow>=11` — so as an extra they would have decided what the Apache-2.0 image
+ships. A dependency nobody installs must not be able to touch the image
+everybody runs. `docs/adr/0007-vlm-tier.md` records all of it.
+
 **Phase 12.4/4 makes a long document survivable.** A document longer than
 `WORKER_PAGE_BATCH_SIZE` is no longer read in one pass: it is read, chunked,
 embedded and committed **a batch of pages at a time**, and a batch is a commit
@@ -95,6 +139,12 @@ a broken one, because everything committed was committed properly.
 `POST /api/documents/:id/retry` reads a document again, optionally at different
 settings. `docs/adr/0008-resumable-ingestion.md` records all of it, including
 the ordering bug the resume test caught.
+
+All three tiers run inside a batch, the vision one included: its page
+selection is evaluated against the pages in hand, and the one thing that
+genuinely crosses a batch boundary is handled where it is built — a heading is
+a claim about the *document*, so the section trail is recomputed over
+everything accumulated so far rather than over the batch alone.
 
 The load-bearing rule that came out of it: **a `parse_results` row carrying a
 checkpoint is a parse in progress, not a docId cache entry**, and every cache
@@ -115,9 +165,15 @@ What exists:
   (bucket and dev access key created automatically), a `migrate` one-shot that
   applies the migrations before web and worker start, the web image and the
   worker image — the last with a declared 2GB memory limit, so a regression in
-  the batching is an `OOMKilled` on somebody's laptop rather than a production
-  incident — plus the `local-llm` profile for Ollama. `advanced` is declared
-  and deliberately empty until Phase 12.3. The worker image carries Tesseract
+  the page batching is an `OOMKilled` on somebody's laptop rather than a
+  production incident — plus the `local-llm` profile for Ollama (which now also
+  pulls Qwen2.5-VL when `OLLAMA_VISION_MODEL` is set). `advanced` swaps the
+  worker for one built from the `worker-advanced` stage — `WORKER_REPLICAS=0
+  docker compose --profile advanced up`, because it replaces rather than joins:
+  both consume the same consumer group, and splitting jobs between an image that
+  has the restrictively-licensed parsers and one that does not would parse a
+  document differently depending on which container claimed it. The worker image
+  carries Tesseract
   and the language packs the Phase 12.2 routing sends documents to; adding
   another language is one line in `docker/worker.Dockerfile`.
 - `apps/web` — Next.js 15 with the sepia theme tokens. Better Auth on the
@@ -170,6 +226,8 @@ What exists:
   `queue.py` owns the stream, `runtime.py` the loop (concurrency, per-job
   timeout, retry classification, dead-lettering), `db.py` the worker's own raw
   SQL, `parse/` the Docling pipeline, `parse/ocr/` the OCR tier,
+  `parse/vlm/` the vision tier, `parse/batching.py` the page-batch division and
+  the accumulator a resume rebuilds from, `scratch.py` the per-job disk spill,
   `parse/images.py` and `parse/captions.py` the figure extraction and its
   captions, `chunk/` the layout-aware chunker and the batched embed-and-upsert,
   `ai/` the LiteLLM router (role resolution, offline enforcement, retries,
@@ -184,9 +242,18 @@ What exists:
   which dictionary read a document, `tables.py` recovers a ruled table's grid
   from the page's own rules, and `pipeline.py` composes them and converts into
   the coordinate convention. It has no layout model, so it emits paragraphs and
-  ruled tables and no headings — headings on a scan are Phase 12.3; see
+  ruled tables and no headings — headings on a scan come from `parse/vlm/`; see
   `docs/adr/0005-ocr.md` and `docs/adr/0006-multilingual-tables-figures.md` for
-  why those trades were taken.
+  why those trades were taken. `parse/vlm/` is Phase 12.3's tier and is four
+  modules: `pipeline.py` composes it (render, ask, parse, reconcile),
+  `response.py` absorbs every way a provider can bend a JSON contract while
+  refusing any element whose box will not resolve, `reconcile.py` is the hybrid
+  engine, and `cost.py` mirrors the TypeScript estimate so the ceiling is
+  enforced on both sides of the queue. `parse/textlayer.py` is the evidence it
+  corrects against — PDFium's characters with the rectangle of each word — and
+  `parse/advanced.py` is the licensing seam, which names the AGPL packages as
+  strings inside functions and reports their absence rather than importing
+  them.
 - `packages/db` — the complete Drizzle schema (17 tables, auth included),
   migrations, the `scopedDb(orgId)` multi-tenancy helper with document CRUD
   queries (`listDocuments`, `documentById`, `documentByHashes`,
@@ -233,6 +300,13 @@ What exists:
   the deskew transform and word boxes do not survive its text-cell
   abstraction), and why RapidOCR is primary with Tesseract as a genuinely
   different fallback.
+- `docs/adr/0007-vlm-tier.md` — why the VLM tier is grounded against a text
+  layer rather than trusted, why the page ceiling is a refusal and the
+  escalation a cap, why the estimate is computed twice and pinned, and why the
+  AGPL parsers are a requirements file rather than an optional extra.
+- `docs/licensing.md` — every package on both sides of the boundary, what
+  building the `advanced` image changes about the licence of what you built, and
+  the three independent locks that keep the default build clean.
 - `docs/adr/0006-multilingual-tables-figures.md` — why the language route is a
   per-document decision but the reading *direction* is a per-line one, why both
   image preparations are read when an engine wants both, why a scanned table is
@@ -488,6 +562,25 @@ These cut across many files; violating one breaks the product rather than one fe
   vision role; neither is the default, and an uncaptioned figure is stored and
   located but produces no chunk, because a passage with no text dilutes the
   index. It is the one path that sends document *pixels* anywhere.
+- **A vision model owns structure and never owns characters.** The VLM tier
+  supplies reading order, block types and heading hierarchy — the things nothing
+  else in this pipeline can — and every character it wrote is then replaced by
+  the verbatim sequence from the page's text layer, or from the OCR words above
+  `HIGH_CONFIDENCE_OCR_WORD`, inside the box it drew. Trusting it and verifying
+  downstream does not work: the Phase 10 citation verifier checks quotes against
+  the parse artifact, so a hallucinated digit that got into the artifact
+  verifies perfectly. Prose takes the truth outright; a table takes it cell by
+  cell, because dissolving the grid would lose the model's only contribution. A
+  block whose alignment falls below `GROUNDING_FLOOR` is *not* reconciled —
+  there the box is what is wrong, and substituting would swap one real passage
+  for another, which is worse and much harder to notice.
+- **The VLM page ceiling is a refusal; the escalation is a cap.** `quality:
+  "advanced"` past `MAX_VLM_PAGES_PER_JOB` fails with `too_many_pages` at intake
+  *and* in the worker — a job that reads fifty pages of four hundred has spent
+  what the ceiling was meant to save and produced a document missing seven
+  eighths of itself. Per-page escalation below `TIER_FALLBACK_THRESHOLD` is
+  capped instead, because nobody asked for it and nobody is waiting to confirm a
+  price.
 - **Document text is untrusted data.** It never becomes instructions, never drives
   tool execution, and never reaches Sentry.
 - **Ids are prefixed ULID-ish strings** (`doc_…`, `chk_…`, `org_…`, `key_…`) via a
@@ -540,14 +633,20 @@ These cut across many files; violating one breaks the product rather than one fe
   `.nullish()` rather than `.optional()`. `packages/shared/test/contract.test.ts`
   holds literal `model_dump_json()` output to keep that honest.
 - **Licensing discipline:** the default build must be cleanly Apache-2.0
-  compatible. AGPL/commercially-restricted dependencies (PyMuPDF, Marker) live
-  only behind the Compose `advanced` profile. Asserted by
+  compatible. AGPL/commercially-restricted dependencies (PyMuPDF, Surya) live
+  only behind the Compose `advanced` profile, pinned in
+  `docker/advanced-requirements.txt` and reached only through
+  `konusbitr_worker.parse.advanced`. Asserted by
   `services/worker/tests/test_licensing.py`, which audits the *installed*
   environment rather than the lockfile — a restrictively-licensed package
   almost always arrives as somebody else's transitive dependency, and that is
   visible at install time and not at resolve time. This is the constraint that
   chose the whole OCR stack: PyMuPDF and Marker are the strongest tools for the
-  job and both are AGPL.
+  job and both are AGPL. **They must never be a `pyproject.toml` extra**, even
+  an uninstalled one: uv resolves extras together with the base dependencies,
+  both pin `pillow<11`, and the default build needs `pillow>=11` — so as an
+  extra they would decide what the Apache-2.0 image ships. A dependency nobody
+  installs must not be able to touch the image everybody runs.
 
 ## Commands
 
@@ -577,6 +676,7 @@ pnpm eval:retrieval -- --write           # re-record evals/RESULTS.md (never in 
 pnpm eval:retrieval -- --broken-chunker  # must fail: proves the gate can
 pnpm benchmark:retrieval                 # p95 over 100k chunks, ef_search sweep
 pnpm eval:chat                           # Ragas + citation accuracy
+pnpm audit:licenses                      # both halves; fails on AGPL/GPL in the default build
 ```
 
 Python side (`services/worker`): `uv sync` then `uv run pytest`. Use `uv` — not

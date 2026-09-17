@@ -128,6 +128,34 @@ export const DEFAULT_CHAT_MODELS: Readonly<Partial<Record<LlmProvider, string>>>
   ollama: 'ollama/llama3.2:3b',
 });
 
+/**
+ * The vision model each provider gets when only a provider is named.
+ *
+ * Not simply {@link DEFAULT_CHAT_MODELS}: the two roles diverge wherever a
+ * provider's cheapest chat model cannot see. Mistral's small model is text-only
+ * and Pixtral is the one that reads an image; Ollama's Llama 3.2 3B has no
+ * vision head at all.
+ *
+ * Ollama's entry is Qwen2.5-VL because Phase 12.3 asks the vision role to do
+ * two quite different jobs — describe a figure, and *read a whole page into
+ * structured elements with boxes* — and the second is what separates the
+ * models. Qwen2.5-VL is trained for document grounding and returns coordinates;
+ * Llama 3.2 Vision describes an image and does not. A local deployment that
+ * asked for `quality: "advanced"` against a model that cannot return a box
+ * would get an empty parse rather than an error, which is the failure mode this
+ * project refuses everywhere else.
+ *
+ * Mirrored in `konusbitr_worker.settings.DEFAULT_VISION_MODELS`;
+ * `test_settings.py` pins the two together.
+ */
+export const DEFAULT_VISION_MODELS: Readonly<Partial<Record<LlmProvider, string>>> = Object.freeze({
+  openai: 'gpt-4.1-mini',
+  anthropic: 'claude-sonnet-4-5',
+  google: 'gemini/gemini-2.5-flash',
+  mistral: 'pixtral-12b-2409',
+  ollama: 'ollama/qwen2.5vl:7b',
+});
+
 /** Default rerank model for providers that support reranking. */
 export const DEFAULT_RERANK_MODELS: Readonly<Partial<Record<LlmProvider, string>>> = Object.freeze({
   cohere: 'rerank-v3.5',

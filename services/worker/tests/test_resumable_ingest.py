@@ -218,6 +218,10 @@ async def test_a_crashed_job_resumes_at_the_page_after_the_checkpoint(
     assert row["checkpoint"]["lastProcessedPage"] == 8
     assert row["checkpoint"]["version"] == JOB_CHECKPOINT_VERSION
 
+    # And the job row carries the same thing, for whoever is reading the job
+    # table rather than the cache. Nothing branches on this copy.
+    assert database.job_checkpoints[-1][1]["lastProcessedPage"] == 8
+
     resumed = StubParse(page_count=12)
     outcome = await ingest(
         parse=resumed, database=database, queue=queue, settings=settings, monkeypatch=monkeypatch
@@ -226,8 +230,10 @@ async def test_a_crashed_job_resumes_at_the_page_after_the_checkpoint(
     assert resumed.read == [9, 10, 11, 12]
     assert outcome.page_count == 12
     # And the finished row is a cache entry again, which is what `checkpoint IS
-    # NULL` means everywhere it is read.
+    # NULL` means everywhere it is read. The mirror is cleared with it, so a
+    # finished job does not look half-done in the job table.
     assert database.parse_results[0]["checkpoint"] is None
+    assert database.job_checkpoints[-1][1] is None
 
 
 async def test_a_half_finished_parse_is_never_served_as_a_cache_hit(

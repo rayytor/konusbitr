@@ -14,16 +14,29 @@ The stages, in order, each of which is a module of its own:
 4. **recognise** — the OCR tier over the scanned ones, routed to an engine and
    a dictionary by the document's language. Skipped entirely when there are
    none, which is the ordinary case and must stay free.
-5. **figures** — the embedded images, extracted, filtered and stored; captioned
+5. **look** — Phase 12.3's VLM tier over the pages that asked for it, either
+   because the upload said `quality: "advanced"` or because a recognised page
+   came back below `TIER_FALLBACK_THRESHOLD`. Its reading of a page replaces
+   the other tiers'.
+6. **figures** — the embedded images, extracted, filtered and stored; captioned
    through the vision role when the upload asked for it with `llm: true`.
-6. **thumbnails** — one WebP per page, streamed to storage.
+7. **thumbnails** — one WebP per page, streamed to storage.
 
-Stages 3 and 4 are two readings of one document and they must not overlap. A
-page belongs to exactly one tier, Docling's output for a page outside its tier
-is dropped, and the merge below re-numbers the combined list so that element ids
-remain a reading-order sort across both.
+Stages 3, 4 and 5 are three readings of one document and they must not overlap.
+A page belongs to exactly one tier in the finished artifact: Docling's output
+for a page outside its tier is dropped, the VLM's reading of a page supersedes
+whichever tier read it first, and the merge below re-numbers the combined list
+so that element ids remain a reading-order sort across all three.
 
-Since Phase 12.4 stages 3 through 6 run **per page batch** rather than once
+The VLM tier is *layered on top of* the other two rather than replacing them,
+and that is deliberate. A page the model could not read — a provider outage, a
+rate limit, an answer that was not JSON — still has Docling's or the
+recogniser's reading of it in hand, so the structure of one page degrades
+instead of the document failing. It is also where the reconciliation's evidence
+comes from: the same pass that produced the fallback produced the located words
+the model is corrected against.
+
+Since Phase 12.4 stages 3 through 7 run **per page batch** rather than once
 over the document. The order of the stages within a batch is unchanged and so
 is everything they do; what changes is that the loop around them has a commit
 point. A batch's elements, page rows and figures are handed to the caller, the
@@ -33,9 +46,12 @@ whole of the partial-readiness story, and — because a batch holds only its own
 pages' bitmaps — the whole of the memory story. Stages 1 and 2 stay outside the
 loop: they are about the file rather than about any page of it.
 
-A document smaller than one batch runs exactly one iteration and is byte-for-byte
-what Phase 12.2 produced, which is the overwhelming majority of uploads and the
-reason the loop is invisible in the ordinary case.
+A document smaller than one batch runs exactly one iteration and is what Phase
+12.3 produced, which is the overwhelming majority of uploads and the reason the
+loop is invisible in the ordinary case. One thing genuinely crosses a batch
+boundary and is handled where it is built: the **heading trail**. A section
+title on page 3 scopes pages 4 and 5, so `_apply_section_paths` is recomputed
+over everything accumulated so far rather than over the batch alone.
 
 Progress is reported between them rather than inside them: a stage boundary is
 something a person watching a spinner can be told about truthfully, and a
@@ -63,6 +79,7 @@ from konusbitr_worker.contracts import JobErrorCode, JobStage
 from konusbitr_worker.errors import JobCancelled, JobFailure
 from konusbitr_worker.log import get_logger
 from konusbitr_worker.parse.artifact import (
+    ElementType,
     PageTier,
     ParseArtifact,
     ParsedElement,
@@ -91,11 +108,14 @@ from konusbitr_worker.parse.inspect import (
 )
 from konusbitr_worker.parse.ocr import OcrOptions, OcrPageResult, OcrPipeline, ocr_pages
 from konusbitr_worker.parse.storage import ObjectStore, sha256_of
+from konusbitr_worker.parse.textlayer import TextWord, page_words
 from konusbitr_worker.parse.thumbnails import (
     THUMBNAIL_CONTENT_TYPE,
     render_thumbnails,
     thumbnail_key,
 )
+from konusbitr_worker.parse.vlm import VlmOptions, VlmPageResult, read_pages
+from konusbitr_worker.parse.vlm.reconcile import HIGH_CONFIDENCE_OCR_WORD, ReconciliationReport
 from konusbitr_worker.scratch import ScratchSpace, collect
 from konusbitr_worker.settings import Settings
 
@@ -111,9 +131,24 @@ __all__ = [
 #: How the pipeline is told a stage has begun. The parse decides *when*; the
 #: caller decides what a person is told and where it is published, because a
 #: progress message is product copy and a parser has no business writing it.
-StageReporter = Callable[[JobStage], Awaitable[None]]
+#:
+#: The optional second argument is the one exception, and it exists because two
+#: different things share the `ocr` stage: recognition and the VLM tier. The
+#: caller cannot tell them apart — only the parse knows which it just started —
+#: and "Recognising scanned pages" shown while a vision model reads a
+#: born-digital magazine is a progress line that is simply false. The caller
+#: still owns the default wording; this only lets the parse say *which* of its
+#: two readings is running.
+StageReporter = Callable[..., Awaitable[None]]
 
 logger = get_logger("konusbitr.worker.parse")
+
+#: What a person watching the bar is told while the VLM tier runs.
+#:
+#: Shares `JobStage.ocr` with recognition and says something different, because
+#: they are different things: one is a machine reading a photograph of text, and
+#: the other is a model working out what order a page is read in.
+VLM_STAGE_MESSAGE = "Reading pages with a vision model"
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +198,7 @@ async def parse_document(
     content_hash: str,
     lang_list: Sequence[str] = (),
     llm: bool = False,
+    quality: str = "standard",
     on_stage: StageReporter | None = None,
     batch_size: int | None = None,
     resume: ResumeState | None = None,
@@ -178,23 +214,28 @@ async def parse_document(
     which are about *writes*, in the one place that does any. `on_batch` does
     not break that: it is a callback the caller supplies and this function never
     touches the database. Supplying none still reads the document in batches —
-    that is how the memory ceiling is met — and simply commits nothing, which
-    is what the fixture tests do.
+    that is how the memory ceiling is met — and simply commits nothing, which is
+    what the fixture tests do.
 
-    `lang_list` and `llm` are `settings.langList` and `settings.llm` from the
-    job payload, and they are here rather than in `Settings` because they are
-    properties of the *upload* rather than of the deployment: both are hashed
-    into `settings_hash`, so a document parsed with captions and the same
-    document parsed without them are two cache entries and not one that quietly
-    changed underneath a reader.
+    `lang_list`, `llm` and `quality` are `settings.langList`, `settings.llm` and
+    `settings.quality` from the job payload, and they are here rather than in
+    `Settings` because they are properties of the *upload* rather than of the
+    deployment: all three are hashed into `settings_hash`, so a document parsed
+    with captions and the same document parsed without them are two cache
+    entries and not one that quietly changed underneath a reader. `quality` is
+    the same story one step further on — an `advanced` parse and a `standard`
+    parse of the same bytes are genuinely different artifacts, and the cache key
+    already said so before this phase gave the distinction teeth.
 
     `resume` is a previous run's committed state, and `should_cancel` is asked
-    between pages. Both are the phase's two answers to the same question —
+    between pages. Both are Phase 12.4's two answers to the same question —
     which pages this run is responsible for — and both leave everything already
     committed exactly where it is.
     """
     ocr_options = _ocr_options(settings, lang_list=lang_list)
     recognizer = _recognizer(settings, ocr_options)
+    looker = _looker(settings, quality=quality)
+    advanced = quality == "advanced" and looker is not None
     size = max(batch_size or settings.worker_page_batch_size, 1)
 
     with _temporary_pdf() as path:
@@ -211,11 +252,19 @@ async def parse_document(
                 path,
                 coverage_threshold=settings.text_coverage_threshold,
                 max_pages=settings.max_pages,
-                ocr_available=recognizer is not None,
+                # A page a vision model is about to read is a page that will not
+                # be parsed into silence, which is the whole of what `needs_ocr`
+                # protects against. So an advanced parse satisfies the same
+                # requirement a configured recogniser does.
+                ocr_available=recognizer is not None or advanced,
             )
 
+        _require_within_vlm_budget(inspection, settings, advanced=advanced)
+
         geometries = {page.page_no: page for page in inspection.pages}
-        scanned_pages = set(await _pages_to_recognize(inspection, recognizer, settings))
+        scanned_pages = set(
+            await _pages_to_recognize(inspection, recognizer, settings, advanced=advanced)
+        )
 
         accumulator = ParseAccumulator.resumed(inspection.page_count, resume)
         accumulator.timings.update(timings)
@@ -242,7 +291,11 @@ async def parse_document(
         # langList` or the first batch's text has settled it, later batches
         # inherit it rather than re-identifying from their own pages.
         language_resolved = bool(ocr_options.requested_languages)
-        announced: set[JobStage] = set()
+        announced: set[str] = set()
+        reconciliation = ReconciliationReport()
+        looked_any = False
+        #: Pages spent on the vision model so far, against the document budget.
+        vlm_used = 0
 
         for batch in page_batches(
             page_count=inspection.page_count,
@@ -255,8 +308,8 @@ async def parse_document(
             batch_timings: dict[str, int] = {}
             with _timed(batch_timings, "convert"):
                 if batch.native:
-                    if JobStage.parsing not in announced:
-                        announced.add(JobStage.parsing)
+                    if "parsing" not in announced:
+                        announced.add("parsing")
                         await _announce(on_stage, JobStage.parsing)
                     converter = converter or await asyncio.to_thread(
                         build_converter, settings.worker_parse_threads
@@ -278,8 +331,8 @@ async def parse_document(
             recognized: list[OcrPageResult] = []
             with _timed(batch_timings, "ocr"):
                 if batch.scanned and recognizer is not None:
-                    if JobStage.ocr not in announced:
-                        announced.add(JobStage.ocr)
+                    if "ocr" not in announced:
+                        announced.add("ocr")
                         await _announce(on_stage, JobStage.ocr)
                     recognized = await asyncio.to_thread(
                         ocr_pages,
@@ -301,7 +354,74 @@ async def parse_document(
 
             _raise_if_cancelled(should_cancel, accumulator, inspection.page_count)
 
-            recognized_pages = {result.page_no for result in recognized}
+            looked: list[VlmPageResult] = []
+            with _timed(batch_timings, "vlm"):
+                # Scoped to this batch's pages. The two routes into the tier are
+                # unchanged — `advanced` reads everything, a badly-recognised
+                # page escalates on its own — and both are evaluated against the
+                # pages in hand, because the escalation decision needs *this*
+                # batch's confidences and the budget is a document-level count
+                # the helper already applies.
+                vlm_pages = [
+                    page_no
+                    for page_no in _pages_to_look_at(
+                        inspection,
+                        recognized,
+                        settings,
+                        advanced=advanced,
+                        enabled=looker is not None,
+                        # The escalation cap is a *document* budget, and this
+                        # loop asks per batch — so what is left of it is passed
+                        # down rather than the whole of it. Without this, a
+                        # 900-page filing with two bad pages in each of its
+                        # fifty-six batches would quietly buy a hundred and
+                        # twelve model calls against a ceiling of fifty. An
+                        # `advanced` parse is unaffected: its page count was
+                        # checked against the ceiling before the loop began.
+                        budget=settings.max_vlm_pages_per_job - vlm_used,
+                    )
+                    if batch.first_page <= page_no <= batch.last_page
+                ]
+                if vlm_pages and looker is not None:
+                    # No stage of its own. `JobStage` is the cross-runtime
+                    # contract and `STAGE_PERCENT` is what a reconnecting
+                    # browser replays from, so adding a stage is a contract
+                    # change for a tier that runs on a minority of documents.
+                    # `ocr` is where it sits on the bar — the same position,
+                    # between parsing and chunking.
+                    #
+                    # The *message* is its own, because the stage's default one
+                    # is about recognising scans and this is frequently a vision
+                    # model reading a perfectly legible magazine. A progress line
+                    # a reader can see has to be true.
+                    if "vlm" not in announced:
+                        announced.add("vlm")
+                        await _announce(on_stage, JobStage.ocr, VLM_STAGE_MESSAGE)
+                    truth = await _reconciliation_truth(
+                        path,
+                        vlm_pages,
+                        geometries=geometries,
+                        inspection=inspection,
+                        recognized=recognized,
+                    )
+                    looked = await read_pages(
+                        path,
+                        vlm_pages,
+                        geometries=geometries,
+                        truth=truth,
+                        router=looker,
+                        options=_vlm_options(settings),
+                    )
+                    vlm_used += len(vlm_pages)
+                    for result in looked:
+                        reconciliation.add(result.report)
+
+            _raise_if_cancelled(should_cancel, accumulator, inspection.page_count)
+
+            looked_pages = {result.page_no for result in looked if result.elements}
+            recognized_pages = {result.page_no for result in recognized} - looked_pages
+            looked_any = looked_any or bool(looked_pages)
+
             pages = [
                 ParsedPage(
                     page_no=page_no,
@@ -312,8 +432,10 @@ async def parse_document(
                     # page the inspection called `ocr` and that nothing then
                     # read is a page the standard parser handled, and recording
                     # it otherwise would badge it in the viewer as recognised
-                    # text that no recogniser produced.
-                    tier=PageTier.ocr if page_no in recognized_pages else PageTier.native,
+                    # text that no recogniser produced. A page the vision model
+                    # read is `vlm` however it was tiered before, because that is
+                    # the reading that survived into `contents`.
+                    tier=_tier_of(page_no, looked_pages, recognized_pages),
                 )
                 for page_no in batch.pages
                 if page_no in geometries
@@ -353,17 +475,26 @@ async def parse_document(
 
             for stage, milliseconds in batch_timings.items():
                 accumulator.add_timing(stage, milliseconds)
-            if recognized:
+            if recognized or looked:
                 accumulator.any_recognized = True
-            if parsed.markdown:
+            if parsed.markdown and not looked_pages:
                 accumulator.markdown_parts.append(parsed.markdown)
 
             committed = accumulator.extend(
-                elements=_ordered(parsed, recognized),
+                elements=_ordered(parsed, recognized, looked),
                 pages=pages,
                 images=[image.to_json() for image in images],
                 last_page=batch.last_page,
             )
+
+            if looked_any:
+                # Over everything accumulated, not over this batch. A heading is
+                # a claim about the *document*: a section title the vision model
+                # found on page 3 scopes the born-digital pages 4 and 5 that
+                # follow it, and a trail rebuilt per batch would reset at every
+                # sixteenth page. The elements handed to the caller are the same
+                # objects, so the batch sees its own corrected trail.
+                _apply_section_paths(accumulator.elements)
 
             if on_batch is not None:
                 accumulator.chunks_written = await on_batch(
@@ -384,7 +515,10 @@ async def parse_document(
             # 900-page scan and one the kernel kills at page 400.
             collect()
 
-        _require_something_readable(accumulator.elements, recognized=bool(scanned_pages))
+        _require_something_readable(
+            accumulator.elements,
+            recognized=bool(scanned_pages) or advanced,
+        )
 
     artifact = accumulator.artifact()
     logger.info(
@@ -392,8 +526,11 @@ async def parse_document(
         extra={
             "pages": artifact.page_count,
             "elements": len(artifact.contents),
+            "quality": quality,
             "ocr_pages": sum(1 for page in artifact.pages if page.tier is PageTier.ocr),
+            "vlm_pages": sum(1 for page in artifact.pages if page.tier is PageTier.vlm),
             "figures": len(artifact.images),
+            "reconciliation": reconciliation.to_json(),
             "timings_ms": artifact.timings,
         },
     )
@@ -421,21 +558,40 @@ def _raise_if_cancelled(
         )
 
 
-def _ordered(parsed: DoclingParse, recognized: list[OcrPageResult]) -> list[ParsedElement]:
-    """One batch's two tiers, interleaved into a single reading order.
+def _ordered(
+    parsed: DoclingParse,
+    recognized: list[OcrPageResult],
+    looked: list[VlmPageResult],
+) -> list[ParsedElement]:
+    """One batch's tiers, interleaved into a single reading order.
 
-    A page belongs to exactly one tier, so ordering by page number is enough to
-    interleave them and each page's own order survives a stable sort. Numbering
-    is not done here: the accumulator assigns ids from the running total so
-    that `element_id`'s promise — a lexical sort is a reading-order sort —
-    holds across every batch of the document rather than within one.
+    A page ends up belonging to exactly one tier, so ordering by page number is
+    enough to interleave them and each page's own order survives a stable sort.
+    Numbering is not done here: the accumulator assigns ids from the running
+    total so that `element_id`'s promise — a lexical sort is a reading-order
+    sort — holds across every batch of the document rather than within one.
+
+    **The VLM tier supersedes.** A page it read successfully has its other
+    readings dropped outright, not merged with them: the same paragraph present
+    twice would be retrieved twice, cited from whichever won, and highlighted at
+    two slightly different rectangles. A page it *failed* on keeps whatever
+    Docling or the recogniser made of it, which is the fallback that keeps a
+    provider outage from costing a document.
     """
-    if not recognized:
+    if not recognized and not looked:
         return list(parsed.contents)
 
-    combined: list[ParsedElement] = list(parsed.contents)
+    superseded = {result.page_no for result in looked if result.elements}
+
+    combined: list[ParsedElement] = [
+        element for element in parsed.contents if element.page not in superseded
+    ]
     for result in recognized:
+        if result.page_no in superseded:
+            continue
         combined.extend(result.elements_for_artifact(first_index=0))
+    for vlm_result in looked:
+        combined.extend(vlm_result.elements_for_artifact(first_index=0))
     combined.sort(key=lambda element: element.page)
     return combined
 
@@ -444,6 +600,8 @@ async def _pages_to_recognize(
     inspection: DocumentInspection,
     recognizer: OcrPipeline | None,
     settings: Settings,
+    *,
+    advanced: bool = False,
 ) -> list[int]:
     """The pages the OCR tier will actually read, and nothing speculative.
 
@@ -473,9 +631,212 @@ async def _pages_to_recognize(
     # document that is mostly imaged, and let a scanned signature page inside an
     # otherwise readable report through to the standard parser, which is what
     # used to happen to it.
+    #
+    # Unless a vision model is about to read those pages. `advanced` is the one
+    # state in which an unloadable recogniser costs the document nothing: the
+    # scanned pages have a reader, it is simply a different one, and refusing
+    # here would fail a document this deployment can in fact parse.
     logger.warning("OCR is enabled but no engine could be loaded")
-    require_text_layer(inspection, settings.text_coverage_threshold)
+    if not advanced:
+        require_text_layer(inspection, settings.text_coverage_threshold)
     return []
+
+
+def _require_within_vlm_budget(
+    inspection: DocumentInspection,
+    settings: Settings,
+    *,
+    advanced: bool,
+) -> None:
+    """Refuse an advanced parse of a document longer than the VLM page ceiling.
+
+    Terminal, not retryable: no number of attempts makes a document shorter. It
+    is also checked at intake, in `apps/web/src/lib/ingest/documents.ts`, which
+    is where a person actually sees it — this is the second half of the same
+    rule, here because a job payload arrives from a queue rather than from the
+    endpoint that validated it, and because `MAX_VLM_PAGES_PER_JOB` can be
+    lowered between the two.
+
+    Refusing rather than truncating to the first fifty pages is the point of the
+    guardrail. A job that reads fifty pages of a four-hundred-page filing and
+    calls the result a parse has spent the money the ceiling was meant to save
+    *and* produced a document that is silently missing seven eighths of itself.
+    """
+    if not advanced:
+        return
+    ceiling = settings.max_vlm_pages_per_job
+    if inspection.page_count <= ceiling:
+        return
+
+    raise JobFailure(
+        JobErrorCode.too_many_pages,
+        f"That document has {inspection.page_count} pages, and the advanced parser "
+        f"reads at most {ceiling} in one job. Parse it at standard quality, or "
+        "split it into shorter documents.",
+    )
+
+
+def _pages_to_look_at(
+    inspection: DocumentInspection,
+    recognized: list[OcrPageResult],
+    settings: Settings,
+    *,
+    advanced: bool,
+    enabled: bool,
+    budget: int | None = None,
+) -> list[int]:
+    """Which pages the vision model reads: all of them, or the badly-read ones.
+
+    Two routes in, and they are deliberately different shapes.
+
+    **The upload asked.** `quality: "advanced"` means every page, because the
+    thing being bought is *document-level* structure — a reading order that runs
+    across a spread, a heading hierarchy that holds from the first page to the
+    last. Reading a subset would produce a document whose section paths change
+    tier half-way through. The page count was already checked against the
+    ceiling, so this cannot be unbounded.
+
+    **A page was read badly.** Escalation is per page and opportunistic: a
+    recognised page below `TIER_FALLBACK_THRESHOLD` is one where roughly two
+    words in five were guesses, and looking at it is worth a model call. This
+    route is *capped rather than refused* — the document is fine, and a filing
+    with two hundred illegible pages should get its best fifty rather than an
+    error — which is the opposite of the rule above, for the opposite reason:
+    nobody asked for this and nobody is waiting to confirm a price.
+
+    `budget` is what is left of that cap. It exists because the caller asks
+    once per page batch and the cap is a property of the *document*: passing
+    the full ceiling every time would let a long filing with a couple of bad
+    pages per batch spend several times what the ceiling allows, one batch at a
+    time, with nothing in the log to say so.
+    """
+    if not enabled:
+        return []
+
+    if advanced:
+        return [page.page_no for page in inspection.pages]
+
+    threshold = settings.tier_fallback_threshold
+    if threshold <= 0:
+        return []
+
+    escalated = sorted(result.page_no for result in recognized if result.confidence < threshold)
+    if not escalated:
+        return []
+
+    ceiling = settings.max_vlm_pages_per_job if budget is None else max(budget, 0)
+    if len(escalated) > ceiling:
+        logger.warning(
+            "more pages were read badly than the VLM budget allows; taking the first",
+            extra={"escalated": len(escalated), "budget": ceiling},
+        )
+        escalated = escalated[:ceiling]
+    if not escalated:
+        return []
+
+    logger.info(
+        "escalating badly-recognised pages to the vision model",
+        extra={"pages": len(escalated), "threshold": threshold},
+    )
+    return escalated
+
+
+async def _reconciliation_truth(
+    path: Path,
+    pages: Sequence[int],
+    *,
+    geometries: dict[int, PageGeometry],
+    inspection: DocumentInspection,
+    recognized: list[OcrPageResult],
+) -> dict[int, list[TextWord]]:
+    """The located characters each page's VLM reading will be corrected against.
+
+    Two sources, chosen per page by the tier the page was in before the vision
+    model saw it, and the choice is the phase's own diagram:
+
+    **A born-digital page has a text layer**, and the text layer is not a
+    reading of the page — it *is* the page. Those characters win outright.
+
+    **A scanned page has whatever the recogniser was confident about.** Only the
+    confident words: correcting a model's guess with a recogniser's guess turns
+    two uncertainties into one confident wrong answer, which is worse than
+    leaving the model's reading flagged as ungrounded. See
+    `HIGH_CONFIDENCE_OCR_WORD`.
+
+    A page with neither gets an empty list, which is a supported state and comes
+    back as `grounded=False` elements — the honest statement that what the page
+    says is the model's word alone.
+    """
+    wanted = set(pages)
+    by_page = {result.page_no: result for result in recognized}
+
+    native = [
+        page_no
+        for page_no in pages
+        if page_no not in by_page and inspection.tier_of(page_no) is PageTier.native
+    ]
+    truth: dict[int, list[TextWord]] = {}
+    if native:
+        truth |= await asyncio.to_thread(page_words, path, native, geometries=geometries)
+
+    for page_no, result in by_page.items():
+        if page_no not in wanted:
+            continue
+        truth[page_no] = [
+            TextWord(text=word.text, bbox=word.bbox)
+            for word in result.words
+            if word.confidence >= HIGH_CONFIDENCE_OCR_WORD
+        ]
+
+    return truth
+
+
+def _tier_of(page_no: int, looked: set[int], recognized: set[int]) -> PageTier:
+    """The tier a page's stored text actually came from."""
+    if page_no in looked:
+        return PageTier.vlm
+    if page_no in recognized:
+        return PageTier.ocr
+    return PageTier.native
+
+
+def _vlm_options(settings: Settings) -> VlmOptions:
+    return VlmOptions(
+        dpi=settings.vlm_dpi,
+        max_tokens=settings.vlm_max_tokens,
+        concurrency=settings.vlm_concurrency,
+    )
+
+
+def _looker(settings: Settings, *, quality: str) -> VisionRouter | None:
+    """The vision router for the VLM tier, or `None` when the tier cannot run.
+
+    `None` for three quite different reasons, and only one of them is worth a
+    warning:
+
+    - `VLM_ENABLED=false`. An operator's decision, silently honoured.
+    - Nothing asked for it: `quality` is `standard` and escalation is switched
+      off with `TIER_FALLBACK_THRESHOLD=0`. Building a router to use it on no
+      page would resolve a model and open a circuit breaker for nothing.
+    - **No vision model is configured, and the upload asked for `advanced`.**
+      That one is logged, because the reader asked for something they are not
+      getting. The document still parses at standard quality rather than
+      failing: intake refuses `advanced` when no vision role is configured, so
+      reaching here means the configuration changed between the upload and the
+      job, and losing the document over that would be the wrong trade.
+    """
+    if not settings.vlm_enabled:
+        return None
+    if quality != "advanced" and settings.tier_fallback_threshold <= 0:
+        return None
+
+    router = VisionRouter.configured(settings)
+    if router is None and quality == "advanced":
+        logger.warning(
+            "an advanced parse was requested but no vision model is configured; "
+            "parsing at standard quality instead"
+        )
+    return router
 
 
 def _require_something_readable(contents: list[ParsedElement], *, recognized: bool) -> None:
@@ -537,6 +898,33 @@ def _ocr_options(settings: Settings, *, lang_list: Sequence[str] = ()) -> OcrOpt
         model_dir=settings.ocr_model_dir,
         tables_enabled=settings.ocr_tables_enabled,
     )
+
+
+def _apply_section_paths(elements: list[ParsedElement]) -> None:
+    """Rebuild every element's heading trail over the merged document.
+
+    Only when the VLM tier contributed, and then for *every* element rather than
+    only its own. A heading is a claim about the document, not about the page it
+    sits on: a section title the vision model found on page 3 scopes the
+    born-digital pages 4 and 5 that follow it, and Docling — which was never
+    shown page 3 — cannot know that. Recomputing the trail across the merged
+    list is the only way the two halves agree about where in the document a
+    passage came from, which is what `sectionPath` puts in every chunk header.
+
+    The stack rule is Docling's own: a heading closes every open section at or
+    below its level, and an element's trail is the sections *above* it, so a
+    heading is not inside itself.
+    """
+    stack: list[tuple[int, str]] = []
+    for element in elements:
+        level = element.level if element.type is ElementType.heading else None
+        if level is not None:
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, element.text.strip()))
+        element.section_path = [
+            heading for depth, heading in stack if level is None or depth < level
+        ]
 
 
 def _apply_confidence(pages: list[ParsedPage], recognized: list[OcrPageResult]) -> None:
@@ -777,6 +1165,14 @@ def _timed(timings: dict[str, int], stage: str) -> Iterator[None]:
         timings[stage] = int((time.perf_counter() - started) * 1000)
 
 
-async def _announce(on_stage: StageReporter | None, stage: JobStage) -> None:
-    if on_stage is not None:
+async def _announce(
+    on_stage: StageReporter | None,
+    stage: JobStage,
+    message: str | None = None,
+) -> None:
+    if on_stage is None:
+        return
+    if message is None:
         await on_stage(stage)
+    else:
+        await on_stage(stage, message)

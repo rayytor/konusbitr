@@ -7,6 +7,7 @@ import { parseSettingsFrom, presentDocument, resolveDocument } from '@/lib/inges
 import { IngestError, problemResponse } from '@/lib/ingest/errors';
 import { formatBytes, inspectDocumentStream, settingsHash } from '@/lib/ingest/inspect';
 import { discardTicket, readTicket } from '@/lib/ingest/tickets';
+import { assertAllowed } from '@/lib/ingest/vlm';
 import { storage } from '@/lib/storage';
 
 /**
@@ -138,6 +139,12 @@ export const POST = withAuth(
         await discardTicket(ticket.uploadId);
         throw error;
       }
+
+      // Before anything is created: an `advanced` request this instance cannot
+      // serve, or one that would run past the page ceiling or the monthly cap,
+      // is refused here. The object stays — the bytes are fine and the same
+      // upload can be resubmitted at standard quality without a second transfer.
+      await assertAllowed(auth.orgId, env, settings, inspection.pageCount);
 
       const resolved = await resolveDocument({
         orgId: auth.orgId,
