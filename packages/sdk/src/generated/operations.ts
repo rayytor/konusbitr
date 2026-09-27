@@ -4,24 +4,10 @@
  * regenerates this file and fails on any diff.
  */
 
-import type {
-  ApiDocument,
-  ApiJob,
-  AskRequest,
-  AskResponse,
-  ChatWithAllPdfsRequest,
-  ChatWithPdfRequest,
-  ChatWithPdfResponse,
-  ExtractRequest,
-  ExtractResponse,
-  ParseRequest,
-  ParseResponse,
-  SplitRequest,
-  SplitResponse,
-} from './types.js';
+import type { ApiDocument, ApiJob, AskRequest, AskResponse, ChatWithAllPdfsRequest, ChatWithPdfRequest, ChatWithPdfResponse, ExtractRequest, ExtractResponse, ParseRequest, ParseResponse, SplitRequest, SplitResponse } from './types.js';
 
 /** The API version this SDK was generated from. */
-export const API_VERSION = '0.0.0';
+export const API_VERSION = "0.0.0";
 
 /**
  * Ask a question about a document and get a cited answer
@@ -36,10 +22,10 @@ export const API_VERSION = '0.0.0';
  * an answer with no citations means nothing in the document supported it.
  */
 export const ask = {
-  method: 'POST',
-  path: '/ask',
+  method: "POST",
+  path: "/ask",
   params: [],
-  body: 'json-or-multipart',
+  body: "json-or-multipart",
   status: 200,
   async: true,
 } as const;
@@ -57,10 +43,10 @@ export type AskResult = AskResponse;
  * Prefer `/v2/ask` with `corpus: true` for new integrations.
  */
 export const chatWithAllPdfs = {
-  method: 'POST',
-  path: '/chat-with-all-pdfs',
+  method: "POST",
+  path: "/chat-with-all-pdfs",
   params: [],
-  body: 'json',
+  body: "json",
   status: 200,
   async: false,
 } as const;
@@ -82,10 +68,10 @@ export type ChatWithAllPdfsResult = ChatWithPdfResponse;
  * richer citations and supports `?async=true`.
  */
 export const chatWithPdf = {
-  method: 'POST',
-  path: '/chat-with-pdf',
+  method: "POST",
+  path: "/chat-with-pdf",
   params: [],
-  body: 'json',
+  body: "json",
   status: 200,
   async: false,
 } as const;
@@ -104,10 +90,10 @@ export type ChatWithPdfResult = ChatWithPdfResponse;
  * work that was done on it.
  */
 export const deleteDocument = {
-  method: 'DELETE',
-  path: '/documents/{docId}',
-  params: ['docId'],
-  body: 'none',
+  method: "DELETE",
+  path: "/documents/{docId}",
+  params: ["docId"],
+  body: "none",
   status: 200,
   async: false,
 } as const;
@@ -135,10 +121,10 @@ export type DeleteDocumentResult = {
  * cheapest way to improve an extraction.
  */
 export const extract = {
-  method: 'POST',
-  path: '/extract',
+  method: "POST",
+  path: "/extract",
   params: [],
-  body: 'json-or-multipart',
+  body: "json-or-multipart",
   status: 200,
   async: true,
 } as const;
@@ -156,10 +142,10 @@ export type ExtractResult = ExtractResponse;
  * This is what to poll while a parse is running. It costs nothing.
  */
 export const getDocument = {
-  method: 'GET',
-  path: '/documents/{docId}',
-  params: ['docId'],
-  body: 'none',
+  method: "GET",
+  path: "/documents/{docId}",
+  params: ["docId"],
+  body: "none",
   status: 200,
   async: false,
 } as const;
@@ -180,10 +166,10 @@ export type GetDocumentResult = ApiDocument;
  * Costs nothing to poll.
  */
 export const getJob = {
-  method: 'GET',
-  path: '/jobs/{jobId}',
-  params: ['jobId'],
-  body: 'none',
+  method: "GET",
+  path: "/jobs/{jobId}",
+  params: ["jobId"],
+  body: "none",
   status: 200,
   async: false,
 } as const;
@@ -205,10 +191,10 @@ export type GetJobResult = ApiJob;
  * parse cache: it returns immediately, costs nothing, and sets `cached`.
  */
 export const parse = {
-  method: 'POST',
-  path: '/parse',
+  method: "POST",
+  path: "/parse",
   params: [],
-  body: 'json-or-multipart',
+  body: "json-or-multipart",
   status: 200,
   async: true,
 } as const;
@@ -234,10 +220,10 @@ export type ParseResult = ParseResponse;
  * inherits the pages it covers rather than being read again.
  */
 export const split = {
-  method: 'POST',
-  path: '/split',
+  method: "POST",
+  path: "/split",
   params: [],
-  body: 'json-or-multipart',
+  body: "json-or-multipart",
   status: 200,
   async: true,
 } as const;

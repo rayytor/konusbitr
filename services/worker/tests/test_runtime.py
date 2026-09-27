@@ -152,20 +152,19 @@ async def test_the_last_attempt_dead_letters_instead_of_retrying_again(
     assert database.failures[0]["terminal"] is True
 
 
-async def test_an_unknown_job_type_is_terminal(settings: Settings, queue: FakeQueue) -> None:
-    """Declared in the contract, unimplemented here.
+async def test_a_split_job_without_ranges_is_terminal(settings: Settings, queue: FakeQueue) -> None:
+    """Phase 13 gives `split` a handler, so it no longer dead-letters as unknown.
 
-    `split` is still only vocabulary — it is in `JOB_TYPES` so that both
-    runtimes agree the word exists — and retrying three times before
-    dead-lettering would only delay the same answer, so the handler refuses
-    immediately.
+    A split payload that names no ranges can never succeed, though, and
+    retrying three times before dead-lettering would only delay the same
+    answer, so the handler refuses immediately.
     """
     database = FakeDatabase(make_document())
 
     await runtime(settings, queue, database)._run(delivery(make_payload(type="split")))
 
     assert queue.retries == []
-    assert queue.dead[0]["error_code"] is JobErrorCode.unknown_job_type
+    assert queue.dead[0]["error_code"] is JobErrorCode.invalid_payload
 
 
 async def test_reindex_and_chunk_embed_reach_the_pipeline(

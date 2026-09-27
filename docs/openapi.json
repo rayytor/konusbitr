@@ -30,7 +30,9 @@
         "operationId": "parse",
         "summary": "Parse a document into markdown and located elements",
         "description": "Accepts exactly one of `file` (multipart), `url` or `docId`.\n\nReturns the document as markdown plus a `contents` array in which every\nelement carries its page and its bounding box, in PDF points with the\norigin at the top left of the unrotated page. Figures extracted from the\ndocument are listed in `images`.\n\nA repeat call with the same bytes and the same settings is served from the\nparse cache: it returns immediately, costs nothing, and sets `cached`.",
-        "tags": ["v2"],
+        "tags": [
+          "v2"
+        ],
         "security": [
           {
             "apiKey": []
@@ -64,7 +66,12 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["jobId", "status", "kind", "docId"],
+                  "required": [
+                    "jobId",
+                    "status",
+                    "kind",
+                    "docId"
+                  ],
                   "properties": {
                     "jobId": {
                       "type": "string"
@@ -76,7 +83,10 @@
                       "type": "string"
                     },
                     "docId": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   }
                 }
@@ -220,7 +230,9 @@
         "operationId": "extract",
         "summary": "Extract structured data from a document against a JSON Schema",
         "description": "Accepts exactly one of `file` (multipart), `url` or `docId`, plus a\n`schema` describing the object to produce.\n\nEvery leaf value is returned with a citation carrying the verbatim quote,\nthe page and the `schemaPath` of the value it supports. Quotes are checked\nagainst the parse result before the response is built: a value whose quote\ncannot be found is set to `null` and listed in `unverified` with the\nreason, rather than returned as though it were in the document.\n\nWrite a `description` on each schema property. It is used as the retrieval\nquery for that field on documents too large to read whole, and it is the\ncheapest way to improve an extraction.",
-        "tags": ["v2"],
+        "tags": [
+          "v2"
+        ],
         "security": [
           {
             "apiKey": []
@@ -254,7 +266,12 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["jobId", "status", "kind", "docId"],
+                  "required": [
+                    "jobId",
+                    "status",
+                    "kind",
+                    "docId"
+                  ],
                   "properties": {
                     "jobId": {
                       "type": "string"
@@ -266,7 +283,10 @@
                       "type": "string"
                     },
                     "docId": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   }
                 }
@@ -420,7 +440,9 @@
         "operationId": "split",
         "summary": "Split a document into separate documents",
         "description": "Accepts exactly one of `file` (multipart), `url` or `docId`, plus either\n`ranges` or `mode: \"semantic\"`.\n\n`ranges` takes `\"1-4\"`, `\"7\"`, or `{ start, end, name }`; pages are 1-based\nand both ends are inclusive.\n\n`mode: \"semantic\"` cuts at the parse's own section tree and names each\noutput after the heading it begins at. `level` chooses the heading depth,\ndefault 1. Pages before the first heading become `front-matter.pdf`.\n\nEach output is a full document with its own `docId`, ready to pass to\n`ask` or `extract`. Where the parent has a finished parse, each output\ninherits the pages it covers rather than being read again.",
-        "tags": ["v2"],
+        "tags": [
+          "v2"
+        ],
         "security": [
           {
             "apiKey": []
@@ -454,7 +476,12 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["jobId", "status", "kind", "docId"],
+                  "required": [
+                    "jobId",
+                    "status",
+                    "kind",
+                    "docId"
+                  ],
                   "properties": {
                     "jobId": {
                       "type": "string"
@@ -466,7 +493,10 @@
                       "type": "string"
                     },
                     "docId": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   }
                 }
@@ -610,7 +640,9 @@
         "operationId": "ask",
         "summary": "Ask a question about a document and get a cited answer",
         "description": "Accepts exactly one of `file` (multipart), `url` or `docId`, plus a\n`question`. Pass `corpus: true` with no document to search every ready\ndocument in the organization.\n\nEvery claim in the answer carries a citation, and every citation is\nverified against the parse result for the page it cites before the\nresponse is returned. Citations that cannot be verified are dropped — so\nan answer with no citations means nothing in the document supported it.",
-        "tags": ["v2"],
+        "tags": [
+          "v2"
+        ],
         "security": [
           {
             "apiKey": []
@@ -644,7 +676,12 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["jobId", "status", "kind", "docId"],
+                  "required": [
+                    "jobId",
+                    "status",
+                    "kind",
+                    "docId"
+                  ],
                   "properties": {
                     "jobId": {
                       "type": "string"
@@ -656,7 +693,10 @@
                       "type": "string"
                     },
                     "docId": {
-                      "type": ["string", "null"]
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   }
                 }
@@ -810,7 +850,9 @@
         "operationId": "getDocument",
         "summary": "Fetch a document by id",
         "description": "A document's status and page count. `status` is `queued`, `parsing`,\n`partially_ready`, `ready`, `failed` or `cancelled`; a failed document\ncarries a stable `errorCode` alongside the human-readable `error`.\n\nThis is what to poll while a parse is running. It costs nothing.",
-        "tags": ["v2"],
+        "tags": [
+          "v2"
+        ],
         "security": [
           {
             "apiKey": []
@@ -894,7 +936,9 @@
         "operationId": "deleteDocument",
         "summary": "Delete a document and everything derived from it",
         "description": "Removes the document row, its pages, its chunks and its stored bytes.\n\nThe parse itself survives in the shared parse cache, keyed on the file and\nits settings rather than on this document — so re-uploading the same bytes\nlater is still free. Deleting a document removes your copy of it, not the\nwork that was done on it.",
-        "tags": ["v2"],
+        "tags": [
+          "v2"
+        ],
         "security": [
           {
             "apiKey": []
@@ -927,7 +971,10 @@
                       "const": true
                     }
                   },
-                  "required": ["docId", "deleted"],
+                  "required": [
+                    "docId",
+                    "deleted"
+                  ],
                   "additionalProperties": false
                 }
               }
@@ -991,7 +1038,9 @@
         "operationId": "getJob",
         "summary": "Fetch an asynchronous operation",
         "description": "The status and result of an operation started with `?async=true`.\n\nWhile `status` is `pending` or `running`, `progress` moves from 0 to 100.\nOn `succeeded`, `result` holds exactly the body the synchronous call would\nhave returned. On `failed`, `error` holds exactly the error envelope it\nwould have returned.\n\nCosts nothing to poll.",
-        "tags": ["v2"],
+        "tags": [
+          "v2"
+        ],
         "security": [
           {
             "apiKey": []
@@ -1077,7 +1126,9 @@
         "operationId": "chatWithPdf",
         "summary": "Ask a question about one document (legacy, PDF.ai-compatible)",
         "description": "Compatibility shim over `POST /v2/ask`. Accepts `url` or `docId` plus\n`question` (or its older spelling `prompt`), and returns `content` and\n`references`.\n\nEach reference carries upstream's `page` plus the verbatim `quote`, the\n`docId` and the `bbox` — additive, so an existing client is unaffected.\n\nPrefer `/v2/ask` for new integrations: it returns the same answer with\nricher citations and supports `?async=true`.",
-        "tags": ["legacy"],
+        "tags": [
+          "legacy"
+        ],
         "security": [
           {
             "apiKey": []
@@ -1223,7 +1274,9 @@
         "operationId": "chatWithAllPdfs",
         "summary": "Ask a question across every document (legacy, PDF.ai-compatible)",
         "description": "Compatibility shim over `POST /v2/ask` with `corpus: true`. Searches every\nready document in the organization and returns `content` and `references`,\neach reference naming the `docId` it came from.\n\nPrefer `/v2/ask` with `corpus: true` for new integrations.",
-        "tags": ["legacy"],
+        "tags": [
+          "legacy"
+        ],
         "security": [
           {
             "apiKey": []
@@ -1353,10 +1406,16 @@
             "type": "string"
           },
           "error": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "errorCode": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1395,11 +1454,17 @@
                 "type": "string"
               }
             },
-            "required": ["code", "message", "requestId"],
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ],
             "additionalProperties": false
           }
         },
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "additionalProperties": false
       },
       "ApiErrorCode": {
@@ -1446,7 +1511,10 @@
             "$ref": "#/components/schemas/ApiJobStatus"
           },
           "docId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "progress": {
             "type": "integer",
@@ -1483,7 +1551,11 @@
                     "type": "string"
                   }
                 },
-                "required": ["code", "message", "requestId"],
+                "required": [
+                  "code",
+                  "message",
+                  "requestId"
+                ],
                 "additionalProperties": false
               },
               {
@@ -1513,11 +1585,21 @@
       },
       "ApiJobKind": {
         "type": "string",
-        "enum": ["parse", "extract", "split", "ask"]
+        "enum": [
+          "parse",
+          "extract",
+          "split",
+          "ask"
+        ]
       },
       "ApiJobStatus": {
         "type": "string",
-        "enum": ["pending", "running", "succeeded", "failed"]
+        "enum": [
+          "pending",
+          "running",
+          "succeeded",
+          "failed"
+        ]
       },
       "AskRequest": {
         "type": "object",
@@ -1532,7 +1614,10 @@
           },
           "quality": {
             "type": "string",
-            "enum": ["standard", "advanced"]
+            "enum": [
+              "standard",
+              "advanced"
+            ]
           },
           "lang_list": {
             "type": "array",
@@ -1562,7 +1647,9 @@
             "type": "boolean"
           }
         },
-        "required": ["question"]
+        "required": [
+          "question"
+        ]
       },
       "AskResponse": {
         "type": "object",
@@ -1577,10 +1664,17 @@
             }
           },
           "docId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
-        "required": ["answer", "citations", "docId"],
+        "required": [
+          "answer",
+          "citations",
+          "docId"
+        ],
         "additionalProperties": false
       },
       "BoundingBox": {
@@ -1672,7 +1766,10 @@
             }
           }
         },
-        "required": ["content", "references"],
+        "required": [
+          "content",
+          "references"
+        ],
         "additionalProperties": false
       },
       "Citation": {
@@ -1701,7 +1798,12 @@
             "type": "string"
           }
         },
-        "required": ["quote", "page", "bbox", "chunkId"],
+        "required": [
+          "quote",
+          "page",
+          "bbox",
+          "chunkId"
+        ],
         "additionalProperties": false
       },
       "ExtractedImage": {
@@ -1733,10 +1835,21 @@
             "minLength": 1
           },
           "caption": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
-        "required": ["id", "page", "bbox", "width", "height", "storageKey", "caption"],
+        "required": [
+          "id",
+          "page",
+          "bbox",
+          "width",
+          "height",
+          "storageKey",
+          "caption"
+        ],
         "additionalProperties": false
       },
       "ExtractRequest": {
@@ -1752,7 +1865,10 @@
           },
           "quality": {
             "type": "string",
-            "enum": ["standard", "advanced"]
+            "enum": [
+              "standard",
+              "advanced"
+            ]
           },
           "lang_list": {
             "type": "array",
@@ -1780,7 +1896,9 @@
             "maxLength": 8000
           }
         },
-        "required": ["schema"]
+        "required": [
+          "schema"
+        ]
       },
       "ExtractResponse": {
         "type": "object",
@@ -1811,7 +1929,10 @@
                 },
                 "value": {},
                 "quote": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "page": {
                   "anyOf": [
@@ -1829,12 +1950,23 @@
                   "type": "string"
                 }
               },
-              "required": ["schemaPath", "value", "quote", "page", "reason"],
+              "required": [
+                "schemaPath",
+                "value",
+                "quote",
+                "page",
+                "reason"
+              ],
               "additionalProperties": false
             }
           }
         },
-        "required": ["docId", "result", "citations", "unverified"],
+        "required": [
+          "docId",
+          "result",
+          "citations",
+          "unverified"
+        ],
         "additionalProperties": false
       },
       "LegacyReference": {
@@ -1849,7 +1981,10 @@
             "type": "string"
           },
           "docId": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "bbox": {
             "type": "array",
@@ -1872,7 +2007,12 @@
             "maxItems": 4
           }
         },
-        "required": ["page", "quote", "docId", "bbox"],
+        "required": [
+          "page",
+          "quote",
+          "docId",
+          "bbox"
+        ],
         "additionalProperties": false
       },
       "PageRange": {
@@ -1900,7 +2040,10 @@
                 "maxLength": 200
               }
             },
-            "required": ["start", "end"]
+            "required": [
+              "start",
+              "end"
+            ]
           }
         ]
       },
@@ -1936,10 +2079,16 @@
             "maxItems": 4
           },
           "text": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "markdown": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "headers": {
             "anyOf": [
@@ -1983,7 +2132,10 @@
             ]
           },
           "sectionPath": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2012,7 +2164,10 @@
           },
           "quality": {
             "type": "string",
-            "enum": ["standard", "advanced"]
+            "enum": [
+              "standard",
+              "advanced"
+            ]
           },
           "lang_list": {
             "type": "array",
@@ -2064,7 +2219,14 @@
             "type": "boolean"
           }
         },
-        "required": ["docId", "markdown", "contents", "images", "pageCount", "cached"],
+        "required": [
+          "docId",
+          "markdown",
+          "contents",
+          "images",
+          "pageCount",
+          "cached"
+        ],
         "additionalProperties": false
       },
       "SplitRequest": {
@@ -2080,7 +2242,10 @@
           },
           "quality": {
             "type": "string",
-            "enum": ["standard", "advanced"]
+            "enum": [
+              "standard",
+              "advanced"
+            ]
           },
           "lang_list": {
             "type": "array",
@@ -2105,7 +2270,10 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["ranges", "semantic"]
+            "enum": [
+              "ranges",
+              "semantic"
+            ]
           },
           "level": {
             "type": "integer",
@@ -2140,12 +2308,19 @@
                   }
                 }
               },
-              "required": ["docId", "name", "pages"],
+              "required": [
+                "docId",
+                "name",
+                "pages"
+              ],
               "additionalProperties": false
             }
           }
         },
-        "required": ["docId", "documents"],
+        "required": [
+          "docId",
+          "documents"
+        ],
         "additionalProperties": false
       }
     },

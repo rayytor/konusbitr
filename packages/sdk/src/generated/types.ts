@@ -25,33 +25,7 @@ export type ApiError = {
   };
 };
 
-export type ApiErrorCode =
-  | 'invalid_request'
-  | 'invalid_json'
-  | 'input_conflict'
-  | 'input_missing'
-  | 'invalid_schema'
-  | 'invalid_ranges'
-  | 'invalid_webhook_url'
-  | 'unknown_document'
-  | 'unauthorized'
-  | 'missing_scope'
-  | 'session_required'
-  | 'insufficient_role'
-  | 'not_found'
-  | 'document_not_ready'
-  | 'document_failed'
-  | 'too_large'
-  | 'unsupported_media_type'
-  | 'invalid_document'
-  | 'encrypted_document'
-  | 'needs_ocr'
-  | 'too_many_pages'
-  | 'insufficient_credits'
-  | 'rate_limited'
-  | 'internal'
-  | 'model_unavailable'
-  | 'upstream_unavailable';
+export type ApiErrorCode = "invalid_request" | "invalid_json" | "input_conflict" | "input_missing" | "invalid_schema" | "invalid_ranges" | "invalid_webhook_url" | "unknown_document" | "unauthorized" | "missing_scope" | "session_required" | "insufficient_role" | "not_found" | "document_not_ready" | "document_failed" | "too_large" | "unsupported_media_type" | "invalid_document" | "encrypted_document" | "needs_ocr" | "too_many_pages" | "insufficient_credits" | "rate_limited" | "internal" | "model_unavailable" | "upstream_unavailable";
 
 export type ApiJob = {
   jobId: string;
@@ -70,14 +44,14 @@ export type ApiJob = {
   updatedAt: string;
 };
 
-export type ApiJobKind = 'parse' | 'extract' | 'split' | 'ask';
+export type ApiJobKind = "parse" | "extract" | "split" | "ask";
 
-export type ApiJobStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+export type ApiJobStatus = "pending" | "running" | "succeeded" | "failed";
 
 export type AskRequest = {
   url?: string;
   docId?: string;
-  quality?: 'standard' | 'advanced';
+  quality?: "standard" | "advanced";
   lang_list?: Array<string>;
   llm?: boolean;
   webhook_url?: string;
@@ -136,7 +110,7 @@ export type ExtractedImage = {
 export type ExtractRequest = {
   url?: string;
   docId?: string;
-  quality?: 'standard' | 'advanced';
+  quality?: "standard" | "advanced";
   lang_list?: Array<string>;
   llm?: boolean;
   webhook_url?: string;
@@ -164,13 +138,11 @@ export type LegacyReference = {
   bbox: [number, number, number, number];
 };
 
-export type PageRange =
-  | string
-  | {
-      start: number;
-      end: number;
-      name?: string;
-    };
+export type PageRange = string | {
+  start: number;
+  end: number;
+  name?: string;
+};
 
 export type ParsedElement = {
   type: string;
@@ -187,7 +159,7 @@ export type ParsedElement = {
 export type ParseRequest = {
   url?: string;
   docId?: string;
-  quality?: 'standard' | 'advanced';
+  quality?: "standard" | "advanced";
   lang_list?: Array<string>;
   llm?: boolean;
   webhook_url?: string;
@@ -206,12 +178,12 @@ export type ParseResponse = {
 export type SplitRequest = {
   url?: string;
   docId?: string;
-  quality?: 'standard' | 'advanced';
+  quality?: "standard" | "advanced";
   lang_list?: Array<string>;
   llm?: boolean;
   webhook_url?: string;
   ranges?: Array<PageRange>;
-  mode?: 'ranges' | 'semantic';
+  mode?: "ranges" | "semantic";
   level?: number;
 };
 

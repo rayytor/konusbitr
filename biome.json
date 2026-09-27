@@ -15,7 +15,9 @@
       "!**/.venv",
       "!**/drizzle",
       "!**/*.gen.ts",
-      "!pnpm-lock.yaml"
+      "!pnpm-lock.yaml",
+      "!docs/openapi.json",
+      "!packages/sdk/src/generated"
     ]
   },
   "formatter": {
