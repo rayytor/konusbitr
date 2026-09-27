@@ -575,6 +575,76 @@ class Database:
             json.dumps(checkpoint) if checkpoint is not None else None,
         )
 
+    async def create_split_document(
+        self,
+        *,
+        document_id: str,
+        org_id: str,
+        filename: str,
+        mime: str,
+        byte_size: int,
+        page_count: int,
+        storage_key: str,
+        content_hash: str,
+        settings_hash: str,
+        status: str,
+    ) -> str | None:
+        """Insert one output of a `split`, or find the document that already is it.
+
+        The only place the worker creates a `documents` row. It is here rather
+        than on the TypeScript side for one reason that is not negotiable: the
+        row needs a content hash, the hash is of bytes that do not exist until
+        the parent has been cut, and `documents.content_hash` is `NOT NULL`
+        under a unique index. A row written before the cut would have to carry
+        a placeholder hash, which is exactly the kind of "temporarily wrong"
+        value that the docId cache's correctness cannot survive.
+
+        `ON CONFLICT DO NOTHING` over `(org_id, content_hash, settings_hash)`
+        is what makes a re-delivered split a no-op. Delivery is at-least-once,
+        so the same cut can be produced twice; the second must find the first
+        rather than create a duplicate, and must return *its* id so the job
+        reports the same outputs both times.
+
+        Returns the id of the row that exists afterwards — the new one, or the
+        one that was already there.
+        """
+        async with self._pool.acquire() as connection, connection.transaction():
+            inserted = await connection.fetchval(
+                """
+                INSERT INTO documents (
+                    id, org_id, filename, mime, byte_size, page_count,
+                    storage_key, content_hash, settings_hash, status,
+                    pages_ready, pages_total
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $6, $6)
+                ON CONFLICT (org_id, content_hash, settings_hash) DO NOTHING
+                RETURNING id
+                """,
+                document_id,
+                org_id,
+                filename,
+                mime,
+                byte_size,
+                page_count,
+                storage_key,
+                content_hash,
+                settings_hash,
+                status,
+            )
+            if inserted is not None:
+                return str(inserted)
+
+            existing = await connection.fetchval(
+                """
+                SELECT id FROM documents
+                 WHERE org_id = $1 AND content_hash = $2 AND settings_hash = $3
+                """,
+                org_id,
+                content_hash,
+                settings_hash,
+            )
+            return None if existing is None else str(existing)
+
     async def upsert_chunks(self, rows: list[ChunkRow]) -> None:
         """Write a batch of chunks, replacing whatever held those ordinals.
 

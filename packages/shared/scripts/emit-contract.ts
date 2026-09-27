@@ -32,6 +32,8 @@ import {
   JobProgressSchema,
   JobStageSchema,
   JobTypeSchema,
+  SplitInstructionsSchema,
+  SplitRangeSchema,
   STAGE_PERCENT,
   TERMINAL_JOB_ERROR_CODES,
   TERMINAL_JOB_STAGES,
@@ -81,6 +83,16 @@ const NAMED = [
     JobCheckpointSchema,
     'JobCheckpoint',
     'How far a long ingest has got; a parse_results row carrying one is incomplete.',
+  ],
+  [
+    SplitRangeSchema,
+    'SplitRange',
+    'One output of a split job: a contiguous, 1-based, inclusive run of the parent pages.',
+  ],
+  [
+    SplitInstructionsSchema,
+    'SplitInstructions',
+    'What a split job is being asked to cut. Where to cut is decided on the TypeScript side.',
   ],
 ] as const satisfies readonly (readonly [z.ZodType, string, string])[];
 

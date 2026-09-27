@@ -92,6 +92,44 @@ const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/, {
 });
 
 /**
+ * One output of a `split` job: a contiguous run of the parent's pages, named.
+ *
+ * The *decision* — which pages, called what — is made on the TypeScript side,
+ * where the parse artifact's section tree is read and where a caller's explicit
+ * ranges arrive. What crosses the seam is the conclusion, because the worker is
+ * the half that can open a PDF and write another one, and a worker that also
+ * decided where to cut would need the schema, the heading rules and the request
+ * body as well.
+ *
+ * `start` and `end` are 1-based and inclusive, in the parent's page numbering.
+ */
+export const SplitRangeSchema = z.object({
+  start: z.number().int().positive(),
+  end: z.number().int().positive(),
+  /** Filename for the output document. Already sanitized by the caller. */
+  name: z.string().min(1),
+});
+
+export type SplitRange = z.infer<typeof SplitRangeSchema>;
+
+/** What a `split` job is being asked to cut. */
+export const SplitInstructionsSchema = z.object({
+  ranges: z.array(SplitRangeSchema).min(1),
+  /**
+   * Whether to derive each output's parse from the parent's rather than
+   * re-reading it.
+   *
+   * True whenever the parent has a finished artifact, which is the ordinary
+   * case — the pages have already been read once, and reading them again would
+   * charge for a parse to produce the same elements with different page
+   * numbers. False only when the parent has no artifact to inherit.
+   */
+  inheritParse: z.boolean(),
+});
+
+export type SplitInstructions = z.infer<typeof SplitInstructionsSchema>;
+
+/**
  * The job payload, as it is written to the stream.
  *
  * Everything the worker needs to do the work without asking the web app a
@@ -111,6 +149,15 @@ export const JobPayloadSchema = z.object({
   storageKey: z.string().min(1),
   contentHash: sha256Hex,
   settings: ParseSettingsSchema,
+  /**
+   * Present only on a `split` job, and required by it.
+   *
+   * `nullish` rather than `optional` because this field crosses the language
+   * boundary: pydantic serialises an unset `T | None` as JSON `null` and
+   * `undefined` has no JSON spelling, so a schema accepting only `undefined`
+   * would reject every payload the Python half round-tripped.
+   */
+  split: SplitInstructionsSchema.nullish(),
   /** 1 on first delivery; incremented by the worker when it schedules a retry. */
   attempt: z.number().int().positive(),
   /** When the web app handed the job over. ISO 8601, UTC. */

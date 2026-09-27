@@ -28,7 +28,9 @@ export {
 } from './queries/index.js';
 // Schema tables
 export {
+  type ApiJobRow,
   accounts,
+  apiJobs,
   apiKeys,
   chunks,
   conversations,

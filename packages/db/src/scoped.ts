@@ -107,6 +107,16 @@ export function scopedDb(db: Database, orgId: string) {
       return row;
     },
 
+    /** One job, or `undefined` when this org does not have it. */
+    async jobById(jobId: string) {
+      const [row] = await db
+        .select()
+        .from(schema.jobs)
+        .where(and(eq(schema.jobs.id, jobId), eq(schema.jobs.orgId, orgId)))
+        .limit(1);
+      return row;
+    },
+
     /** Every job in this org that ended in a permanent failure, newest first. */
     listFailedJobs(limit: number) {
       return db
@@ -271,6 +281,36 @@ export function scopedDb(db: Database, orgId: string) {
     /** Query extractions belonging to this org. */
     extractions() {
       return db.select().from(schema.extractions).where(eq(schema.extractions.orgId, orgId));
+    },
+
+    /**
+     * Record a structured extraction against one of this org's documents.
+     *
+     * The schema is stored beside the result on purpose. An extraction read
+     * back a year later is uninterpretable without the shape that was asked
+     * for — "why is `total` missing" has a different answer depending on
+     * whether `total` was ever in the schema.
+     */
+    async createExtraction(input: {
+      id?: string;
+      documentId: string;
+      schema: Record<string, unknown>;
+      result: Record<string, unknown>;
+      citations: Record<string, unknown>[];
+    }) {
+      const [row] = await db
+        .insert(schema.extractions)
+        .values({
+          ...(input.id ? { id: input.id } : {}),
+          orgId,
+          documentId: input.documentId,
+          schema: input.schema,
+          result: input.result,
+          citations: input.citations,
+        })
+        .returning();
+      if (!row) throw new Error('the extraction row could not be created');
+      return row;
     },
 
     /** Query credit ledger entries belonging to this org. */
@@ -496,6 +536,49 @@ export function scopedDb(db: Database, orgId: string) {
         })
         .where(and(eq(schema.documents.id, documentId), eq(schema.documents.orgId, orgId)))
         .returning();
+      return row;
+    },
+
+    /**
+     * The finished parse artifact for one of this org's documents.
+     *
+     * Reached through the document rather than by id, because `parse_results`
+     * has no `org_id`: it is keyed on `(content_hash, settings_hash)` so that
+     * two organizations uploading the same bytes can share one parse. The join
+     * on a document this scope already owns is therefore the tenancy predicate,
+     * and it is the only safe way to read the table from a request.
+     *
+     * `checkpoint IS NULL` is the same filter every other cache reader applies,
+     * and here it means something slightly different but equally load-bearing:
+     * a row still carrying a checkpoint holds the pages read so far and is
+     * missing the rest, so returning it would hand the `/v2` API a `markdown`
+     * that stops two thirds of the way through a document it is calling
+     * complete.
+     */
+    async parseArtifactForDocument(documentId: string) {
+      const [row] = await db
+        .select({
+          id: schema.parseResults.id,
+          markdown: schema.parseResults.markdown,
+          contents: schema.parseResults.contents,
+          pageCount: schema.parseResults.pageCount,
+        })
+        .from(schema.parseResults)
+        .innerJoin(
+          schema.documents,
+          and(
+            eq(schema.documents.contentHash, schema.parseResults.contentHash),
+            eq(schema.documents.settingsHash, schema.parseResults.settingsHash),
+          ),
+        )
+        .where(
+          and(
+            eq(schema.documents.id, documentId),
+            eq(schema.documents.orgId, orgId),
+            isNull(schema.parseResults.checkpoint),
+          ),
+        )
+        .limit(1);
       return row;
     },
 
@@ -818,6 +901,93 @@ export function scopedDb(db: Database, orgId: string) {
         return query.limit(options.limit);
       }
       return query;
+    },
+
+    // ─── The public `/v2` API ────────────────────────────────────────────────
+
+    /**
+     * Record an `?async=true` operation. The row exists before the work does.
+     */
+    async createApiJob(input: {
+      kind: string;
+      documentId?: string | null;
+      webhookUrl?: string | null;
+      requestId?: string | null;
+      apiKeyId?: string | null;
+    }) {
+      const [row] = await db
+        .insert(schema.apiJobs)
+        .values({
+          orgId,
+          kind: input.kind,
+          status: 'pending',
+          documentId: input.documentId ?? null,
+          webhookUrl: input.webhookUrl ?? null,
+          requestId: input.requestId ?? null,
+          apiKeyId: input.apiKeyId ?? null,
+        })
+        .returning();
+      if (!row) throw new Error('the api job row could not be created');
+      return row;
+    },
+
+    /** One async operation, or `undefined` when this org does not have it. */
+    async apiJobById(jobId: string) {
+      const [row] = await db
+        .select()
+        .from(schema.apiJobs)
+        .where(and(eq(schema.apiJobs.id, jobId), eq(schema.apiJobs.orgId, orgId)))
+        .limit(1);
+      return row;
+    },
+
+    /**
+     * Advance an async operation.
+     *
+     * Every field is optional and only what is passed is written, because the
+     * callers update different things at different moments: the runner sets
+     * `running` and then a document id, the pipeline watcher moves `progress`,
+     * and the webhook sender touches only its own two columns long after the
+     * operation itself has finished.
+     */
+    async updateApiJob(
+      jobId: string,
+      patch: {
+        status?: string;
+        documentId?: string | null;
+        progress?: number;
+        result?: Record<string, unknown> | null;
+        error?: Record<string, unknown> | null;
+        webhookAttempts?: number;
+        webhookStatus?: string | null;
+      },
+    ) {
+      const [row] = await db
+        .update(schema.apiJobs)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(schema.apiJobs.id, jobId), eq(schema.apiJobs.orgId, orgId)))
+        .returning();
+      return row;
+    },
+
+    /**
+     * This organization's credit balance: the sum of its ledger.
+     *
+     * A sum rather than a column, and that is the design. A mutated balance is
+     * a number nobody can explain; a ledger answers "why am I out of credits"
+     * with a list of the calls that spent them, with dates and reference ids.
+     * `credit_ledger_org_created_idx` covers the scan, and the row count is
+     * bounded by an organization's own API usage.
+     *
+     * Deltas are negative for spend and positive for a top-up, so the balance
+     * is the plain sum and needs no sign handling at the call site.
+     */
+    async creditBalance(): Promise<number> {
+      const [row] = await db
+        .select({ balance: sql<number>`coalesce(sum(${schema.creditLedger.delta}), 0)::int` })
+        .from(schema.creditLedger)
+        .where(eq(schema.creditLedger.orgId, orgId));
+      return row?.balance ?? 0;
     },
 
     /**

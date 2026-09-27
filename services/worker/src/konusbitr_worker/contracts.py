@@ -111,24 +111,17 @@ class ParseSettings(BaseModel):
     llm: bool
 
 
-class JobPayload(BaseModel):
+class SplitRange(BaseModel):
     """
-    A job as it is written to the konusbitr:jobs stream by the web app.
+    One output of a split job: a contiguous, 1-based, inclusive run of the parent pages.
     """
 
     model_config = ConfigDict(
         extra="forbid",
     )
-    v: Literal[1]
-    jobId: Annotated[str, Field(min_length=1)]
-    type: JobType
-    orgId: Annotated[str, Field(min_length=1)]
-    documentId: Annotated[str, Field(min_length=1)]
-    storageKey: Annotated[str, Field(min_length=1)]
-    contentHash: Annotated[str, Field(pattern="^[0-9a-f]{64}$")]
-    settings: ParseSettings
-    attempt: Annotated[int, Field(gt=0)]
-    enqueuedAt: AwareDatetime
+    start: Annotated[int, Field(gt=0)]
+    end: Annotated[int, Field(gt=0)]
+    name: Annotated[str, Field(min_length=1)]
 
 
 class JobProgress(BaseModel):
@@ -164,6 +157,39 @@ class JobCheckpoint(BaseModel):
     batchSize: Annotated[int, Field(gt=0)]
     chunksWritten: Annotated[int, Field(ge=0)]
     updatedAt: AwareDatetime
+
+
+class SplitInstructions(BaseModel):
+    """
+    What a split job is being asked to cut. Where to cut is decided on the TypeScript side.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    ranges: Annotated[list[SplitRange], Field(min_length=1)]
+    inheritParse: bool
+
+
+class JobPayload(BaseModel):
+    """
+    A job as it is written to the konusbitr:jobs stream by the web app.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    v: Literal[1]
+    jobId: Annotated[str, Field(min_length=1)]
+    type: JobType
+    orgId: Annotated[str, Field(min_length=1)]
+    documentId: Annotated[str, Field(min_length=1)]
+    storageKey: Annotated[str, Field(min_length=1)]
+    contentHash: Annotated[str, Field(pattern="^[0-9a-f]{64}$")]
+    settings: ParseSettings
+    split: SplitInstructions | None = None
+    attempt: Annotated[int, Field(gt=0)]
+    enqueuedAt: AwareDatetime
 
 
 # ─── Transport constants ─────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ from konusbitr_worker.progress import ProgressReporter
 from konusbitr_worker.queue import Delivery, JobQueue, UndecodableEntry
 from konusbitr_worker.scratch import sweep_orphans
 from konusbitr_worker.settings import Settings
+from konusbitr_worker.split_job import run_split
 
 __all__ = ["WorkerRuntime"]
 
@@ -288,21 +289,21 @@ class WorkerRuntime:
         )
         await progress.stage(
             JobStage.ready,
-            message="Reused an earlier parse" if outcome.reused else "Ready",
+            message=outcome.ready_message(),
         )
         await self._queue.ack(delivery.entry_id)
         logger.info("job finished", extra={"reused": outcome.reused})
 
     #: Job types the pipeline knows how to run.
     #:
-    #: All three go to the same handler, which differs only in which
+    #: The first three go to one handler, which differs only in which
     #: short-circuits it applies: `parse` does everything that is not already
     #: done, `chunk_embed` skips the parse, and `reindex` re-chunks and
-    #: re-embeds unconditionally. `split` is still only vocabulary — it is in
-    #: the contract so both runtimes agree the word exists — and an unknown
-    #: type stays terminal rather than retrying three times to reach the same
-    #: dead-letter list.
-    _HANDLED = frozenset({JobType.parse, JobType.chunk_embed, JobType.reindex})
+    #: re-embeds unconditionally. `split` is a different shape of work
+    #: entirely — it creates documents rather than advancing one — so it has
+    #: its own entry point. An unknown type stays terminal rather than
+    #: retrying three times to reach the same dead-letter list.
+    _PARSE_TYPES = frozenset({JobType.parse, JobType.chunk_embed, JobType.reindex})
 
     async def _handle(
         self,
@@ -310,7 +311,7 @@ class WorkerRuntime:
         progress: ProgressReporter,
         cancelled: Callable[[], bool],
     ) -> JobOutcome:
-        if payload.type in self._HANDLED:
+        if payload.type in self._PARSE_TYPES:
             return await run_job(
                 payload,
                 database=self._database,
@@ -319,6 +320,20 @@ class WorkerRuntime:
                 store=self._store,
                 cancelled=cancelled,
             )
+
+        if payload.type is JobType.split:
+            outcome = await run_split(
+                payload,
+                database=self._database,
+                progress=progress,
+                settings=self._settings,
+                store=self._store,
+            )
+            # Reported against the *parent*, whose page count this job did not
+            # change. `complete_job` coalesces a `None` onto the existing
+            # value, so passing one is how a job says "I touched this document
+            # but its pages are not mine to restate".
+            return JobOutcome(page_count=None, reused=False, split=outcome)
 
         raise JobFailure(
             JobErrorCode.unknown_job_type,

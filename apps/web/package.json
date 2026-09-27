@@ -16,7 +16,9 @@
     "clean": "rm -rf .turbo .next node_modules *.tsbuildinfo",
     "test:integration": "vitest run -c vitest.config.integration.ts",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "openapi:emit": "tsx scripts/emit-openapi.ts",
+    "openapi:check": "tsx scripts/emit-openapi.ts && git diff --exit-code -- ../../docs/openapi.json"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.127",
@@ -32,6 +34,7 @@
     "better-auth": "^1.7.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "hono": "^4.13.8",
     "ioredis": "^6.0.0",
     "lucide-react": "^1.45.0",
     "next": "^15.5.25",
@@ -60,6 +63,7 @@
     "tailwindcss": "^4.3.3",
     "testcontainers": "^12.1.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "tsx": "^4.23.13"
   }
 }

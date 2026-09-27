@@ -38,6 +38,8 @@ export const ID_PREFIXES = {
   message: 'msg',
   extraction: 'ext',
   job: 'job',
+  /** An `?async=true` operation on the public `/v2` API. */
+  apiJob: 'ajob',
   creditLedger: 'crl',
   documentEmbedding: 'demb',
 } as const;

@@ -99,13 +99,31 @@ class JobOutcome:
     reused: bool = False
     #: Chunking and embedding, when this job did any.
     embed: EmbedReport | None = None
+    #: What a `split` produced. Typed loosely to keep this module free of an
+    #: import from `split_job`, which imports two helpers from here.
+    split: Any | None = None
 
     def result(self) -> dict[str, Any]:
-        """The `jobs.result` payload an operator reads."""
+        """The `jobs.result` payload an operator reads.
+
+        A split's outputs are also read from here by `POST /v2/split`, which is
+        why the row is the durable record rather than a convenience: the list of
+        documents a cut produced has to survive the connection the caller was
+        waiting on.
+        """
+        if self.split is not None:
+            return self.split.result()
         payload: dict[str, Any] = {"reused": self.reused, "pages": self.page_count}
         if self.embed is not None:
             payload |= self.embed.to_json()
         return payload
+
+    def ready_message(self) -> str:
+        """The last thing a person watching a spinner is told."""
+        if self.split is not None:
+            count = len(self.split.documents)
+            return f"Split into {count} document{'' if count == 1 else 's'}"
+        return "Reused an earlier parse" if self.reused else "Ready"
 
 
 async def run_job(

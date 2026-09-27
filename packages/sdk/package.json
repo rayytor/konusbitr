@@ -1,20 +1,53 @@
 {
   "name": "@konusbitr/sdk",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "private": false,
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
+    "generate": "tsx scripts/generate.ts",
+    "generate:check": "tsx scripts/generate.ts && git diff --exit-code -- src/generated",
+    "build": "tsc -p tsconfig.build.json",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf .turbo node_modules *.tsbuildinfo"
+    "test": "vitest run",
+    "clean": "rm -rf .turbo dist node_modules *.tsbuildinfo"
   },
   "devDependencies": {
     "@konusbitr/tsconfig": "workspace:*",
-    "typescript": "^5.9.3"
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "description": "TypeScript client for the Konusbitr API \u2014 parse, extract, split and ask, with verified citations.",
+  "keywords": [
+    "pdf",
+    "ocr",
+    "rag",
+    "citations",
+    "konusbitr",
+    "pdf.ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rayytor/Konusbitr.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/rayytor/Konusbitr/tree/main/packages/sdk#readme",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -3,6 +3,7 @@
  * migration runner can discover the full schema from a single import.
  */
 
+export { type ApiJobRow, apiJobs } from './api-jobs.js';
 export { apiKeys } from './api-keys.js';
 export {
   accounts,

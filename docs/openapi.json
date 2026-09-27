@@ -1,0 +1,2166 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Konusbitr API",
+    "version": "0.0.0",
+    "description": "Parse, extract from, split and ask questions about documents, with\npage-accurate citations that are verified against the source before\nthey are returned.\n\nWire-compatible with `api.pdf.ai/v2`: an existing integration can be\nrepointed by changing the base URL. Every long-running endpoint also\naccepts `?async=true`, which upstream does not.\n\nAuthenticate with an API key in the `X-API-Key` header. Keys are issued\nper organization and carry scopes; an endpoint names the scope it needs.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://konusbitr.example.com"
+    }
+  ],
+  "tags": [
+    {
+      "name": "v2",
+      "description": "The current API."
+    },
+    {
+      "name": "legacy",
+      "description": "PDF.ai-compatible v1 endpoints. Prefer the v2 equivalents."
+    }
+  ],
+  "paths": {
+    "/parse": {
+      "post": {
+        "operationId": "parse",
+        "summary": "Parse a document into markdown and located elements",
+        "description": "Accepts exactly one of `file` (multipart), `url` or `docId`.\n\nReturns the document as markdown plus a `contents` array in which every\nelement carries its page and its bounding box, in PDF points with the\norigin at the top left of the unrotated page. Figures extracted from the\ndocument are listed in `images`.\n\nA repeat call with the same bytes and the same settings is served from the\nparse cache: it returns immediately, costs nothing, and sets `cached`.",
+        "tags": ["v2"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "async",
+            "in": "query",
+            "required": false,
+            "description": "Return `202 { jobId }` immediately instead of waiting. Poll `GET /v2/jobs/{jobId}`, or give a `webhook_url` to be called on completion.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Parse a document into markdown and located elements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted for asynchronous processing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["jobId", "status", "kind", "docId"],
+                  "properties": {
+                    "jobId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "docId": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`error.code` is one of: input_conflict, input_missing, invalid_json, invalid_request, invalid_webhook_url, unknown_document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`error.code` is one of: insufficient_credits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`error.code` is one of: document_failed, document_not_ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`error.code` is one of: too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`error.code` is one of: unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`error.code` is one of: encrypted_document, invalid_document, needs_ocr, too_many_pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParseRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ParseRequest"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "format": "binary",
+                        "description": "The document itself. Mutually exclusive with `url` and `docId`."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/extract": {
+      "post": {
+        "operationId": "extract",
+        "summary": "Extract structured data from a document against a JSON Schema",
+        "description": "Accepts exactly one of `file` (multipart), `url` or `docId`, plus a\n`schema` describing the object to produce.\n\nEvery leaf value is returned with a citation carrying the verbatim quote,\nthe page and the `schemaPath` of the value it supports. Quotes are checked\nagainst the parse result before the response is built: a value whose quote\ncannot be found is set to `null` and listed in `unverified` with the\nreason, rather than returned as though it were in the document.\n\nWrite a `description` on each schema property. It is used as the retrieval\nquery for that field on documents too large to read whole, and it is the\ncheapest way to improve an extraction.",
+        "tags": ["v2"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "async",
+            "in": "query",
+            "required": false,
+            "description": "Return `202 { jobId }` immediately instead of waiting. Poll `GET /v2/jobs/{jobId}`, or give a `webhook_url` to be called on completion.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Extract structured data from a document against a JSON Schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted for asynchronous processing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["jobId", "status", "kind", "docId"],
+                  "properties": {
+                    "jobId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "docId": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`error.code` is one of: input_conflict, input_missing, invalid_json, invalid_request, invalid_schema, invalid_webhook_url, unknown_document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`error.code` is one of: insufficient_credits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`error.code` is one of: document_failed, document_not_ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`error.code` is one of: too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`error.code` is one of: unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`error.code` is one of: encrypted_document, invalid_document, needs_ocr, too_many_pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`error.code` is one of: model_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ExtractRequest"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "format": "binary",
+                        "description": "The document itself. Mutually exclusive with `url` and `docId`."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/split": {
+      "post": {
+        "operationId": "split",
+        "summary": "Split a document into separate documents",
+        "description": "Accepts exactly one of `file` (multipart), `url` or `docId`, plus either\n`ranges` or `mode: \"semantic\"`.\n\n`ranges` takes `\"1-4\"`, `\"7\"`, or `{ start, end, name }`; pages are 1-based\nand both ends are inclusive.\n\n`mode: \"semantic\"` cuts at the parse's own section tree and names each\noutput after the heading it begins at. `level` chooses the heading depth,\ndefault 1. Pages before the first heading become `front-matter.pdf`.\n\nEach output is a full document with its own `docId`, ready to pass to\n`ask` or `extract`. Where the parent has a finished parse, each output\ninherits the pages it covers rather than being read again.",
+        "tags": ["v2"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "async",
+            "in": "query",
+            "required": false,
+            "description": "Return `202 { jobId }` immediately instead of waiting. Poll `GET /v2/jobs/{jobId}`, or give a `webhook_url` to be called on completion.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Split a document into separate documents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SplitResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted for asynchronous processing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["jobId", "status", "kind", "docId"],
+                  "properties": {
+                    "jobId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "docId": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`error.code` is one of: input_conflict, input_missing, invalid_json, invalid_ranges, invalid_request, invalid_webhook_url, unknown_document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`error.code` is one of: insufficient_credits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`error.code` is one of: document_failed, document_not_ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`error.code` is one of: too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`error.code` is one of: unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`error.code` is one of: encrypted_document, invalid_document, needs_ocr, too_many_pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SplitRequest"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "format": "binary",
+                        "description": "The document itself. Mutually exclusive with `url` and `docId`."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ask": {
+      "post": {
+        "operationId": "ask",
+        "summary": "Ask a question about a document and get a cited answer",
+        "description": "Accepts exactly one of `file` (multipart), `url` or `docId`, plus a\n`question`. Pass `corpus: true` with no document to search every ready\ndocument in the organization.\n\nEvery claim in the answer carries a citation, and every citation is\nverified against the parse result for the page it cites before the\nresponse is returned. Citations that cannot be verified are dropped — so\nan answer with no citations means nothing in the document supported it.",
+        "tags": ["v2"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "async",
+            "in": "query",
+            "required": false,
+            "description": "Return `202 { jobId }` immediately instead of waiting. Poll `GET /v2/jobs/{jobId}`, or give a `webhook_url` to be called on completion.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ask a question about a document and get a cited answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted for asynchronous processing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["jobId", "status", "kind", "docId"],
+                  "properties": {
+                    "jobId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "docId": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`error.code` is one of: input_conflict, input_missing, invalid_json, invalid_request, invalid_webhook_url, unknown_document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`error.code` is one of: insufficient_credits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`error.code` is one of: document_failed, document_not_ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`error.code` is one of: too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`error.code` is one of: unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`error.code` is one of: encrypted_document, invalid_document, needs_ocr, too_many_pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`error.code` is one of: model_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AskRequest"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "format": "binary",
+                        "description": "The document itself. Mutually exclusive with `url` and `docId`."
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{docId}": {
+      "get": {
+        "operationId": "getDocument",
+        "summary": "Fetch a document by id",
+        "description": "A document's status and page count. `status` is `queued`, `parsing`,\n`partially_ready`, `ready`, `failed` or `cancelled`; a failed document\ncarries a stable `errorCode` alongside the human-readable `error`.\n\nThis is what to poll while a parse is running. It costs nothing.",
+        "tags": ["v2"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "docId",
+            "in": "path",
+            "required": true,
+            "description": "The document id returned by any endpoint.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fetch a document by id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`error.code` is one of: not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteDocument",
+        "summary": "Delete a document and everything derived from it",
+        "description": "Removes the document row, its pages, its chunks and its stored bytes.\n\nThe parse itself survives in the shared parse cache, keyed on the file and\nits settings rather than on this document — so re-uploading the same bytes\nlater is still free. Deleting a document removes your copy of it, not the\nwork that was done on it.",
+        "tags": ["v2"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "docId",
+            "in": "path",
+            "required": true,
+            "description": "The document id to delete.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delete a document and everything derived from it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "docId": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": ["docId", "deleted"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`error.code` is one of: not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{jobId}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "Fetch an asynchronous operation",
+        "description": "The status and result of an operation started with `?async=true`.\n\nWhile `status` is `pending` or `running`, `progress` moves from 0 to 100.\nOn `succeeded`, `result` holds exactly the body the synchronous call would\nhave returned. On `failed`, `error` holds exactly the error envelope it\nwould have returned.\n\nCosts nothing to poll.",
+        "tags": ["v2"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "description": "The job id returned by an `?async=true` call.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fetch an asynchronous operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`error.code` is one of: not_found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat-with-pdf": {
+      "post": {
+        "operationId": "chatWithPdf",
+        "summary": "Ask a question about one document (legacy, PDF.ai-compatible)",
+        "description": "Compatibility shim over `POST /v2/ask`. Accepts `url` or `docId` plus\n`question` (or its older spelling `prompt`), and returns `content` and\n`references`.\n\nEach reference carries upstream's `page` plus the verbatim `quote`, the\n`docId` and the `bbox` — additive, so an existing client is unaffected.\n\nPrefer `/v2/ask` for new integrations: it returns the same answer with\nricher citations and supports `?async=true`.",
+        "tags": ["legacy"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Ask a question about one document (legacy, PDF.ai-compatible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatWithPdfResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`error.code` is one of: input_conflict, input_missing, invalid_json, invalid_request, invalid_webhook_url, unknown_document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "`error.code` is one of: insufficient_credits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`error.code` is one of: document_failed, document_not_ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`error.code` is one of: too_large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`error.code` is one of: unsupported_media_type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`error.code` is one of: encrypted_document, invalid_document, needs_ocr, too_many_pages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`error.code` is one of: model_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatWithPdfRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chat-with-all-pdfs": {
+      "post": {
+        "operationId": "chatWithAllPdfs",
+        "summary": "Ask a question across every document (legacy, PDF.ai-compatible)",
+        "description": "Compatibility shim over `POST /v2/ask` with `corpus: true`. Searches every\nready document in the organization and returns `content` and `references`,\neach reference naming the `docId` it came from.\n\nPrefer `/v2/ask` with `corpus: true` for new integrations.",
+        "tags": ["legacy"],
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Ask a question across every document (legacy, PDF.ai-compatible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatWithPdfResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`error.code` is one of: invalid_json, invalid_request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`error.code` is one of: unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`error.code` is one of: missing_scope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`error.code` is one of: rate_limited.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "`error.code` is one of: internal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`error.code` is one of: model_unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatWithAllPdfsRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiDocument": {
+        "type": "object",
+        "properties": {
+          "docId": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "pageCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "byteSize": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "error": {
+            "type": ["string", "null"]
+          },
+          "errorCode": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": [
+          "docId",
+          "filename",
+          "status",
+          "pageCount",
+          "byteSize",
+          "createdAt",
+          "updatedAt",
+          "error",
+          "errorCode"
+        ],
+        "additionalProperties": false
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ApiErrorCode"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "requestId": {
+                "type": "string"
+              }
+            },
+            "required": ["code", "message", "requestId"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["error"],
+        "additionalProperties": false
+      },
+      "ApiErrorCode": {
+        "type": "string",
+        "enum": [
+          "invalid_request",
+          "invalid_json",
+          "input_conflict",
+          "input_missing",
+          "invalid_schema",
+          "invalid_ranges",
+          "invalid_webhook_url",
+          "unknown_document",
+          "unauthorized",
+          "missing_scope",
+          "session_required",
+          "insufficient_role",
+          "not_found",
+          "document_not_ready",
+          "document_failed",
+          "too_large",
+          "unsupported_media_type",
+          "invalid_document",
+          "encrypted_document",
+          "needs_ocr",
+          "too_many_pages",
+          "insufficient_credits",
+          "rate_limited",
+          "internal",
+          "model_unavailable",
+          "upstream_unavailable"
+        ]
+      },
+      "ApiJob": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ApiJobKind"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApiJobStatus"
+          },
+          "docId": {
+            "type": ["string", "null"]
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "result": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "$ref": "#/components/schemas/ApiErrorCode"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "details": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "requestId": {
+                    "type": "string"
+                  }
+                },
+                "required": ["code", "message", "requestId"],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobId",
+          "kind",
+          "status",
+          "docId",
+          "progress",
+          "result",
+          "error",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "ApiJobKind": {
+        "type": "string",
+        "enum": ["parse", "extract", "split", "ask"]
+      },
+      "ApiJobStatus": {
+        "type": "string",
+        "enum": ["pending", "running", "succeeded", "failed"]
+      },
+      "AskRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "docId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quality": {
+            "type": "string",
+            "enum": ["standard", "advanced"]
+          },
+          "lang_list": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "llm": {
+            "type": "boolean"
+          },
+          "webhook_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "language": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 32
+          },
+          "corpus": {
+            "type": "boolean"
+          }
+        },
+        "required": ["question"]
+      },
+      "AskResponse": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "docId": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["answer", "citations", "docId"],
+        "additionalProperties": false
+      },
+      "BoundingBox": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "number"
+          }
+        ],
+        "items": false,
+        "minItems": 4,
+        "maxItems": 4
+      },
+      "ChatWithAllPdfsRequest": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "language": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 32
+          },
+          "docIds": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "ChatWithPdfRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "docId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "language": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 32
+          }
+        }
+      },
+      "ChatWithPdfResponse": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegacyReference"
+            }
+          }
+        },
+        "required": ["content", "references"],
+        "additionalProperties": false
+      },
+      "Citation": {
+        "type": "object",
+        "properties": {
+          "quote": {
+            "type": "string",
+            "minLength": 1
+          },
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "bbox": {
+            "$ref": "#/components/schemas/BoundingBox"
+          },
+          "chunkId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "documentId": {
+            "type": "string"
+          },
+          "schemaPath": {
+            "type": "string"
+          }
+        },
+        "required": ["quote", "page", "bbox", "chunkId"],
+        "additionalProperties": false
+      },
+      "ExtractedImage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "bbox": {
+            "$ref": "#/components/schemas/BoundingBox"
+          },
+          "width": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "height": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "storageKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "caption": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["id", "page", "bbox", "width", "height", "storageKey", "caption"],
+        "additionalProperties": false
+      },
+      "ExtractRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "docId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quality": {
+            "type": "string",
+            "enum": ["standard", "advanced"]
+          },
+          "lang_list": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "llm": {
+            "type": "boolean"
+          },
+          "webhook_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "schema": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "system_prompt": {
+            "type": "string",
+            "maxLength": 8000
+          }
+        },
+        "required": ["schema"]
+      },
+      "ExtractResponse": {
+        "type": "object",
+        "properties": {
+          "docId": {
+            "type": "string"
+          },
+          "result": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Citation"
+            }
+          },
+          "unverified": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "schemaPath": {
+                  "type": "string"
+                },
+                "value": {},
+                "quote": {
+                  "type": ["string", "null"]
+                },
+                "page": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": ["schemaPath", "value", "quote", "page", "reason"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["docId", "result", "citations", "unverified"],
+        "additionalProperties": false
+      },
+      "LegacyReference": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "quote": {
+            "type": "string"
+          },
+          "docId": {
+            "type": ["string", "null"]
+          },
+          "bbox": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "items": false,
+            "minItems": 4,
+            "maxItems": 4
+          }
+        },
+        "required": ["page", "quote", "docId", "bbox"],
+        "additionalProperties": false
+      },
+      "PageRange": {
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^\\d+(-\\d+)?$"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "end": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "required": ["start", "end"]
+          }
+        ]
+      },
+      "ParsedElement": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "bbox": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "items": false,
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "text": {
+            "type": ["string", "null"]
+          },
+          "markdown": {
+            "type": ["string", "null"]
+          },
+          "headers": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sectionPath": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": [
+          "type",
+          "page",
+          "bbox",
+          "text",
+          "markdown",
+          "headers",
+          "rows",
+          "level",
+          "sectionPath"
+        ],
+        "additionalProperties": false
+      },
+      "ParseRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "docId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quality": {
+            "type": "string",
+            "enum": ["standard", "advanced"]
+          },
+          "lang_list": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "llm": {
+            "type": "boolean"
+          },
+          "webhook_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "ParseResponse": {
+        "type": "object",
+        "properties": {
+          "docId": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "contents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParsedElement"
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExtractedImage"
+            }
+          },
+          "pageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "cached": {
+            "type": "boolean"
+          }
+        },
+        "required": ["docId", "markdown", "contents", "images", "pageCount", "cached"],
+        "additionalProperties": false
+      },
+      "SplitRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "docId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quality": {
+            "type": "string",
+            "enum": ["standard", "advanced"]
+          },
+          "lang_list": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "llm": {
+            "type": "boolean"
+          },
+          "webhook_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "ranges": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageRange"
+            }
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["ranges", "semantic"]
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4
+          }
+        }
+      },
+      "SplitResponse": {
+        "type": "object",
+        "properties": {
+          "docId": {
+            "type": "string"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "docId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "pages": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "required": ["docId", "name", "pages"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["docId", "documents"],
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Scopes: parse, extract, split, ask, chat, documents:read, documents:write."
+      }
+    }
+  },
+  "security": [
+    {
+      "apiKey": []
+    }
+  ]
+}

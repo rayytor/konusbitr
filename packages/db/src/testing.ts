@@ -85,6 +85,15 @@ export async function recordParseResult(
     contentHash: string;
     settingsHash: string;
     pageCount?: number;
+    /**
+     * The artifact body, for a test that reads it back.
+     *
+     * Defaulted, because most callers only need a cache entry to exist. The
+     * Phase 13 API suite is the exception: `/v2/parse` returns the elements out
+     * of this column, so a test of it has to be able to put real ones in.
+     */
+    contents?: Record<string, unknown>;
+    markdown?: string;
   },
 ) {
   await db.insert(schema.parseResults).values({
@@ -92,7 +101,8 @@ export async function recordParseResult(
     contentHash: input.contentHash,
     settingsHash: input.settingsHash,
     pageCount: input.pageCount ?? 1,
-    markdown: '# parsed',
+    markdown: input.markdown ?? '# parsed',
+    contents: input.contents,
   });
 
   if (input.documentId) {
@@ -167,16 +177,34 @@ export async function chunksForDocument(db: Database, documentId: string) {
  */
 export async function seedChunk(
   db: Database,
-  input: { documentId: string; orgId: string; ordinal?: number; pages?: ChunkPage[] },
+  input: {
+    documentId: string;
+    orgId: string;
+    ordinal?: number;
+    pages?: ChunkPage[];
+    /**
+     * The passage itself.
+     *
+     * Defaulted for the cascade tests, which only care that a row exists. A
+     * retrieval or citation test needs the real thing: the quote verifier
+     * matches against this text, so a chunk with placeholder content can only
+     * ever prove that verification rejects.
+     */
+    text?: string;
+  },
 ) {
-  await db.insert(schema.chunks).values({
-    documentId: input.documentId,
-    orgId: input.orgId,
-    ordinal: input.ordinal ?? 0,
-    pages: input.pages ?? [{ page: 1, bbox: [72, 72, 540, 120] }],
-    text: 'a chunk that should not survive its document',
-    tokenCount: 9,
-  });
+  const [row] = await db
+    .insert(schema.chunks)
+    .values({
+      documentId: input.documentId,
+      orgId: input.orgId,
+      ordinal: input.ordinal ?? 0,
+      pages: input.pages ?? [{ page: 1, bbox: [72, 72, 540, 120] }],
+      text: input.text ?? 'a chunk that should not survive its document',
+      tokenCount: 9,
+    })
+    .returning({ id: schema.chunks.id });
+  return row;
 }
 
 /**

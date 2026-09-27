@@ -18,6 +18,21 @@ import { describe, expect, it } from 'vitest';
 const API_ROOT = fileURLToPath(new URL('../../src/app/api', import.meta.url));
 
 /**
+ * The Hono-mounted surfaces, which resolve a principal a different way.
+ *
+ * `/v2` and `/v1` are one catch-all route file each, and authentication lives
+ * inside the app they hand off to — `lib/v2/mount.ts` resolves the context and
+ * checks the scope for every declared route, which is the same guarantee
+ * `withAuth` gives by a different mechanism. They are walked separately below
+ * rather than exempted, because "this file is allowed to skip auth" is exactly
+ * the sentence this test exists to refuse.
+ */
+const HONO_ROOTS = [
+  fileURLToPath(new URL('../../src/app/v2', import.meta.url)),
+  fileURLToPath(new URL('../../src/app/v1', import.meta.url)),
+];
+
+/**
  * Routes that are deliberately unauthenticated, each with the reason it has to
  * be. Both are load-bearing: one is how a container reports itself healthy, and
  * the other is where authentication happens, so requiring a principal to reach
@@ -87,6 +102,46 @@ describe('protected routes', () => {
     const ids = new Set(routes.map((route) => route.id));
     for (const id of Object.keys(PUBLIC_ROUTES)) {
       expect(ids, `${id} is allowlisted but no longer exists`).toContain(id);
+    }
+  });
+});
+
+describe('the Hono-mounted public API', () => {
+  it('hands every route file off to an app rather than handling requests itself', async () => {
+    for (const root of HONO_ROOTS) {
+      const files = await routeFiles(root);
+      expect(files.length, `${root} has no route file`).toBeGreaterThan(0);
+
+      for (const path of files) {
+        const source = await readFile(path, 'utf8');
+        // `handle(app)` and nothing else: a handler written inline here would
+        // sit outside the middleware chain that does the authenticating.
+        expect(source, `${path} exports a handler that is not the Hono app`).toMatch(
+          /export const (GET|POST|DELETE|PUT|PATCH) = handle\(app\);/,
+        );
+        expect(source).not.toMatch(/export\s+(async\s+)?function\s+(GET|POST|DELETE)\b/);
+      }
+    }
+  });
+
+  it('resolves a principal and checks the scope for every declared route', async () => {
+    const mountSource = await readFile(
+      fileURLToPath(new URL('../../src/lib/v2/mount.ts', import.meta.url)),
+      'utf8',
+    );
+    expect(mountSource).toMatch(/resolveAuthContext\(/);
+    expect(mountSource).toMatch(/missingScope\(/);
+  });
+
+  it('declares a scope on every route it mounts', async () => {
+    const { ALL_ROUTES } = await import('@/lib/v2/app');
+    expect(ALL_ROUTES.length).toBeGreaterThanOrEqual(9);
+
+    for (const { definition } of ALL_ROUTES) {
+      expect(
+        definition.scopes.length,
+        `${definition.operationId} declares no scope, so any key could call it`,
+      ).toBeGreaterThan(0);
     }
   });
 });

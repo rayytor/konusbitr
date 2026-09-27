@@ -316,9 +316,82 @@ export const EnvSchema = z.object({
   /** HNSW search exploration factor for pgvector cosine queries. */
   HNSW_EF_SEARCH: z.coerce.number().int().positive().default(40),
 
+  // ── Phase 13 — the public `/v2` API ───────────────────────────────────────
+  /**
+   * Requests per minute allowed to one API key, and to one organization.
+   *
+   * Two buckets rather than one because they stop different things: the key
+   * limit keeps a single runaway integration from eating the organization's
+   * whole allowance, and the org limit *is* the allowance. Both are token
+   * buckets in Redis, so a burst up to the limit is allowed and the refill is
+   * continuous — a client that paces itself at the limit is never refused.
+   */
+  RATE_LIMIT_PER_KEY_PER_MINUTE: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_PER_ORG_PER_MINUTE: z.coerce.number().int().positive().default(600),
+  /**
+   * Turn the limiter off entirely.
+   *
+   * For a single-user self-host, where the only caller is the operator and a
+   * 429 is purely an obstacle. Off means *not consulted*, not "a very high
+   * limit": an unreachable Redis then cannot refuse a request either.
+   */
+  RATE_LIMIT_ENABLED: z.stringbool().default(true),
+
+  /**
+   * Secret the outgoing webhook HMAC is keyed with.
+   *
+   * Unset means webhooks are signed with `AUTH_SECRET` instead. That is a
+   * working default rather than a good one — it means a receiver has to be
+   * trusted with a value that also signs sessions — so an operator exposing
+   * webhooks to a third party should set this.
+   */
+  WEBHOOK_SIGNING_SECRET: nonEmpty.optional(),
+
+  /**
+   * Allow a webhook to be delivered to a private or loopback address.
+   *
+   * Off by default, and the default is the security-relevant one: a
+   * `webhook_url` is a caller handing the server a destination to make a
+   * request to, which is the same hazard `POST /v2/parse`'s `url` presents from
+   * the other direction, and it gets the same guard.
+   *
+   * The flag exists because refusing private targets outright is the wrong
+   * answer for the people this product is built for. A self-hoster's webhook
+   * receiver is very often on the same Docker network — an automation runner, a
+   * queue, a small internal service — and telling them to expose it to the
+   * internet to receive a callback from a server two containers away would be
+   * security theatre that makes them less safe.
+   *
+   * So it is a deliberate, named opt-in, and it is only safe on an instance
+   * where every API key holder is trusted with the internal network. On a
+   * multi-tenant deployment it must stay off.
+   */
+  WEBHOOK_ALLOW_PRIVATE_TARGETS: z.stringbool().default(false),
+
   // Billing.
   BILLING_ENABLED: z.stringbool().default(false),
   CREDITS_MODE: z.enum(CREDITS_MODES).default('unlimited'),
+  /**
+   * Credits an organization starts with under `CREDITS_MODE=metered`.
+   *
+   * Read only when a balance is actually enforced. Under `unlimited` — the
+   * self-host default — usage is still written to the ledger so an operator can
+   * see what the instance costs, and nothing is ever refused for lack of it.
+   */
+  STARTING_CREDITS: z.coerce.number().int().nonnegative().default(1_000),
+
+  /**
+   * The optional Stripe module, which is off and entirely removable.
+   *
+   * Nothing in the default build imports the Stripe SDK — `BILLING_ENABLED`
+   * gates a dynamic import, so a self-hoster who deletes
+   * `apps/web/src/lib/v2/billing/` still has a stack that builds. Konusbitr is
+   * a product somebody can run for themselves; a payment processor must not be
+   * load-bearing for that.
+   */
+  STRIPE_SECRET_KEY: nonEmpty.optional(),
+  STRIPE_WEBHOOK_SECRET: nonEmpty.optional(),
+  STRIPE_PRICE_ID: nonEmpty.optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
