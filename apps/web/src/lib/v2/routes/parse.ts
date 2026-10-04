@@ -80,7 +80,11 @@ async function run(ctx: RouteContext<ParseRequest>) {
   // estimate intake made from the file's structure.
   const cost = parseCost(artifact.pageCount, resolved.cached);
   if (resolved.cached) {
-    await recordCacheHit(ctx.auth.orgId, ready.id, { endpoint: 'parse' });
+    // One row per free call, exactly. A repeated upload was already recorded
+    // by intake; a `docId` was not, because it never reached intake.
+    if (!resolved.cacheHitRecorded) {
+      await recordCacheHit(ctx.auth.orgId, ready.id, { endpoint: 'parse' });
+    }
   } else {
     await charge({
       orgId: ctx.auth.orgId,

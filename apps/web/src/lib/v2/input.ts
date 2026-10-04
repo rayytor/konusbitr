@@ -38,6 +38,15 @@ export type ResolvedInput = {
   document: DocumentRow;
   /** True when no parse was run because one already existed for these bytes. */
   cached: boolean;
+  /**
+   * True when intake already wrote this hit to the ledger.
+   *
+   * An upload that turns out to be a repeat is recorded by `resolveDocument`,
+   * which is the only place that knows it happened; a `docId` never goes
+   * through intake, so nobody has. A route that writes its own `cache_hit` row
+   * has to know which, or one free call becomes two ledger rows.
+   */
+  cacheHitRecorded: boolean;
   settings: ParseSettings;
 };
 
@@ -210,7 +219,12 @@ async function ingestBytes(
         .catch(() => undefined);
     }
 
-    return { document: resolved.document, cached: resolved.cached, settings: input.settings };
+    return {
+      document: resolved.document,
+      cached: resolved.cached,
+      cacheHitRecorded: resolved.cached,
+      settings: input.settings,
+    };
   } catch (error) {
     await storage()
       .delete(storageKey)
@@ -244,7 +258,7 @@ export async function resolveInput(
     // A `docId` never re-parses, whatever settings came with it — that is the
     // contract, and it is why `docId` reuse is free. Settings on this branch
     // are advisory and are reported back as the document's own.
-    return { document, cached: true, settings };
+    return { document, cached: true, cacheHitRecorded: false, settings };
   }
 
   if (which === 'url') {
