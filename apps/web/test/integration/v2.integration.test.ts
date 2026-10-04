@@ -849,6 +849,31 @@ describe('?async=true', () => {
     expect(finished.error.requestId).toBeTypeOf('string');
   });
 
+  it('reports a job whose runner died as failed, and a quiet live one as running', async () => {
+    const { STALE_JOB_MS } = await import('@/lib/v2/async');
+    const { setApiJobState } = await import('@konusbitr/db/testing');
+    const scoped = scopedDb(db, alpha.orgId);
+
+    // Rows as a restart leaves them: `running`, with nobody left to advance them.
+    const dead = await scoped.createApiJob({ kind: 'parse', requestId: 'req_d' });
+    const quiet = await scoped.createApiJob({ kind: 'parse', requestId: 'req_q' });
+    const long = new Date(Date.now() - STALE_JOB_MS - 1_000);
+    await setApiJobState(db, dead.id, { status: 'running', createdAt: long, updatedAt: long });
+    // Started just as long ago, but its heartbeat arrived a moment ago.
+    await setApiJobState(db, quiet.id, {
+      status: 'running',
+      createdAt: long,
+      updatedAt: new Date(),
+    });
+
+    const deadBody = await (await call(v2, `/v2/jobs/${dead.id}`)).json();
+    expect(deadBody.status).toBe('failed');
+    expect(deadBody.error.code).toBe('internal');
+
+    const quietBody = await (await call(v2, `/v2/jobs/${quiet.id}`)).json();
+    expect(quietBody.status).toBe('running');
+  });
+
   it('refuses a job belonging to another organization', async () => {
     const accepted = await call(v2, '/v2/parse?async=true', {
       body: { docId: await readyDocument(alpha) },

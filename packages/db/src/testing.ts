@@ -133,6 +133,20 @@ export async function setDocumentState(
     .where(eq(schema.documents.id, documentId));
 }
 
+/**
+ * Put an async API job in a given state, with the timestamps given.
+ *
+ * `updatedAt` is taken as written rather than set to now: the thing a test
+ * wants to stand in for is a runner that stopped touching its row a while ago.
+ */
+export async function setApiJobState(
+  db: Database,
+  jobId: string,
+  patch: Partial<typeof schema.apiJobs.$inferInsert>,
+): Promise<void> {
+  await db.update(schema.apiJobs).set(patch).where(eq(schema.apiJobs.id, jobId));
+}
+
 export async function jobsForDocument(db: Database, documentId: string) {
   return db.select().from(schema.jobs).where(eq(schema.jobs.documentId, documentId));
 }
