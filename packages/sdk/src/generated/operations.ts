@@ -7,7 +7,7 @@
 import type { ApiDocument, ApiJob, AskRequest, AskResponse, ChatWithAllPdfsRequest, ChatWithPdfRequest, ChatWithPdfResponse, ExtractRequest, ExtractResponse, ParseRequest, ParseResponse, SplitRequest, SplitResponse } from './types.js';
 
 /** The API version this SDK was generated from. */
-export const API_VERSION = "0.0.0";
+export const API_VERSION = "0.1.0";
 
 /**
  * Ask a question about a document and get a cited answer
