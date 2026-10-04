@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Konusbitr API",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "description": "Parse, extract from, split and ask questions about documents, with\npage-accurate citations that are verified against the source before\nthey are returned.\n\nWire-compatible with `api.pdf.ai/v2`: an existing integration can be\nrepointed by changing the base URL. Every long-running endpoint also\naccepts `?async=true`, which upstream does not.\n\nAuthenticate with an API key in the `X-API-Key` header. Keys are issued\nper organization and carry scopes; an endpoint names the scope it needs.",
     "license": {
       "name": "Apache-2.0",

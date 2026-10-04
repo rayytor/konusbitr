@@ -410,7 +410,9 @@ them, get answers with **clickable page-accurate citations**, and drive the whol
 thing through a PDF.ai-wire-compatible `/v2` REST API.
 
 Milestones: **Phase 11** = usable product (MVP ships). **Phase 13** = usable API
-platform. **Phase 15** = complete alternative, `v1.0.0`.
+platform. **Phase 15** = complete alternative, `v1.0.0`. The first tag is
+`v0.1.0` and it covers Phases 01–13: Phase 11 claimed that version without
+tagging it, so there was never a release that stopped there.
 
 ## Architecture
 
@@ -438,12 +440,12 @@ healthy and nothing happens.
 `docs/adr/0001-queue.md` records why the transport is a hand-rolled Redis stream
 with a consumer group rather than BullMQ or arq.
 
-### Planned layout
+### Layout
 
 ```
 apps/web           Next.js 15 App Router, React 19, Tailwind v4, shadcn/ui
 apps/extension     WXT Chrome extension (Phase 15)
-services/worker    Python 3.12, FastAPI + arq, package konusbitr_worker
+services/worker    Python 3.12, FastAPI + a Redis-stream consumer, package konusbitr_worker
 packages/db        Drizzle schema, migrations, client
 packages/shared    Zod v4 schemas + inferred types (cross-boundary source of truth)
 packages/storage   S3-compatible client (MinIO/S3/R2/B2)
@@ -720,9 +722,8 @@ These cut across many files; violating one breaks the product rather than one fe
 
 ## Commands
 
-Everything above `pnpm codegen` exists as of Phase 04; the rest are created by
-Phase 08 and later. Implement them with exactly these names, because every later
-phase assumes them.
+Every command below exists. Keep these names, because the phase files, CI and
+the docs all assume them.
 
 Node 22.13+ and pnpm 11 are required; `uv` fetches its own Python 3.12.
 
@@ -767,7 +768,16 @@ Infra: `docker compose up` (default profile), `--profile local-llm` adds Ollama,
 - TypeScript strict everywhere, plus `noUncheckedIndexedAccess` and
   `verbatimModuleSyntax`. Zod v4 for all boundary validation. Drizzle for all SQL.
 - Conventional commits, enforced by a commitlint hook. Each phase is one or more
-  PRs, never one giant commit. Changesets for versioning.
+  PRs, never one giant commit. Changesets for versioning: `pnpm version-packages`
+  consumes them, and it only works because `.changeset/config.json` sets
+  `privatePackages.version` — every package but the SDK is private, and without
+  that flag the command reports success and changes nothing, which is how four
+  changesets sat unconsumed at `0.0.0` through thirteen phases. `@konusbitr/web`
+  carries the product version (`APP_VERSION` feeds `/api/health`, the landing
+  page and `docs/openapi.json`, so a bump needs `pnpm codegen`); the root
+  `package.json` and the worker's `pyproject.toml` + `__version__` are set by
+  hand to match. Tags are `v<version>` for the product, on a merge commit on
+  `main`, and `sdk-v<version>` for the SDKs. CONTRIBUTING.md has the steps.
 - Apache-2.0.
 - Nothing merges without typecheck, lint, unit tests, **and** the phase's
   acceptance criteria.

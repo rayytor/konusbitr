@@ -220,7 +220,7 @@ class Operation(TypedDict):
 
 
 #: The API version this module was generated from.
-API_VERSION = "0.0.0"
+API_VERSION = "0.1.0"
 
 
 OPERATIONS: dict[str, Operation] = {
