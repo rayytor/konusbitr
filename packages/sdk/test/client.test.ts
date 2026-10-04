@@ -278,3 +278,47 @@ describe('the generated operation table', () => {
     }
   });
 });
+
+describe('uploading a file', () => {
+  it('sends multipart, with the other fields as form values the API decodes', async () => {
+    let received: FormData | undefined;
+    let contentType: string | null = null;
+
+    const client = clientWith(async (request) => {
+      contentType = request.headers.get('content-type');
+      received = await request.formData();
+      return json(200, { docId: 'doc_1', documents: [] });
+    });
+
+    await client.split({
+      file: { data: new TextEncoder().encode('%PDF-1.7'), filename: 'contract.pdf' },
+      ranges: ['1-2', { start: 4, end: 5, name: 'tail.pdf' }],
+    });
+
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
+
+    const file = received?.get('file') as File;
+    expect(file.name).toBe('contract.pdf');
+    expect(await file.text()).toBe('%PDF-1.7');
+    // A list has no form spelling, so it travels as JSON — which is what the
+    // API's multipart reader parses `ranges` back out of.
+    expect(JSON.parse(String(received?.get('ranges')))).toEqual([
+      '1-2',
+      { start: 4, end: 5, name: 'tail.pdf' },
+    ]);
+  });
+
+  it('accepts a Blob and leaves a body without a file as JSON', async () => {
+    const types: (string | null)[] = [];
+    const client = clientWith((request) => {
+      types.push(request.headers.get('content-type'));
+      return json(200, { docId: 'doc_1' });
+    });
+
+    await client.parse({ file: new Blob(['%PDF-1.7']), llm: false });
+    await client.parse({ docId: 'doc_1' });
+
+    expect(types[0]).toMatch(/^multipart\/form-data/);
+    expect(types[1]).toBe('application/json');
+  });
+});
