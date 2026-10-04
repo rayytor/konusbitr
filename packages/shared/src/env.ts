@@ -383,15 +383,21 @@ export const EnvSchema = z.object({
   /**
    * The optional Stripe module, which is off and entirely removable.
    *
-   * Nothing in the default build imports the Stripe SDK — `BILLING_ENABLED`
-   * gates a dynamic import, so a self-hoster who deletes
-   * `apps/web/src/lib/v2/billing/` still has a stack that builds. Konusbitr is
-   * a product somebody can run for themselves; a payment processor must not be
-   * load-bearing for that.
+   * Nothing in the build depends on Stripe's SDK — the module speaks to the API
+   * over `fetch` — and a self-hoster who deletes
+   * `apps/web/src/lib/v2/billing/` and `apps/web/src/app/api/billing/` still
+   * has a stack that builds. Konusbitr is a product somebody can run for
+   * themselves; a payment processor must not be load-bearing for that.
+   *
+   * All three are required when `BILLING_ENABLED=true`, and that is checked at
+   * boot: a checkout page that opens and a webhook that cannot verify is money
+   * taken and credits never granted.
    */
   STRIPE_SECRET_KEY: nonEmpty.optional(),
   STRIPE_WEBHOOK_SECRET: nonEmpty.optional(),
   STRIPE_PRICE_ID: nonEmpty.optional(),
+  /** Credits granted per unit of `STRIPE_PRICE_ID` bought. */
+  STRIPE_CREDITS_PER_UNIT: z.coerce.number().int().positive().default(1_000),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
@@ -520,6 +526,18 @@ export const EnvSchemaChecked = EnvSchema.check((ctx) => {
         'router can address. Set EMBEDDING_PROVIDER to one that does — openai, ' +
         'mistral, ollama or vllm — and leave the chat role where it is.',
     });
+  }
+
+  if (env.BILLING_ENABLED) {
+    for (const name of ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_ID'] as const) {
+      if (env[name]) continue;
+      ctx.issues.push({
+        code: 'custom',
+        input: undefined,
+        path: [name],
+        message: 'is required when BILLING_ENABLED is true',
+      });
+    }
   }
 
   if (env.CHUNK_MIN_TOKENS > env.CHUNK_TARGET_TOKENS) {

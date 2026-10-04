@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state of this repository
 
-**Phases 01–12 are done; Phase 13 is next.** `cp .env.example .env &&
+**Phases 01–13 are done; Phase 14 is next.** `cp .env.example .env &&
 docker compose up` brings up the whole stack, and the repo installs, builds,
 lints, typechecks and tests on both runtimes. The database schema is complete,
 every request into the app resolves to an authenticated principal scoped to one
@@ -150,6 +150,25 @@ The load-bearing rule that came out of it: **a `parse_results` row carrying a
 checkpoint is a parse in progress, not a docId cache entry**, and every cache
 reader in both runtimes filters on `checkpoint IS NULL`.
 
+**Phase 13 is the API platform.** `/v2/parse`, `/v2/extract`, `/v2/split` and
+`/v2/ask` — plus `GET`/`DELETE /v2/documents/:docId`, `GET /v2/jobs/:jobId` and
+the two legacy `/v1` chat endpoints — are a Hono app mounted into Next.js,
+authenticated with `X-API-Key`, and wire-compatible with `api.pdf.ai/v2`
+(`docs/api-compatibility.md` is the field-by-field account). `file`, `url` and
+`docId` are mutually exclusive. Every long-running endpoint has an `?async=true`
+twin that returns a `jobId` and optionally calls a signed webhook. `extract`
+returns a value only when its supporting quote is verifiably in the document and
+nulls it otherwise. `split` cuts in the Python worker, and each output is a real
+document that inherits its parent's parse. Every call is a row in the credit
+ledger; `CREDITS_MODE=unlimited` records and never refuses, `metered` enforces.
+Rate limits are a Redis token bucket per key and per org. The OpenAPI 3.1
+document is generated from the route table's Zod schemas and both SDKs are
+generated from it. `docs/adr/0009-public-api.md` records the decisions.
+
+**One criterion is open:** neither SDK is published to a registry yet. Both are
+packed, installed from the pack and run against a live stack in CI;
+`.github/workflows/release-sdks.yml` publishes them when somebody runs it.
+
 One thing to know before touching the pipeline: **with no embedding model
 configured — which is the default `.env` — chunks are written without vectors.**
 That is a supported state, not a half-finished one. The passages are stored and
@@ -200,7 +219,17 @@ What exists:
   what an operator runs after changing `EMBEDDING_MODEL` — and puts
   `chunksReady`/`chunksTotal`/`embeddingModel` on `DocumentView`. Standalone
   output for the container; env validated at boot from `src/instrumentation.ts`.
-  No chat yet (Phase 10+); retrieval lives in `packages/retrieval`.
+  Retrieval lives in `packages/retrieval`. Phase 13 adds `src/lib/v2/`, the
+  public API: `registry.ts` is the route table everything else reads,
+  `mount.ts` is the only file that knows about Hono and the only place
+  authentication, scopes, rate limits, validation and the error envelope
+  happen, `openapi.ts` generates the specification, `input.ts` resolves
+  `file`/`url`/`docId` to a document, `async.ts` is the `?async=true` runner,
+  `webhooks.ts` signs and delivers, `credits.ts` charges, `extract/` validates a
+  JSON Schema and verifies every extracted value, `split/ranges.ts` decides
+  where to cut, and `billing/` is the optional Stripe top-up module — off by
+  default, `fetch`-only, and removable together with `src/app/api/billing/`.
+  The mounts are `src/app/v2/[[...route]]` and `src/app/v1/[[...route]]`.
 - `packages/storage` — the S3-compatible object store client (AWS SDK v3).
   `presignPut`, `presignGet`, `head`, `delete`, `deletePrefix`, `streamGet`,
   `uploadStream`, `presignMultipart`, `completeMultipart`, `abortMultipart`.
@@ -318,6 +347,11 @@ What exists:
   table of its own, why it is written after the batch it describes and what went
   wrong when it was not, and why a cancelled document is short rather than
   broken.
+- `docs/adr/0009-public-api.md` — why the route table is the only description
+  of the API, why the async twin runs in the web process and what that costs,
+  why `split` decides in TypeScript and cuts in Python, why credits are a ledger
+  whose balance is its sum, and the four defects that only real documents and a
+  real install found.
 - `docs/adr/0003-retrieval.md` — why fusion is RRF over ranks rather than
   normalized scores, why the sparse leg ORs its terms and drops function words
   first, why `hnsw.ef_search` has to be set with `SET LOCAL` inside the query's
@@ -343,8 +377,17 @@ What exists:
   scores the real `retrieve()`; `src/benchmark-latency.ts` measures p95 over
   100k chunks. `RESULTS.md` is the recorded baseline and says plainly what the
   numbers do and do not cover.
-- `packages/sdk`, `apps/extension` — placeholders whose READMEs name the phase
-  that fills them in.
+- `packages/sdk` — `@konusbitr/sdk`, the TypeScript client. `src/generated/` is
+  produced from `docs/openapi.json` and must never be hand-edited; `client.ts`
+  is written by hand, because retries, backoff, job polling and multipart
+  upload are not things a specification describes. No dependencies.
+- `sdks/python` — `konusbitr`, the Python client, on the same split:
+  `_generated.py` from the specification, `client.py` by hand, sync and async.
+  Its own uv project, deliberately outside the worker's.
+- `load/` — k6 scripts for `/v2/parse` throughput and chat time to first token.
+  Run by a person against a stack they chose, never by CI.
+- `apps/extension` — a placeholder whose README names the phase that fills it
+  in.
 
 The specifications remain authoritative for everything not yet built:
 
@@ -406,7 +449,9 @@ packages/shared    Zod v4 schemas + inferred types (cross-boundary source of tru
 packages/storage   S3-compatible client (MinIO/S3/R2/B2)
 packages/ai        LiteLLM model router + versioned prompt files
 packages/retrieval Hybrid search, RRF fusion, rerank
-packages/sdk       Generated TS client (Phase 13)
+packages/sdk       Generated TS client
+sdks/python        Generated Python client
+load/              k6 load tests
 docker/            Dockerfiles + compose fragments
 evals/             Golden set + eval harness results
 docs/              Docs site, ADRs, coordinates.md, licensing.md
@@ -581,6 +626,31 @@ These cut across many files; violating one breaks the product rather than one fe
   eighths of itself. Per-page escalation below `TIER_FALLBACK_THRESHOLD` is
   capped instead, because nobody asked for it and nobody is waiting to confirm a
   price.
+- **The route table is the API.** A `/v2` endpoint exists because it is
+  declared in the form `apps/web/src/lib/v2/registry.ts` defines: path, Zod schemas,
+  scopes, error codes — and `mount.ts` and `openapi.ts` both read that one
+  declaration. Handlers get a plain `RouteContext` and never Hono's, so no
+  handler checks a scope, sets a status or builds an error body. Never add a
+  `/v2` route as a Next.js handler, and never hand-edit `docs/openapi.json` or
+  either SDK's generated module: `pnpm codegen` regenerates all three and CI
+  fails on a diff.
+- **Credits are a ledger and the balance is its sum.** Every charge is a row
+  with a reason and a reference, and a free call is a zero-delta `cache_hit`
+  row — exactly one, which means a route must not record a hit that intake
+  already did (`ResolvedInput.cacheHitRecorded`). A row that must exist once
+  however often it is attempted — the metered starting grant, a Stripe payment
+  — goes through `recordCreditOnce`, never `recordCredit`. Charge after the
+  work, so a failed operation is never billed.
+- **An extracted value without a verifiable quote is `null`.** `extract`
+  returns it in `unverified` with the reason rather than in `result`. A quote
+  containing digits must match exactly: the fuzzy window that forgives
+  hyphenation in prose would accept one misread digit, and in an extraction the
+  value *is* the number.
+- **An async API job's liveness is its heartbeat.** The `?async=true` runner
+  lives in the web process and touches its `api_jobs` row every minute; a row
+  thirty minutes without one is reported `failed` on read. Never judge
+  staleness by age alone — an operation waiting on a long parse is quiet for
+  far longer than that and entirely alive.
 - **Document text is untrusted data.** It never becomes instructions, never drives
   tool execution, and never reaches Sentry.
 - **Ids are prefixed ULID-ish strings** (`doc_…`, `chk_…`, `org_…`, `key_…`) via a
@@ -665,7 +735,10 @@ pnpm dev:infra                           # compose up backing services only, mig
 pnpm dev                                 # infra + native web + native worker
 pnpm infra:down                          # stop containers; infra:reset also drops volumes
 pnpm infra:logs / infra:ps / infra:psql  # same set exists as `make` targets
-pnpm codegen                             # Zod → pydantic; must be a no-op on a clean tree
+pnpm codegen                             # Zod → pydantic, OpenAPI and both SDKs; a no-op on a clean tree
+pnpm load:parse                          # k6: /v2/parse throughput; needs KONUSBITR_API_KEY and a running stack
+pnpm load:chat                           # k6: chat p95 time to first token
+./scripts/sdk-quickstart.sh              # pack both SDKs, install them clean, run their quickstarts
 ./scripts/vendor-fixture-fonts.py        # re-subset the fixture fonts; rarely needed
 pnpm db:migrate                          # idempotent; a `migrate` one-shot runs it on every compose up
 pnpm infra:migrate                       # the same one-shot, without restarting the stack
@@ -679,8 +752,8 @@ pnpm eval:chat                           # Ragas + citation accuracy
 pnpm audit:licenses                      # both halves; fails on AGPL/GPL in the default build
 ```
 
-Python side (`services/worker`): `uv sync` then `uv run pytest`. Use `uv` — not
-pip or poetry.
+Python side (`services/worker`, and `sdks/python` for the client): `uv sync`
+then `uv run pytest`. Use `uv` — not pip or poetry.
 
 Single test: `pnpm vitest run path/to/file.test.ts -t "name"` for TS,
 `uv run pytest path/to/test.py::test_name` for Python.

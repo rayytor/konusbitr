@@ -28,12 +28,23 @@ import { assertWebhookUrl, deliverWebhook } from './webhooks';
  * it can be handed. What the runner does is detach the work from the response
  * and write its outcome down, which is what makes the job durable even though
  * the *runner* is not: a process restart mid-operation leaves a row stuck in
- * `running`, and {@link reapStaleJobs} is what turns that into an honest
- * failure rather than a job that is pending forever.
+ * `running`, and {@link readJob} is what turns that into an honest failure
+ * rather than a job that is pending forever.
  */
 
-/** A `running` job older than this is assumed to have died with its process. */
+/** A `running` job untouched for this long is assumed to have died with its process. */
 export const STALE_JOB_MS = 30 * 60 * 1000;
+
+/**
+ * How often a live runner touches its row.
+ *
+ * Staleness is judged by `updated_at`, and an operation waiting on a
+ * nine-hundred-page parse writes nothing for far longer than
+ * {@link STALE_JOB_MS} while being entirely alive. The heartbeat is what
+ * separates "quiet" from "dead": a row that has gone thirty minutes without one
+ * belongs to a process that is no longer there to send it.
+ */
+export const HEARTBEAT_MS = 60 * 1000;
 
 export type AsyncRequest = {
   kind: ApiJobKind;
@@ -94,8 +105,16 @@ async function run(
 
   let finished: { status: ApiJobStatus; body: unknown };
 
+  // An empty patch still moves `updated_at`, which is all a heartbeat is.
+  // Unref'd, so a runner waiting on a document never holds a process open.
+  const heartbeat = setInterval(() => {
+    void scoped.updateApiJob(jobId, {}).catch(() => undefined);
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
+
   try {
     const result = await work(jobId);
+    clearInterval(heartbeat);
     await scoped.updateApiJob(jobId, {
       status: 'succeeded',
       progress: 100,
@@ -104,6 +123,7 @@ async function run(
     });
     finished = { status: 'succeeded', body: result };
   } catch (error) {
+    clearInterval(heartbeat);
     const api = toApiError(error);
     const body = api.body(request.requestId);
     await scoped

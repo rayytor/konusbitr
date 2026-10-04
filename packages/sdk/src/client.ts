@@ -29,6 +29,24 @@ export type ClientOptions = {
   fetch?: typeof fetch;
 };
 
+/**
+ * A document to upload: a `Blob` or `File`, or raw bytes with a name.
+ *
+ * Bytes rather than a path, because this client has no dependencies and runs
+ * wherever `fetch` does — in a browser there is no path to read. In Node,
+ * `{ data: await readFile('contract.pdf'), filename: 'contract.pdf' }`.
+ */
+export type FileInput = Blob | { data: Blob | Uint8Array | ArrayBuffer; filename?: string };
+
+/**
+ * A request body that may carry a `file` in place of `url` or `docId`.
+ *
+ * Not in the generated types, because the OpenAPI document describes `file` as
+ * a multipart part rather than as a JSON property — which it is. The client
+ * accepts it as a field and moves it to where it belongs.
+ */
+export type WithFile<Body> = Body & { file?: FileInput };
+
 type RequestOptions = {
   /** Return `{ jobId }` immediately instead of waiting. */
   async?: boolean;
@@ -65,25 +83,31 @@ export class KonusbitrClient {
   // ── The four v2 endpoints ─────────────────────────────────────────────────
 
   /** Parse a document into markdown and located elements. */
-  parse(body: operations.ParseBody, options?: RequestOptions): Promise<operations.ParseResult> {
+  parse(
+    body: WithFile<operations.ParseBody>,
+    options?: RequestOptions,
+  ): Promise<operations.ParseResult> {
     return this.#send(operations.parse, body, options);
   }
 
   /** Extract structured data against a JSON Schema, with every value cited. */
   extract(
-    body: operations.ExtractBody,
+    body: WithFile<operations.ExtractBody>,
     options?: RequestOptions,
   ): Promise<operations.ExtractResult> {
     return this.#send(operations.extract, body, options);
   }
 
   /** Split a document into separate documents, by page range or by section. */
-  split(body: operations.SplitBody, options?: RequestOptions): Promise<operations.SplitResult> {
+  split(
+    body: WithFile<operations.SplitBody>,
+    options?: RequestOptions,
+  ): Promise<operations.SplitResult> {
     return this.#send(operations.split, body, options);
   }
 
   /** Ask a question and get an answer whose every claim is cited. */
-  ask(body: operations.AskBody, options?: RequestOptions): Promise<operations.AskResult> {
+  ask(body: WithFile<operations.AskBody>, options?: RequestOptions): Promise<operations.AskResult> {
     return this.#send(operations.ask, body, options);
   }
 
@@ -253,13 +277,16 @@ export class KonusbitrClient {
     const timeout = AbortSignal.timeout(this.#timeoutMs);
     const combined = signal ? AbortSignal.any([timeout, signal]) : timeout;
 
+    const form = multipartOf(body);
+
     const response = await this.#fetch(url, {
       method,
       headers: {
         'x-api-key': this.#apiKey,
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        // No content type for a form: `fetch` writes it, with the boundary.
+        ...(body === undefined || form ? {} : { 'content-type': 'application/json' }),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body: form ?? JSON.stringify(body) }),
       signal: combined,
     });
 
@@ -274,4 +301,35 @@ export class KonusbitrClient {
     }
     throw error;
   }
+}
+
+/**
+ * The body as `multipart/form-data`, when it carries a `file`.
+ *
+ * Every other field travels as a form value, and a form value is a string — so
+ * a list or an object is JSON-encoded, which is the convention the API decodes
+ * (`lang_list`, `ranges`, `schema`) and the one the Python client uses too.
+ * Built per attempt rather than once: a retried request needs a fresh body.
+ */
+function multipartOf(body: unknown): FormData | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const { file, ...fields } = body as { file?: FileInput } & Record<string, unknown>;
+  if (file === undefined || file === null) return undefined;
+
+  const form = new FormData();
+  if (file instanceof Blob) {
+    form.set('file', file, file instanceof File ? file.name : 'document.pdf');
+  } else {
+    const blob =
+      file.data instanceof Blob
+        ? file.data
+        : new Blob([file.data as BlobPart], { type: 'application/pdf' });
+    form.set('file', blob, file.filename ?? 'document.pdf');
+  }
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null) continue;
+    form.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+  }
+  return form;
 }

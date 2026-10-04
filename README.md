@@ -52,7 +52,8 @@ records why the transport is a plain stream rather than a job library.
 | `packages/retrieval` | Hybrid search, RRF fusion, rerank |
 | `packages/storage` | S3-compatible object store client |
 | `evals/` | The golden set, the retrieval and chat harnesses, recorded results |
-| `packages/sdk` | Generated TypeScript client (Phase 13) |
+| `packages/sdk` | Generated TypeScript client, `@konusbitr/sdk` |
+| `sdks/python` | Generated Python client, `konusbitr` |
 | `packages/tsconfig` | Shared strict TypeScript configuration |
 | `docker/` | Dockerfiles and the scripts that bootstrap the stack |
 | `docs/` | Docs site, ADRs, coordinate and licensing references |

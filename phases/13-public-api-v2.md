@@ -101,15 +101,18 @@ with their own `docId`s, inheriting the parent's parse where possible.
 
 ## Acceptance criteria
 
-- [ ] All four `/v2` endpoints plus both `/v1` legacy endpoints work against real
+- [x] All four `/v2` endpoints plus both `/v1` legacy endpoints work against real
       fixtures and match the documented response shapes.
-- [ ] Passing two of `file`/`url`/`docId` returns a 400 naming the conflict.
-- [ ] A second `parse` with the same bytes and settings returns instantly with zero
+- [x] Passing two of `file`/`url`/`docId` returns a 400 naming the conflict.
+- [x] A second `parse` with the same bytes and settings returns instantly with zero
       credits charged, and the ledger records a `cache_hit`.
-- [ ] `extract` against a 10-field schema returns values whose citations all verify.
-- [ ] `split mode: "semantic"` produces documents named after real section headings.
-- [ ] `?async=true` returns a `jobId`, and the webhook fires with a valid HMAC signature.
-- [ ] Exceeding the rate limit returns 429 with `Retry-After`.
-- [ ] `/v2/openapi.json` validates as OpenAPI 3.1; CI fails if it drifts from the code.
+- [x] `extract` against a 10-field schema returns values whose citations all verify.
+- [x] `split mode: "semantic"` produces documents named after real section headings.
+- [x] `?async=true` returns a `jobId`, and the webhook fires with a valid HMAC signature.
+- [x] Exceeding the rate limit returns 429 with `Retry-After`.
+- [x] `/v2/openapi.json` validates as OpenAPI 3.1; CI fails if it drifts from the code.
 - [ ] Both SDKs install from a registry and run their quickstart against a local instance.
-- [ ] With `CREDITS_MODE=unlimited`, usage is recorded and nothing is ever refused.
+      *Not yet: neither package is published. Both install from their built
+      artifact and run their quickstart against a local instance, in CI
+      (`scripts/sdk-quickstart.sh`); publishing is `release-sdks.yml`.*
+- [x] With `CREDITS_MODE=unlimited`, usage is recorded and nothing is ever refused.

@@ -70,7 +70,8 @@ jobs:
         run: |
           if ! git diff --exit-code; then
             echo
-            echo "The pydantic models have drifted from the Zod schemas."
+            echo "Generated code has drifted from the Zod schemas: the worker's"
+            echo "contract, docs/openapi.json, or one of the two SDKs."
             echo "Run 'pnpm codegen' and commit the result."
             exit 1
           fi
@@ -244,6 +245,48 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  # The Python client. The TypeScript one is a workspace package and rides the
+  # TypeScript job; this one has its own toolchain and would otherwise be the
+  # only code in the repository nothing lints. Whether either has drifted from
+  # the API is the contract job's question, not this one's.
+  sdk-python:
+    name: Python SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: sdks/python/uv.lock
+
+      - name: Sync
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: The wheel builds
+        run: uv build
+
+      # The acceptance criterion is that the document *validates* as OpenAPI
+      # 3.1, and the structural tests in `apps/web/test/v2/openapi.test.ts` are
+      # ours — they check what we thought to check. This is somebody else's
+      # validator reading the same file against the published meta-schema.
+      - name: docs/openapi.json validates as OpenAPI 3.1
+        run: uvx openapi-spec-validator==0.9.0 ../../docs/openapi.json
 
   licenses:
     name: Licence audit
@@ -634,6 +677,45 @@ jobs:
             "SELECT count(*) FROM chunks WHERE document_id = 'doc_ci'")
           echo "chunks before=$before after=$after"
           test "$after" -eq "$before"
+
+      # Phase 13's last criterion, as far as CI can take it: both SDKs are
+      # packed, installed from the pack into an empty directory, and their
+      # quickstarts run against the stack `docker compose up` just built — a
+      # real upload, through the real worker. Installing from the *registry* is
+      # the same script with SDK_SOURCE=registry, which is the check to run
+      # after `release-sdks.yml` has published.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Both SDK quickstarts run against the stack
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+          # A key the way the settings page would have made one: the token is
+          # shown once and only its SHA-256 is stored.
+          token="kb_live_$(openssl rand -hex 16)"
+          hash=$(printf '%s' "$token" | sha256sum | awk '{print $1}')
+
+          docker compose exec -T postgres psql -U konusbitr -d konusbitr -v ON_ERROR_STOP=1 <<SQL
+          INSERT INTO organizations (id, name, slug)
+          VALUES ('org_ci0sdkquickstart00000000', 'CI SDK', 'ci-sdk');
+          INSERT INTO api_keys (id, org_id, name, hashed_key, prefix, scopes)
+          VALUES (
+            'key_ci0sdkquickstart00000000', 'org_ci0sdkquickstart00000000', 'ci sdk',
+            '$hash', '${token:0:16}',
+            ARRAY['parse', 'documents:read']
+          );
+          SQL
+
+          KONUSBITR_URL=http://localhost:3000 KONUSBITR_API_KEY="$token" ./scripts/sdk-quickstart.sh
 
       - name: A missing variable stops the web container, and says which
         run: |

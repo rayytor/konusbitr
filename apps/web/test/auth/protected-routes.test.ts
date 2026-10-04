@@ -34,13 +34,16 @@ const HONO_ROOTS = [
 
 /**
  * Routes that are deliberately unauthenticated, each with the reason it has to
- * be. Both are load-bearing: one is how a container reports itself healthy, and
- * the other is where authentication happens, so requiring a principal to reach
- * it would be circular.
+ * be: one is how a container reports itself healthy, one is where
+ * authentication happens, so requiring a principal to reach it would be
+ * circular, and one is called by a payment processor that has no principal to
+ * present. Removing the optional billing module means removing its line here.
  */
 const PUBLIC_ROUTES: Record<string, string> = {
   'health/route.ts': 'liveness probe — no I/O, no data, called by Docker and Compose',
   'auth/[...all]/route.ts': 'Better Auth itself; it applies its own origin check and rate limits',
+  'billing/webhook/route.ts':
+    'called by Stripe, which has no principal; the signature over the raw body is the check',
 };
 
 /** Every HTTP method Next.js will route to. */
@@ -143,5 +146,8 @@ describe('the Hono-mounted public API', () => {
         `${definition.operationId} declares no scope, so any key could call it`,
       ).toBeGreaterThan(0);
     }
-  });
+    // The time here is the import: the whole `/v2` module graph is transformed
+    // on first load, and on a cold CI runner sharing its cores with the rest of
+    // the turbo run that alone has passed the default five seconds.
+  }, 30_000);
 });

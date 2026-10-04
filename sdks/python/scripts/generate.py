@@ -47,7 +47,7 @@ def ref_name(ref: str) -> str:
     return type_name(ref.rsplit("/", 1)[-1])
 
 
-def render(schema: dict[str, Any] | None, *, quote_refs: bool = True) -> str:
+def render(schema: dict[str, Any] | None) -> str:
     """One schema as a Python type expression.
 
     Deliberately narrow: it covers what Zod emits and nothing more. Anything
@@ -55,16 +55,16 @@ def render(schema: dict[str, Any] | None, *, quote_refs: bool = True) -> str:
     value at runtime is being told the SDK does not know its shape, rather than
     being handed a confident wrong annotation.
 
-    References are quoted because a ``TypedDict`` can name a type defined later
-    in the module; the order the document happens to list schemas in is not a
-    dependency order.
+    References are bare names. A ``TypedDict`` can name a type defined later in
+    the module — the order the document happens to list schemas in is not a
+    dependency order — and the generated module's ``from __future__ import
+    annotations`` is what makes that legal without quoting every one of them.
     """
     if not schema:
         return "Any"
 
     if "$ref" in schema:
-        name = ref_name(schema["$ref"])
-        return f'"{name}"' if quote_refs else name
+        return ref_name(schema["$ref"])
 
     for key in ("anyOf", "oneOf"):
         if isinstance(schema.get(key), list):
@@ -131,7 +131,7 @@ def _render_mapping(schema: dict[str, Any]) -> str:
 def emit_typed_dict(name: str, schema: dict[str, Any]) -> str:
     properties: dict[str, Any] = schema.get("properties") or {}
     if not properties:
-        return f"{type_name(name)} = {render(schema, quote_refs=False)}\n"
+        return f"{type_name(name)} = {render(schema)}\n"
 
     required = set(schema.get("required") or [])
     lines = [f"class {type_name(name)}(TypedDict):"]

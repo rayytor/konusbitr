@@ -37,6 +37,8 @@
     "db:seed": "pnpm --filter @konusbitr/db db:seed",
     "codegen": "./scripts/codegen.sh",
     "audit:licenses": "./scripts/audit-licenses.sh",
+    "load:parse": "./scripts/k6.sh parse.js",
+    "load:chat": "./scripts/k6.sh chat-ttft.js",
     "format": "biome format --write .",
     "check": "biome check .",
     "check:fix": "biome check --write .",

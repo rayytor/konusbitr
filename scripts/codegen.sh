@@ -109,3 +109,21 @@ for prompt in "$PROMPTS_SOURCE"/*.md; do
   cp "$prompt" "$PROMPTS_OUTPUT/$name"
 done
 echo "codegen: wrote $PROMPTS_OUTPUT"
+
+# The public API's half of the same promise. `docs/openapi.json` is generated
+# from the route table's Zod schemas, and both SDKs are generated from *it* —
+# so the order here is a dependency order, and one `git diff --exit-code` after
+# this script covers the specification and both clients as well as the worker's
+# contract. An API change that was not carried through to the SDKs cannot merge.
+echo "codegen: emitting the OpenAPI document"
+pnpm --filter @konusbitr/web --silent openapi:emit
+
+echo "codegen: generating the TypeScript SDK"
+pnpm --filter @konusbitr/sdk --silent generate
+
+echo "codegen: generating the Python SDK"
+(
+  cd sdks/python
+  uv run --quiet python scripts/generate.py
+  uv run --quiet ruff format --quiet src/konusbitr/_generated.py
+)

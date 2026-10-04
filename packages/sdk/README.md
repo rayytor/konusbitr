@@ -43,7 +43,11 @@ Run it against a local stack with `baseUrl: 'http://localhost:3000'`.
 ## Uploading a file
 
 ```ts
-const doc = await konusbitr.parse({ file: await fileFromDisk('contract.pdf') });
+import { readFile } from 'node:fs/promises';
+
+const doc = await konusbitr.parse({
+  file: { data: await readFile('contract.pdf'), filename: 'contract.pdf' },
+});
 ```
 
 `file`, `url` and `docId` are mutually exclusive — passing two returns a `400`

@@ -19,7 +19,12 @@
  * retries, backoff and job polling are not things a specification describes.
  */
 
-export { type ClientOptions, KonusbitrClient } from './client.js';
+export {
+  type ClientOptions,
+  type FileInput,
+  KonusbitrClient,
+  type WithFile,
+} from './client.js';
 export { JobFailedError, KonusbitrError, RateLimitError } from './errors.js';
 export { API_VERSION } from './generated/operations.js';
 export type * from './generated/types.js';

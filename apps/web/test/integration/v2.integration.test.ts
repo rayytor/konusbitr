@@ -849,6 +849,31 @@ describe('?async=true', () => {
     expect(finished.error.requestId).toBeTypeOf('string');
   });
 
+  it('reports a job whose runner died as failed, and a quiet live one as running', async () => {
+    const { STALE_JOB_MS } = await import('@/lib/v2/async');
+    const { setApiJobState } = await import('@konusbitr/db/testing');
+    const scoped = scopedDb(db, alpha.orgId);
+
+    // Rows as a restart leaves them: `running`, with nobody left to advance them.
+    const dead = await scoped.createApiJob({ kind: 'parse', requestId: 'req_d' });
+    const quiet = await scoped.createApiJob({ kind: 'parse', requestId: 'req_q' });
+    const long = new Date(Date.now() - STALE_JOB_MS - 1_000);
+    await setApiJobState(db, dead.id, { status: 'running', createdAt: long, updatedAt: long });
+    // Started just as long ago, but its heartbeat arrived a moment ago.
+    await setApiJobState(db, quiet.id, {
+      status: 'running',
+      createdAt: long,
+      updatedAt: new Date(),
+    });
+
+    const deadBody = await (await call(v2, `/v2/jobs/${dead.id}`)).json();
+    expect(deadBody.status).toBe('failed');
+    expect(deadBody.error.code).toBe('internal');
+
+    const quietBody = await (await call(v2, `/v2/jobs/${quiet.id}`)).json();
+    expect(quietBody.status).toBe('running');
+  });
+
   it('refuses a job belonging to another organization', async () => {
     const accepted = await call(v2, '/v2/parse?async=true', {
       body: { docId: await readyDocument(alpha) },
@@ -1066,6 +1091,83 @@ describe('credits', () => {
 
     const again = await call(v2, '/v2/ask', { body: { docId, question: 'Again?' } });
     expect(again.status).toBe(200);
+  });
+
+  it('grants the starting credits once under metered, spends them, and then refuses', async () => {
+    const { resetWebEnvCache } = await import('@/lib/env');
+    process.env.CREDITS_MODE = 'metered';
+    process.env.STARTING_CREDITS = '2';
+    resetWebEnvCache();
+
+    try {
+      const gamma = await tenant('Gamma', 'v2-gamma');
+      const docId = await readyDocument(gamma);
+      nextCompletion = answerWith('An answer.', []);
+      const ask = () => call(v2, '/v2/ask', { as: gamma, body: { docId, question: 'Anything?' } });
+
+      // Two at once, so the grant is raced for: both must be admitted and the
+      // organization must end up with one opening balance, not two.
+      const [first, second] = await Promise.all([ask(), ask()]);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+
+      const entries = await creditEntriesOf(db, gamma.orgId);
+      const grants = entries.filter((entry) => entry.reason === 'topup');
+      expect(grants).toHaveLength(1);
+      expect(grants[0]).toMatchObject({ delta: 2, refId: 'starting_grant' });
+      expect(await scopedDb(db, gamma.orgId).creditBalance()).toBe(0);
+
+      const refused = await ask();
+      expect(refused.status).toBe(402);
+      const { error } = await refused.json();
+      expect(error.code).toBe('insufficient_credits');
+      expect(error.details).toMatchObject({ balance: 0 });
+
+      // A refusal is not a charge.
+      expect(await creditEntriesOf(db, gamma.orgId)).toHaveLength(entries.length);
+
+      // And a top-up is all it takes to be admitted again.
+      await scopedDb(db, gamma.orgId).recordCredit({ delta: 5, reason: 'topup', refId: 'manual' });
+      expect((await ask()).status).toBe(200);
+    } finally {
+      process.env.CREDITS_MODE = 'unlimited';
+      delete process.env.STARTING_CREDITS;
+      resetWebEnvCache();
+    }
+  });
+
+  it('credits a paid Stripe checkout once, however many times it is delivered', async () => {
+    const { applyStripeEvent } = await import('@/lib/v2/billing/stripe');
+    const delta = await tenant('Delta', 'v2-delta');
+    const event = {
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_once',
+          payment_status: 'paid',
+          metadata: { orgId: delta.orgId, credits: '3000' },
+        },
+      },
+    };
+
+    const outcomes = await Promise.all([applyStripeEvent(event), applyStripeEvent(event)]);
+    expect(outcomes.filter((outcome) => outcome.applied)).toHaveLength(1);
+    expect(await applyStripeEvent(event)).toEqual({ applied: false, reason: 'duplicate' });
+
+    const entries = await creditEntriesOf(db, delta.orgId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ delta: 3000, reason: 'topup', refId: 'cs_test_once' });
+
+    // An unpaid session and an unrelated event grant nothing.
+    const unpaid = structuredClone(event);
+    unpaid.data.object.id = 'cs_test_unpaid';
+    unpaid.data.object.payment_status = 'unpaid';
+    expect(await applyStripeEvent(unpaid)).toEqual({ applied: false, reason: 'unpaid' });
+    expect(await applyStripeEvent({ type: 'invoice.paid' })).toEqual({
+      applied: false,
+      reason: 'ignored',
+    });
+    expect(await creditEntriesOf(db, delta.orgId)).toHaveLength(1);
   });
 
   it('never charges for reading a document or a job', async () => {
