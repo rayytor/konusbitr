@@ -146,5 +146,8 @@ describe('the Hono-mounted public API', () => {
         `${definition.operationId} declares no scope, so any key could call it`,
       ).toBeGreaterThan(0);
     }
-  });
+    // The time here is the import: the whole `/v2` module graph is transformed
+    // on first load, and on a cold CI runner sharing its cores with the rest of
+    // the turbo run that alone has passed the default five seconds.
+  }, 30_000);
 });
