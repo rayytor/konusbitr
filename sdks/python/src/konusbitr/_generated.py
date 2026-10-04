@@ -57,8 +57,8 @@ ApiErrorCode = Literal[
 
 class ApiJob(TypedDict):
     jobId: str
-    kind: "ApiJobKind"
-    status: "ApiJobStatus"
+    kind: ApiJobKind
+    status: ApiJobStatus
     docId: str | None
     progress: int
     result: Any | None
@@ -86,7 +86,7 @@ class AskRequest(TypedDict):
 
 class AskResponse(TypedDict):
     answer: str
-    citations: list["Citation"]
+    citations: list[Citation]
     docId: str | None
 
 
@@ -110,13 +110,13 @@ class ChatWithPdfRequest(TypedDict):
 
 class ChatWithPdfResponse(TypedDict):
     content: str
-    references: list["LegacyReference"]
+    references: list[LegacyReference]
 
 
 class Citation(TypedDict):
     quote: str
     page: int
-    bbox: "BoundingBox"
+    bbox: BoundingBox
     chunkId: str
     documentId: NotRequired[str]
     schemaPath: NotRequired[str]
@@ -136,14 +136,14 @@ class ExtractRequest(TypedDict):
 class ExtractResponse(TypedDict):
     docId: str
     result: dict[str, Any]
-    citations: list["Citation"]
+    citations: list[Citation]
     unverified: list[dict[str, Any]]
 
 
 class ExtractedImage(TypedDict):
     id: str
     page: int
-    bbox: "BoundingBox"
+    bbox: BoundingBox
     width: int
     height: int
     storageKey: str
@@ -173,8 +173,8 @@ class ParseRequest(TypedDict):
 class ParseResponse(TypedDict):
     docId: str
     markdown: str
-    contents: list["ParsedElement"]
-    images: list["ExtractedImage"]
+    contents: list[ParsedElement]
+    images: list[ExtractedImage]
     pageCount: int
     cached: bool
 
@@ -198,7 +198,7 @@ class SplitRequest(TypedDict):
     lang_list: NotRequired[list[str]]
     llm: NotRequired[bool]
     webhook_url: NotRequired[str]
-    ranges: NotRequired[list["PageRange"]]
+    ranges: NotRequired[list[PageRange]]
     mode: NotRequired[Literal["ranges", "semantic"]]
     level: NotRequired[int]
 
