@@ -315,7 +315,7 @@ services:
 
   # ----------------------------------------------------- Profile: local-llm --
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:0.35.1
     profiles: [local-llm]
     restart: unless-stopped
     ports:
@@ -332,7 +332,7 @@ services:
   # One-shot: pull a chat and an embedding model so the offline stack is usable
   # the moment it comes up rather than on the first slow query.
   ollama-init:
-    image: ollama/ollama
+    image: ollama/ollama:0.35.1
     profiles: [local-llm]
     restart: 'no'
     depends_on:

@@ -1,0 +1,85 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    ':semanticCommits',
+    'helpers:pinGitHubActionDigests',
+  ],
+
+  // One batch a week, and nothing younger than three days: a release that is
+  // going to be yanked usually is by then.
+  timezone: 'Europe/Istanbul',
+  schedule: ['before 9am on monday'],
+  minimumReleaseAge: '3 days',
+  prConcurrentLimit: 5,
+  labels: ['dependencies'],
+  lockFileMaintenance: { enabled: true, schedule: ['before 9am on the first day of the month'] },
+
+  // A major is a decision, not maintenance. It waits on the dependency
+  // dashboard until somebody ticks it.
+  major: { dependencyDashboardApproval: true },
+
+  packageRules: [
+    {
+      description: 'Minor and patch npm updates arrive as one PR',
+      matchManagers: ['npm'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'npm (non-major)',
+    },
+    {
+      description: 'Minor and patch Python updates arrive as one PR',
+      matchManagers: ['pep621'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'python (non-major)',
+    },
+    {
+      description: 'GitHub Actions arrive as one PR',
+      matchManagers: ['github-actions'],
+      groupName: 'github actions',
+    },
+    {
+      description: 'The restrictively-licensed parsers are pinned by hand; see docs/licensing.md',
+      matchFileNames: ['docker/advanced-requirements.txt'],
+      enabled: false,
+    },
+    {
+      description: 'The worker is Python 3.12 (requires-python <3.13)',
+      matchPackageNames: ['python'],
+      allowedVersions: '<3.13',
+    },
+    {
+      description: 'Node stays on the 22 line that .nvmrc and engines name',
+      matchPackageNames: ['node'],
+      allowedVersions: '<23',
+    },
+    {
+      description: 'A Postgres major needs a dump and restore, not a tag bump',
+      matchPackageNames: ['pgvector/pgvector'],
+      enabled: false,
+    },
+    {
+      description: 'Redis 8 changed licence (AGPL among the options); stay on 7 until that is decided',
+      matchPackageNames: ['redis'],
+      matchDatasources: ['docker'],
+      allowedVersions: '<8',
+    },
+    {
+      description: 'pgsty tags are dates (RELEASE.2026-08-04T00-00-00Z); the per-arch suffixes are excluded',
+      matchPackageNames: ['pgsty/minio', 'pgsty/mc'],
+      versioning: 'regex:^RELEASE\\.(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})T\\d{2}-\\d{2}-\\d{2}Z$',
+      groupName: 'minio',
+    },
+  ],
+
+  customManagers: [
+    {
+      // The integration suites start the same images Compose does. Without
+      // this they drift apart and the tests stop testing what ships.
+      customType: 'regex',
+      description: 'Testcontainers image pins in the integration suites',
+      managerFilePatterns: ['/test/integration/.+\\.ts$/', '/^evals/src/.+\\.ts$/'],
+      matchStrings: ["Container\\('(?<depName>[^':]+):(?<currentValue>[^']+)'\\)"],
+      datasourceTemplate: 'docker',
+    },
+  ],
+}
