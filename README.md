@@ -17,13 +17,22 @@
   <img src="docs/assets/screenshot.png" alt="Konusbitr Library Screenshot">
 </p>
 
-> **Status: `v0.1.0` — the product works end to end.** Upload a PDF, ask a
+> **Status: `v0.1.0` — phases 01 to 13 of 15 are done.** Upload a PDF, ask a
 > question, and every sentence of the answer carries the page it came from.
 > Click a page reference and the viewer scrolls there and highlights the exact
 > region on the page. Scans are read too — CPU OCR, routed by language, with
-> ruled tables reconstructed and figures described. Phases 12.3–15 add the rest
-> of the breadth (the VLM tier, the public API, billing, distribution); see
-> [`phases/`](./phases).
+> ruled tables reconstructed and figures described — and, when a vision model
+> is configured, it reads the pages neither can, with every character checked
+> against the page's own text. A long document
+> is read a batch of pages at a time and survives a restart. The public `/v2`
+> API is live, with a generated OpenAPI document and TypeScript and Python
+> clients.
+>
+> **Not built yet:** Phase 14 (folders, search, chat across a whole library,
+> summaries, sharing) and Phase 15 (the browser extension, deploy templates, the
+> docs site). The two clients are not on npm or PyPI yet — they install from
+> this repository. See [`phases/`](./phases) for the plan and
+> [`RELEASE_NOTES.md`](./RELEASE_NOTES.md) for what `v0.1.0` contains.
 
 ## Why two runtimes
 
@@ -38,6 +47,11 @@ in `packages/shared` are the source of truth, and the worker's pydantic models
 — along with the Redis key names themselves — are generated from them, with CI
 failing on any drift. [`docs/adr/0001-queue.md`](docs/adr/0001-queue.md)
 records why the transport is a plain stream rather than a job library.
+
+Both runtimes do talk to the same Postgres. The worker reads and writes it with
+raw SQL it owns, in `services/worker/src/konusbitr_worker/db.py`; Drizzle owns
+the tables and the migrations. What the two never share is an access layer —
+nothing in the worker imports from `packages/db`.
 
 ## Layout
 
@@ -56,7 +70,8 @@ records why the transport is a plain stream rather than a job library.
 | `sdks/python` | Generated Python client, `konusbitr` |
 | `packages/tsconfig` | Shared strict TypeScript configuration |
 | `docker/` | Dockerfiles and the scripts that bootstrap the stack |
-| `docs/` | Docs site, ADRs, coordinate and licensing references |
+| `load/` | k6 load scripts, run by hand against a stack you chose |
+| `docs/` | ADRs, the OpenAPI document, coordinate, chunking and licensing references |
 
 ## Quickstart
 
@@ -192,6 +207,16 @@ has drifted.
 
 `make help` lists the container shortcuts (`up`, `migrate`, `down`, `reset`,
 `logs`, `psql`); each one also exists as a `pnpm infra:*` script.
+
+### The API
+
+Everything the app does is also available over `/v2` with an `X-API-Key`
+created at `http://localhost:3000/settings/api-keys`: `parse`, `extract`,
+`split` and `ask`, the long-running ones with an `?async=true` twin. The contract is
+[`docs/openapi.json`](docs/openapi.json), and
+[`docs/api-compatibility.md`](docs/api-compatibility.md) is the field-by-field
+account of how it lines up with `api.pdf.ai/v2`. The clients are in
+[`packages/sdk`](packages/sdk) and [`sdks/python`](sdks/python).
 
 ## Contributing
 
