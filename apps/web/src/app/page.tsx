@@ -59,7 +59,7 @@ export default async function HomePage() {
         <div className="flex items-center gap-3">
           <ThemeToggle />
           <a
-            href="https://github.com/konusbitr/konusbitr"
+            href="https://github.com/rayytor/konusbitr"
             className="text-[15px] text-foreground-muted hover:text-foreground"
           >
             Source
@@ -153,7 +153,7 @@ export default async function HomePage() {
             Three commands, no API key required to start.
           </p>
           <pre className="mt-5 overflow-x-auto rounded-[var(--radius-md)] border border-border-subtle bg-surface p-4 font-mono text-[13px] leading-relaxed">
-            <code>{`git clone https://github.com/konusbitr/konusbitr
+            <code>{`git clone https://github.com/rayytor/konusbitr
 cd konusbitr
 cp .env.example .env && docker compose up`}</code>
           </pre>
