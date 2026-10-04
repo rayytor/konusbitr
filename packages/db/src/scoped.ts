@@ -667,6 +667,52 @@ export function scopedDb(db: Database, orgId: string) {
     },
 
     /**
+     * Append to the ledger unless this `(reason, refId)` is already there.
+     *
+     * For the two entries that must exist exactly once however many times they
+     * are attempted: an organization's starting grant, which the first metered
+     * call of several concurrent ones would otherwise each make, and a payment,
+     * which a processor redelivers until it is acknowledged. The ledger has no
+     * unique index to lean on — an ordinary charge legitimately repeats its
+     * reason and reference — so the check and the insert are serialized per
+     * organization with a transaction-scoped advisory lock instead.
+     *
+     * Returns whether a row was written.
+     */
+    async recordCreditOnce(input: {
+      delta: number;
+      reason: string;
+      refId: string;
+      metadata?: Record<string, unknown>;
+    }): Promise<boolean> {
+      return db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:${orgId}`}))`);
+
+        const [existing] = await tx
+          .select({ id: schema.creditLedger.id })
+          .from(schema.creditLedger)
+          .where(
+            and(
+              eq(schema.creditLedger.orgId, orgId),
+              eq(schema.creditLedger.reason, input.reason),
+              eq(schema.creditLedger.refId, input.refId),
+            ),
+          )
+          .limit(1);
+        if (existing) return false;
+
+        await tx.insert(schema.creditLedger).values({
+          orgId,
+          delta: input.delta,
+          reason: input.reason,
+          refId: input.refId,
+          metadata: input.metadata ?? null,
+        });
+        return true;
+      });
+    },
+
+    /**
      * This organization's advanced-parse spend since the start of the UTC month.
      *
      * Read back out of the credit ledger's `metadata`, where

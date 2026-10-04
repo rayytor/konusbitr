@@ -56,6 +56,7 @@ export async function assertCredits(orgId: string, env: Env, amount: number): Pr
   if (env.CREDITS_MODE !== 'metered') return;
   if (amount <= 0) return;
 
+  await ensureStartingGrant(orgId, env);
   const balance = await scopedDb(db(), orgId).creditBalance();
   if (balance >= amount) return;
 
@@ -64,6 +65,33 @@ export async function assertCredits(orgId: string, env: Env, amount: number): Pr
     `This call costs ${amount} credit${amount === 1 ? '' : 's'} and the organization has ${balance}.`,
     { required: amount, balance },
   );
+}
+
+/** The `refId` of the one row that is an organization's opening balance. */
+export const STARTING_GRANT_REF = 'starting_grant';
+
+/**
+ * Give an organization its `STARTING_CREDITS`, once.
+ *
+ * Made at the first metered call rather than when the organization is created,
+ * and the reason is the mode switch: an operator who runs `unlimited` for a
+ * year and then turns on `metered` has organizations that were created long
+ * before there was anything to grant. A grant written at creation would leave
+ * every one of them at a balance of whatever they had already used, negated —
+ * refused on their first call for work they were told was free.
+ *
+ * It is a `topup` row like any other, so the balance stays the plain sum of the
+ * ledger and the grant is as auditable as a charge.
+ */
+async function ensureStartingGrant(orgId: string, env: Env): Promise<void> {
+  if (env.STARTING_CREDITS <= 0) return;
+
+  await scopedDb(db(), orgId).recordCreditOnce({
+    delta: env.STARTING_CREDITS,
+    reason: 'topup',
+    refId: STARTING_GRANT_REF,
+    metadata: { source: 'starting_grant' },
+  });
 }
 
 /**
@@ -77,6 +105,7 @@ export async function assertCredits(orgId: string, env: Env, amount: number): Pr
 export async function assertNotExhausted(orgId: string, env: Env): Promise<void> {
   if (env.CREDITS_MODE !== 'metered') return;
 
+  await ensureStartingGrant(orgId, env);
   const balance = await scopedDb(db(), orgId).creditBalance();
   if (balance > 0) return;
 
