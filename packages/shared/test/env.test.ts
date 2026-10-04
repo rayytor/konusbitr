@@ -110,8 +110,24 @@ describe('parseEnv', () => {
     expect(parseEnv({ ...valid, OFFLINE_MODE: 'true', LLM_PROVIDER: 'ollama' }).OFFLINE_MODE).toBe(
       true,
     );
-    expect(parseEnv({ ...valid, BILLING_ENABLED: '1' }).BILLING_ENABLED).toBe(true);
+    expect(parseEnv({ ...valid, RATE_LIMIT_ENABLED: '1' }).RATE_LIMIT_ENABLED).toBe(true);
     expect(parseEnv({ ...valid, S3_FORCE_PATH_STYLE: 'false' }).S3_FORCE_PATH_STYLE).toBe(false);
+  });
+
+  it('refuses billing switched on without the keys it needs, naming each one', () => {
+    expect(() => parseEnv({ ...valid, BILLING_ENABLED: 'true' })).toThrow(
+      /STRIPE_SECRET_KEY[\s\S]*STRIPE_WEBHOOK_SECRET[\s\S]*STRIPE_PRICE_ID/,
+    );
+
+    const env = parseEnv({
+      ...valid,
+      BILLING_ENABLED: 'true',
+      STRIPE_SECRET_KEY: 'sk_test_x',
+      STRIPE_WEBHOOK_SECRET: 'whsec_x',
+      STRIPE_PRICE_ID: 'price_x',
+    });
+    expect(env.BILLING_ENABLED).toBe(true);
+    expect(env.STRIPE_CREDITS_PER_UNIT).toBe(1000);
   });
 
   it('ignores variables it does not know about', () => {
