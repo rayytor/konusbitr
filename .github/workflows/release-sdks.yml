@@ -1,0 +1,191 @@
+name: Release SDKs
+
+# Publishes `@konusbitr/sdk` to npm and `konusbitr` to PyPI.
+#
+# Run by hand, or by pushing a tag `sdk-v<version>`. It is deliberately not
+# part of CI and not triggered by a merge: publishing is the one thing in this
+# repository that cannot be taken back, so a person decides when it happens.
+#
+# Neither registry is given a long-lived secret. Both publishes use OIDC
+# trusted publishing, which has to be set up once on each registry and names
+# this repository, this workflow file and the environment below:
+#
+#   npm   package settings → Trusted Publisher → GitHub Actions
+#   PyPI  project settings → Publishing → add a GitHub publisher
+#
+# Until that is done the publish steps fail with an authentication error and
+# nothing is released.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Build and check everything, publish nothing
+        type: boolean
+        default: true
+  push:
+    tags: ['sdk-v*']
+
+permissions:
+  contents: read
+
+env:
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+
+jobs:
+  # Everything that can be wrong with a release is checked before either
+  # registry is touched, so a failure here leaves both of them as they were —
+  # rather than one SDK published and the other not.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # One version for both clients: they are generated from the same
+      # document, and "the Python SDK is a release behind" is a question nobody
+      # should have to ask.
+      - name: Both SDKs carry the same version, and the tag names it
+        id: version
+        run: |
+          set -euo pipefail
+          ts=$(node -p "require('./packages/sdk/package.json').version")
+          py=$(grep -m1 '^version = ' sdks/python/pyproject.toml | cut -d'"' -f2)
+          if [[ "$ts" != "$py" ]]; then
+            echo "::error::@konusbitr/sdk is $ts and konusbitr is $py"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/sdk-v* && "$GITHUB_REF_NAME" != "sdk-v$ts" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $ts"
+            exit 1
+          fi
+          echo "version=$ts" >> "$GITHUB_OUTPUT"
+
+      - name: Neither SDK has drifted from the API
+        run: |
+          pnpm codegen
+          git diff --exit-code
+
+      - name: TypeScript SDK
+        run: pnpm turbo run lint typecheck test build --filter @konusbitr/sdk
+
+      - name: Python SDK
+        working-directory: sdks/python
+        run: |
+          uv sync --locked
+          uv run ruff check .
+          uv run pytest -q
+
+  npm:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @konusbitr/sdk build
+
+      - name: Publish
+        working-directory: packages/sdk
+        run: |
+          if [[ "$DRY_RUN" == "true" ]]; then
+            pnpm publish --access public --no-git-checks --dry-run
+          else
+            pnpm publish --access public --no-git-checks --provenance
+          fi
+
+  pypi:
+    name: Publish to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Build
+        working-directory: sdks/python
+        run: uv build
+
+      - name: Publish
+        if: env.DRY_RUN != 'true'
+        working-directory: sdks/python
+        run: uv publish --trusted-publishing always
+
+  # The criterion is "installs from a registry", so that is what is checked:
+  # a clean directory, the public index, the version just published.
+  installs:
+    name: Installs from the registries
+    needs: [verify, npm, pypi]
+    if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      # A registry takes a moment to serve what it just accepted.
+      - name: npm install @konusbitr/sdk
+        run: |
+          mkdir ts && cd ts && npm init -y > /dev/null
+          for attempt in 1 2 3 4 5 6; do
+            npm install --no-audit --no-fund "@konusbitr/sdk@$VERSION" && break
+            [[ $attempt == 6 ]] && exit 1
+            sleep 20
+          done
+          node --input-type=module -e "import { KonusbitrClient } from '@konusbitr/sdk'; new KonusbitrClient({ baseUrl: 'http://localhost:3000', apiKey: 'x' })"
+
+      - name: pip install konusbitr
+        run: |
+          uv venv --python 3.12 py
+          for attempt in 1 2 3 4 5 6; do
+            uv pip install --python py/bin/python --no-cache "konusbitr==$VERSION" && break
+            [[ $attempt == 6 ]] && exit 1
+            sleep 20
+          done
+          py/bin/python -c "from konusbitr import Konusbitr; Konusbitr(base_url='http://localhost:3000', api_key='x')"
