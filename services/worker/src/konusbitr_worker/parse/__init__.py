@@ -289,8 +289,10 @@ async def parse_document(
         converter: Any | None = None
         # The language route is a document-level decision. Once `settings.
         # langList` or the first batch's text has settled it, later batches
-        # inherit it rather than re-identifying from their own pages.
-        language_resolved = bool(ocr_options.requested_languages)
+        # inherit it rather than re-identifying from their own pages. It starts
+        # unsettled even when `langList` was given: naming the languages decides
+        # the route, and `ocr_pages` is still what applies it to the recogniser.
+        language_resolved = False
         announced: set[str] = set()
         reconciliation = ReconciliationReport()
         looked_any = False

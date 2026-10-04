@@ -29,7 +29,7 @@ let storage: Storage;
 beforeAll(async () => {
   const { GenericContainer, Wait } = await import('testcontainers');
 
-  container = await new GenericContainer('quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z')
+  container = await new GenericContainer('pgsty/minio:RELEASE.2026-08-04T00-00-00Z')
     .withCommand(['server', '/data'])
     .withEnvironment({
       MINIO_ROOT_USER: ROOT_USER,

@@ -19,8 +19,8 @@ ollama/pull-models.sh       chat + embedding model for the local-llm profile
 |---|---|---|
 | `postgres` | `pgvector/pgvector:pg17` | Embeddings, full-text search, JSONB parse artifacts — one database to back up |
 | `redis` | `redis:7-alpine` | Job queue, progress pub/sub, rate-limit counters. AOF on |
-| `minio` | `minio/minio` | S3-compatible blob storage; console on 9001 |
-| `minio-init` | `minio/mc` | One-shot: creates the bucket and a dev access key, then exits |
+| `minio` | `pgsty/minio` | S3-compatible blob storage; console on 9001 |
+| `minio-init` | `pgsty/mc` | One-shot: creates the bucket and a dev access key, then exits |
 | `migrate` | `docker/migrate.Dockerfile` | One-shot: applies pending Drizzle migrations, then exits |
 | `web` | `docker/web.Dockerfile` | The Next.js app on 3000 |
 | `worker` | `docker/worker.Dockerfile` | The Python pipeline |

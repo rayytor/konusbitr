@@ -80,7 +80,7 @@ beforeAll(async () => {
   [postgres, redisContainer, minio] = await Promise.all([
     new PostgreSqlContainer('pgvector/pgvector:pg17').start(),
     new RedisContainer('redis:7-alpine').start(),
-    new GenericContainer('quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z')
+    new GenericContainer('pgsty/minio:RELEASE.2026-08-04T00-00-00Z')
       .withCommand(['server', '/data'])
       .withEnvironment({ MINIO_ROOT_USER: MINIO_ROOT, MINIO_ROOT_PASSWORD: MINIO_SECRET })
       .withExposedPorts(9000)

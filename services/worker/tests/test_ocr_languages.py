@@ -15,8 +15,12 @@ the alternatives and is worth asserting rather than assuming.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from konusbitr_worker.parse import parse_document
+from konusbitr_worker.parse.ocr import OcrPipeline
 from konusbitr_worker.parse.ocr.languages import (
     LanguagePlan,
     detect_languages,
@@ -24,6 +28,8 @@ from konusbitr_worker.parse.ocr.languages import (
     plan_languages,
     script_of,
 )
+from konusbitr_worker.settings import Settings
+from tests.factories import FakeObjectStore, sha256_of
 
 # ── Normalisation ────────────────────────────────────────────────────────────
 
@@ -261,3 +267,48 @@ def test_the_default_plan_is_the_phase_12_1_behaviour() -> None:
     assert plan.tesseract_languages == "eng"
     assert plan.prefer_tesseract is False
     assert plan.rtl is False
+
+
+# ── The decision, applied ────────────────────────────────────────────────────
+
+
+class _FirstPageReached(Exception):
+    """Raised in place of recognising a page, so no engine has to be installed."""
+
+
+@pytest.mark.asyncio
+async def test_a_named_language_is_applied_before_the_first_page_is_read(
+    settings: Settings, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`langList` decides the route; something still has to hand it to the engines.
+
+    The regression this pins: the batched reader treated a document with a
+    `langList` as already routed and told `ocr_pages` so, which skipped the one
+    call that makes Tesseract primary. Every page of an Arabic scan was then
+    read by the Latin head — and the tests that would have said so skip on a
+    machine without the language packs, so only CI saw it. This one needs no
+    engine at all: it stops at the first page and asks who was about to read it.
+    """
+    primaries: list[tuple[str, str]] = []
+
+    def stop_at_the_first_page(self: OcrPipeline, *_args: object, **_kwargs: object) -> None:
+        plan = self.options.plan
+        primaries.append((self.primary.name, plan.tesseract_languages))  # type: ignore[attr-defined]
+        raise _FirstPageReached
+
+    monkeypatch.setattr(OcrPipeline, "available", lambda _self: True)
+    monkeypatch.setattr(OcrPipeline, "run_page", stop_at_the_first_page)
+
+    source = fixtures_dir / "multilingual-scan-4p.pdf"
+    with pytest.raises(_FirstPageReached):
+        await parse_document(
+            store=FakeObjectStore(source=source),
+            settings=settings,
+            org_id="org_test",
+            document_id="doc_fixture",
+            storage_key="orgs/org_test/documents/doc_fixture/original.pdf",
+            content_hash=sha256_of(source),
+            lang_list=["ar"],
+        )
+
+    assert primaries == [("tesseract", "ara+eng")]
