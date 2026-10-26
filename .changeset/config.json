@@ -7,5 +7,6 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@konusbitr/web", "@konusbitr/extension"]
+  "privatePackages": { "version": true, "tag": false },
+  "ignore": ["@konusbitr/evals", "@konusbitr/extension"]
 }

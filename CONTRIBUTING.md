@@ -10,10 +10,16 @@ Konusbitr has two runtimes on purpose.
 - **TypeScript** owns the product surface: web app, API, auth, billing.
 - **Python** owns the document pipeline: parse, OCR, chunk, embed.
 
-**The entire contract between them is a Redis queue plus JSON payloads.** There
+**The entire contract between them is a Redis stream plus JSON payloads.** There
 is no shared ORM, no RPC framework, and no import that crosses the language
-boundary in either direction. The Python worker does not read the application
-database; the TypeScript side does not call into Python.
+boundary in either direction. The TypeScript side does not call into Python.
+
+Both runtimes do use the same Postgres, and that is not a breach of the rule.
+The worker reads and writes the database with raw SQL it owns, all of it in
+`services/worker/src/konusbitr_worker/db.py`. Drizzle owns the *tables*: the
+schema and every migration live in `packages/db`, and nothing in the worker
+imports from it. So a schema change is made in Drizzle, and if it touches a
+column the worker reads, `db.py` changes in the same pull request.
 
 That seam is what keeps a two-language codebase contributable — you can work on
 one half without understanding the other. A pull request that adds a
@@ -21,9 +27,10 @@ cross-language import or a shared database access layer will be rejected on
 principle, however convenient it looks.
 
 The job payload's source of truth is the Zod schema in `packages/shared`. The
-pydantic model is **generated** from it; CI fails on drift. Contract drift is
-the main failure mode of this design, so if you change a payload, change the Zod
-and regenerate — never hand-edit the Python side.
+pydantic models and the Redis key names are **generated** from it by
+`pnpm codegen`; CI fails on drift. Contract drift is the main failure mode of
+this design, so if you change a payload, change the Zod and regenerate — never
+hand-edit `konusbitr_worker/contracts.py`.
 
 ## Running each side alone
 
@@ -67,11 +74,15 @@ containers. Do not change `.env.example` to use container hostnames.
 ## Working on a phase
 
 The work in this repository is organised as 15 phases under [`phases/`](./phases).
-Each file is self-contained and ends with an acceptance-criteria checklist.
+Each file is self-contained and ends with an acceptance-criteria checklist. The
+status line at the top of the [README](./README.md) says which are done and
+which is next; it is the one place that is stated, so a pull request that
+finishes a phase updates it there.
 
 - Read the phase file first and treat its checklist as the definition of done.
 - Respect the non-goals section. Do not pull a later phase's scope forward.
-- A phase is one or more pull requests, never one giant commit.
+- A phase is one or more pull requests, never one giant commit. `main` is
+  protected: everything lands through a pull request.
 
 ## Standards
 
@@ -80,11 +91,36 @@ Each file is self-contained and ends with an acceptance-criteria checklist.
 - **Lint and format with Biome** (`pnpm check:fix`). Python uses Ruff.
 - **Conventional commits**, enforced by a commitlint hook. Scope is one of the
   packages, e.g. `feat(worker): normalize Docling bboxes`.
-- **Changesets** for anything user-visible: `pnpm changeset`.
+- **Changesets** for anything user-visible: `pnpm changeset`. See *Releasing*
+  below for what happens to them.
 - Nothing merges without typecheck, lint, unit tests, **and** the phase's
   acceptance criteria.
 - Performance budgets are acceptance criteria, not aspirations. CI fails on
   regression.
+
+## Releasing
+
+A version is only real when four things agree: the package versions, the
+changelogs, the OpenAPI document and a git tag. The steps, in a pull request of
+their own:
+
+```bash
+pnpm version-packages      # consumes .changeset/*.md, bumps versions, writes CHANGELOG.md
+pnpm codegen               # the OpenAPI document and both SDKs embed the version
+cd services/worker && uv lock
+```
+
+- `@konusbitr/web` carries the product's version. `/api/health`, the landing
+  page and `docs/openapi.json` all read it, so it is what the tag names.
+- Two versions are not managed by changesets and are set by hand to match it:
+  the root `package.json`, and the worker's `pyproject.toml` together with
+  `konusbitr_worker.__version__`.
+- Every workspace package is private except the SDK, and changesets skips
+  private packages unless `.changeset/config.json` sets `privatePackages.version`.
+  It is set. Without it `changeset version` reports success and changes nothing.
+- After the pull request merges, tag the merge commit `v<version>` and push the
+  tag. The SDKs are released separately by the tag `sdk-v<version>`, which runs
+  `.github/workflows/release-sdks.yml`.
 
 ## Design changes
 
@@ -100,5 +136,6 @@ By contributing you agree that your contributions are licensed under the
 [Apache License 2.0](./LICENSE).
 
 The default build must stay cleanly Apache-2.0 compatible. AGPL or commercially
-restricted dependencies — PyMuPDF, Marker — may only be added behind the Compose
-`advanced` profile, and a CI licence audit asserts this.
+restricted dependencies — PyMuPDF, Surya — may only be added behind the Compose
+`advanced` profile, and a CI licence audit asserts this. [`docs/licensing.md`](docs/licensing.md)
+accounts for every package on both sides of that line.

@@ -1,6 +1,6 @@
 [project]
 name = "konusbitr-worker"
-version = "0.0.0"
+version = "0.1.0"
 description = "Konusbitr document pipeline: parse, OCR, chunk and embed."
 readme = "README.md"
 license = "Apache-2.0"
